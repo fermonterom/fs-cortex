@@ -1,0 +1,19 @@
+---
+id: grep-then-read-verify
+trigger: "when exploring codebase to understand structure"
+confidence: 0.90
+domain: "workflow-general"
+source: "session-observation"
+scope: global
+---
+
+# Grep Then Read Verify
+
+## Action
+Always follow the pattern: Grep to locate → Read to understand → Verify before acting.
+Never edit code without first understanding its context and dependencies.
+
+## Evidence
+- Detected in 90% of exploration sessions across 3+ projects
+- Prevents regressions from blind edits
+- Cross-project pattern with high confidence

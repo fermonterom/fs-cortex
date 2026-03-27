@@ -1,0 +1,28 @@
+{
+  "version": "1.0.0",
+  "reflexes": [
+    {
+      "id": "read-before-edit",
+      "matcher": "Edit|Write",
+      "action": "Verify the file was Read in the last 5 tool calls. If not, suggest reading it first before making changes.",
+      "severity": "high",
+      "enabled": true
+    },
+    {
+      "id": "env-never-commit",
+      "matcher": "Bash",
+      "condition": "git add|git commit",
+      "action": "Verify .env* files are listed in .gitignore. NEVER commit secrets or environment files.",
+      "severity": "critical",
+      "enabled": true
+    },
+    {
+      "id": "test-after-change",
+      "matcher": "Edit|Write",
+      "condition": "route\\.ts|component|\\.test\\.",
+      "action": "Code was modified. Consider running tests to verify nothing is broken.",
+      "severity": "medium",
+      "enabled": true
+    }
+  ]
+}

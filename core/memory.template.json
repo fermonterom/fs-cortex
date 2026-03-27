@@ -1,0 +1,27 @@
+{
+  "version": "1.0.0",
+  "identity": {
+    "name": "",
+    "role": "",
+    "language": "",
+    "location": ""
+  },
+  "config": {
+    "sampling": { "Read": 0.33, "Glob": 0.33, "Grep": 0.33, "default": 1.0 },
+    "max_observations_mb": 10,
+    "archive_days": 30,
+    "law_threshold": 0.90,
+    "max_laws": 10,
+    "max_instincts_per_scope": 30,
+    "decay_per_60_days": 0.1,
+    "promote_min_projects": 2,
+    "promote_min_confidence": 0.80,
+    "semantic_threshold": 0.70
+  },
+  "stats": {
+    "installed": "",
+    "total_observations": 0,
+    "total_instincts": 0,
+    "total_laws": 0
+  }
+}

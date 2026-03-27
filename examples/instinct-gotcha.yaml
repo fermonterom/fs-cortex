@@ -1,0 +1,21 @@
+---
+id: gotcha-framework-boundary-required
+trigger: "when using client-side hooks that require wrapper components"
+confidence: 0.88
+domain: "web-development"
+type: gotcha
+source: "session-observation"
+scope: project
+---
+
+# Framework Boundary Required for Client Hooks
+
+## Action
+When using client-side hooks that depend on context providers,
+always wrap the component in the required boundary component.
+Check framework docs for which hooks need which boundaries.
+
+## Evidence
+- Build error occurred 3 times before pattern was captured
+- Framework-specific: applies to React/Next.js projects
+- Severity: high (causes build failures)
