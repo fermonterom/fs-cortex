@@ -50,29 +50,27 @@ BACKUP_FILE=""
 if [[ "$backup" =~ ^[Yy] ]]; then
     BACKUP_FILE="$HOME/cortex-backup-$(date +%Y-%m-%d).tar.gz"
     if [ -d "$CORTEX_DIR" ]; then
-        # Create portable backup (only knowledge, not raw observations)
-        tar -czf "$BACKUP_FILE" -C "$CORTEX_DIR" \
-            laws/ \
-            instincts/ \
-            memory.json \
-            reflexes.json \
-            evolved/ \
-            daily-summaries/ \
-            exports/ \
-            projects/registry.json \
-            2>/dev/null || true
-        # Also add project instincts
+        # Build list of items to backup (only knowledge, not raw observations)
+        BACKUP_ITEMS=""
+        for item in laws instincts memory.json reflexes.json evolved daily-summaries exports; do
+            [ -e "$CORTEX_DIR/$item" ] && BACKUP_ITEMS="$BACKUP_ITEMS $item"
+        done
+        [ -f "$CORTEX_DIR/projects/registry.json" ] && BACKUP_ITEMS="$BACKUP_ITEMS projects/registry.json"
+        # Include project instincts (not observations)
         for proj_inst in "$CORTEX_DIR"/projects/*/instincts; do
             [ -d "$proj_inst" ] || continue
             proj_id=$(basename "$(dirname "$proj_inst")")
-            tar -rf "${BACKUP_FILE%.gz}" -C "$CORTEX_DIR" "projects/$proj_id/instincts/" 2>/dev/null || true
+            BACKUP_ITEMS="$BACKUP_ITEMS projects/$proj_id/instincts"
         done
-        # Re-gzip if we appended
-        if [ -f "${BACKUP_FILE%.gz}" ]; then
-            gzip -f "${BACKUP_FILE%.gz}" 2>/dev/null || true
+        # Create backup in a single tar command
+        if [ -n "$BACKUP_ITEMS" ]; then
+            tar -czf "$BACKUP_FILE" -C "$CORTEX_DIR" $BACKUP_ITEMS 2>/dev/null || true
+            echo -e "${GREEN}  Portable backup: $BACKUP_FILE${NC}"
+            echo -e "  Import on new machine with: ${BOLD}/cx-restore $BACKUP_FILE${NC}"
+        else
+            echo -e "${YELLOW}  ⚠ No data to backup${NC}"
+            BACKUP_FILE=""
         fi
-        echo -e "${GREEN}  Portable backup: $BACKUP_FILE${NC}"
-        echo -e "  Import on new machine with: ${BOLD}/cx-restore $BACKUP_FILE${NC}"
     fi
 fi
 
@@ -94,6 +92,8 @@ command -v python3 >/dev/null 2>&1 && PYTHON_CMD="python3"
 [ -z "$PYTHON_CMD" ] && command -v python >/dev/null 2>&1 && PYTHON_CMD="python"
 
 if [ -n "$PYTHON_CMD" ] && [ -f "$CLAUDE_DIR/settings.json" ]; then
+    # Backup settings before modifying
+    cp "$CLAUDE_DIR/settings.json" "$CLAUDE_DIR/settings.json.backup.$(date +%Y%m%d-%H%M%S)"
     "$PYTHON_CMD" -c "
 import json
 settings_file = '$CLAUDE_DIR/settings.json'
@@ -133,7 +133,7 @@ claude_md = '$CLAUDE_DIR/CLAUDE.md'
 with open(claude_md) as f:
     content = f.read()
 # Remove from '## Cortex' to the next '## ' heading or end of file
-content = re.sub(r'\n*## Cortex \(Learning System\).*?(?=\n## (?!Cortex)|\Z)', '', content, flags=re.DOTALL)
+content = re.sub(r'\n*## Cortex[^\n]*\n.*?(?=\n## (?!Cortex)|\Z)', '', content, flags=re.DOTALL)
 # Clean trailing whitespace
 content = content.rstrip() + '\n'
 with open(claude_md, 'w') as f:
