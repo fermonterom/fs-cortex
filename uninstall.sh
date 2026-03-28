@@ -64,9 +64,14 @@ if [[ "$backup" =~ ^[Yy] ]]; then
         done
         # Create backup in a single tar command
         if [ -n "$BACKUP_ITEMS" ]; then
-            tar -czf "$BACKUP_FILE" -C "$CORTEX_DIR" $BACKUP_ITEMS 2>/dev/null || true
-            echo -e "${GREEN}  Portable backup: $BACKUP_FILE${NC}"
-            echo -e "  Import on new machine with: ${BOLD}/cx-restore $BACKUP_FILE${NC}"
+            if tar -czf "$BACKUP_FILE" -C "$CORTEX_DIR" $BACKUP_ITEMS 2>/dev/null; then
+                echo -e "${GREEN}  Portable backup: $BACKUP_FILE${NC}"
+                echo -e "  Import on new machine with: ${BOLD}/cx-restore $BACKUP_FILE${NC}"
+            else
+                echo -e "${RED}  ⚠ Backup failed! Check disk space and permissions.${NC}"
+                echo -e "${RED}  Consider running /cx-backup from Claude Code before deleting data.${NC}"
+                BACKUP_FILE=""
+            fi
         else
             echo -e "${YELLOW}  ⚠ No data to backup${NC}"
             BACKUP_FILE=""
@@ -94,51 +99,54 @@ command -v python3 >/dev/null 2>&1 && PYTHON_CMD="python3"
 if [ -n "$PYTHON_CMD" ] && [ -f "$CLAUDE_DIR/settings.json" ]; then
     # Backup settings before modifying
     cp "$CLAUDE_DIR/settings.json" "$CLAUDE_DIR/settings.json.backup.$(date +%Y%m%d-%H%M%S)"
-    "$PYTHON_CMD" -c "
-import json
-settings_file = '$CLAUDE_DIR/settings.json'
+    export _CX_SETTINGS_FILE="$CLAUDE_DIR/settings.json"
+    "$PYTHON_CMD" << 'PYEOF'
+import json, os
+
+settings_file = os.environ["_CX_SETTINGS_FILE"]
 with open(settings_file) as f:
     s = json.load(f)
 
 # Remove cortex hooks
-hooks = s.get('hooks', {})
+hooks = s.get("hooks", {})
 for event in list(hooks.keys()):
     hooks[event] = [
         h for h in hooks[event]
-        if not any('cortex' in str(hook.get('command', '')) for hook in h.get('hooks', []))
+        if not any("cortex" in str(hook.get("command", "")) for hook in h.get("hooks", []))
     ]
     if not hooks[event]:
         del hooks[event]
-s['hooks'] = hooks
+s["hooks"] = hooks
 
 # Remove cortex permissions
-perms = s.get('permissions', {})
-perms['allow'] = [p for p in perms.get('allow', []) if 'cortex' not in p]
-perms['additionalDirectories'] = [d for d in perms.get('additionalDirectories', []) if 'cortex' not in d]
+perms = s.get("permissions", {})
+perms["allow"] = [p for p in perms.get("allow", []) if "cortex" not in p]
+perms["additionalDirectories"] = [d for d in perms.get("additionalDirectories", []) if "cortex" not in d]
 
-with open(settings_file, 'w') as f:
+with open(settings_file, "w") as f:
     json.dump(s, f, indent=2)
-    f.write('\n')
-" && echo "  Cleaned settings.json"
+    f.write("\n")
+PYEOF
+    [ $? -eq 0 ] && echo "  Cleaned settings.json"
 fi
 
 # Remove Cortex section from CLAUDE.md
 if [ -f "$CLAUDE_DIR/CLAUDE.md" ]; then
     if grep -q "## Cortex" "$CLAUDE_DIR/CLAUDE.md" 2>/dev/null; then
-        # Use Python for reliable multi-line removal
         if [ -n "$PYTHON_CMD" ]; then
-            "$PYTHON_CMD" -c "
-import re
-claude_md = '$CLAUDE_DIR/CLAUDE.md'
+            export _CX_CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
+            "$PYTHON_CMD" << 'PYEOF'
+import re, os
+
+claude_md = os.environ["_CX_CLAUDE_MD"]
 with open(claude_md) as f:
     content = f.read()
-# Remove from '## Cortex' to the next '## ' heading or end of file
 content = re.sub(r'\n*## Cortex[^\n]*\n.*?(?=\n## (?!Cortex)|\Z)', '', content, flags=re.DOTALL)
-# Clean trailing whitespace
 content = content.rstrip() + '\n'
 with open(claude_md, 'w') as f:
     f.write(content)
-" && echo "  Removed Cortex section from CLAUDE.md"
+PYEOF
+            [ $? -eq 0 ] && echo "  Removed Cortex section from CLAUDE.md"
         fi
     fi
 fi

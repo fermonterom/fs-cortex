@@ -9,6 +9,7 @@
 # Register in ~/.claude/settings.json hooks PreToolUse and PostToolUse
 
 set -e
+umask 077
 
 HOOK_PHASE="${1:-post}"
 
@@ -70,8 +71,6 @@ _AGENT_ID=$(echo "$INPUT_JSON" | "$PYTHON_CMD" -c "import json,sys; print(json.l
 [ -n "$_AGENT_ID" ] && exit 0
 
 # -- Skip non-useful tools --
-_TOOL_NAME=$(echo "$INPUT_JSON" | "$PYTHON_CMD" -c "import json,sys; print(json.load(sys.stdin).get('tool_name', json.load(sys.stdin) if False else json.load(open('/dev/null')) if False else ''))" 2>/dev/null || true)
-# Re-extract properly
 _TOOL_NAME=$(echo "$INPUT_JSON" | "$PYTHON_CMD" -c "
 import json, sys
 try:
@@ -96,8 +95,8 @@ case "$_TOOL_NAME" in
 esac
 
 # -- Dedup: Skip exact duplicates within session --
-SESSION_ID=$(echo "$INPUT_JSON" | "$PYTHON_CMD" -c "import json,sys; print(json.load(sys.stdin).get('session_id','unknown'))" 2>/dev/null || echo "unknown")
-DEDUP_FILE="/tmp/cortex-dedup-${SESSION_ID}"
+SESSION_ID=$(echo "$INPUT_JSON" | "$PYTHON_CMD" -c "import json,sys,re; sid=json.load(sys.stdin).get('session_id','unknown'); print(re.sub(r'[^a-zA-Z0-9_-]','',sid))" 2>/dev/null || echo "unknown")
+DEDUP_FILE="${TMPDIR:-/tmp}/cortex-dedup-${SESSION_ID}"
 
 # Compute hash of tool+input for dedup
 _INPUT_HASH=$(echo "$INPUT_JSON" | "$PYTHON_CMD" -c "

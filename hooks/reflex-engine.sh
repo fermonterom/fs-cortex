@@ -22,8 +22,9 @@ command -v python3 >/dev/null 2>&1 && PYTHON_CMD="python3"
 
 # Extract tool_name and tool_input from hook data
 # Match against reflexes, fire if match found
+export _CX_REFLEXES_FILE="$REFLEXES_FILE"
 "$PYTHON_CMD" -c '
-import json, sys, re
+import json, sys, re, os
 
 try:
     hook_data = json.load(sys.stdin)
@@ -34,7 +35,7 @@ try:
     else:
         tool_input_str = str(tool_input)
 
-    with open("'"$REFLEXES_FILE"'") as f:
+    with open(os.environ["_CX_REFLEXES_FILE"]) as f:
         reflexes = json.load(f)
 
     fired = []

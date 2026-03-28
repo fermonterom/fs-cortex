@@ -88,7 +88,7 @@ HAS_CORTEX=false
 if [ -d "$CORTEX_DIR" ]; then
     HAS_CORTEX=true
     # Check if there's actual learned data
-    LAW_COUNT=$(find "$CORTEX_DIR/laws" -name "*.txt" 2>/dev/null | wc -l | tr -d ' ')
+    LAW_COUNT=$(find "$CORTEX_DIR/laws" -maxdepth 1 -name "*.txt" 2>/dev/null | wc -l | tr -d ' ')
     INSTINCT_COUNT=$(find "$CORTEX_DIR/instincts" -name "*.yaml" 2>/dev/null | wc -l | tr -d ' ')
     print_warn "Existing cortex installation detected (${LAW_COUNT} laws, ${INSTINCT_COUNT} instincts)"
     echo -e "${YELLOW}Existing data will be preserved. Only hooks, commands, and skill will be updated.${NC}"
@@ -321,27 +321,27 @@ if [ -n "$IMPORT_BACKUP" ]; then
     print_step "Importing backup..."
     TEMP_DIR=$(mktemp -d)
     if tar -xzf "$IMPORT_BACKUP" -C "$TEMP_DIR" 2>/dev/null; then
-        # Copy laws
-        [ -d "$TEMP_DIR/laws" ] && cp -n "$TEMP_DIR/laws/"*.txt "$CORTEX_DIR/laws/" 2>/dev/null
+        # Copy laws (|| true: macOS cp -n returns 1 if target exists)
+        [ -d "$TEMP_DIR/laws" ] && { cp -n "$TEMP_DIR/laws/"*.txt "$CORTEX_DIR/laws/" 2>/dev/null || true; }
         # Copy instincts
-        [ -d "$TEMP_DIR/instincts/personal" ] && cp -n "$TEMP_DIR/instincts/personal/"*.yaml "$CORTEX_DIR/instincts/personal/" 2>/dev/null
+        [ -d "$TEMP_DIR/instincts/personal" ] && { cp -n "$TEMP_DIR/instincts/personal/"*.yaml "$CORTEX_DIR/instincts/personal/" 2>/dev/null || true; }
         # Copy memory.json (backup has real user data, overwrite template)
         [ -f "$TEMP_DIR/memory.json" ] && cp "$TEMP_DIR/memory.json" "$CORTEX_DIR/memory.json" 2>/dev/null
         # Copy reflexes.json (backup has user customizations, overwrite default)
         [ -f "$TEMP_DIR/reflexes.json" ] && cp "$TEMP_DIR/reflexes.json" "$CORTEX_DIR/reflexes.json" 2>/dev/null
         # Copy projects registry
-        [ -f "$TEMP_DIR/projects/registry.json" ] && cp -n "$TEMP_DIR/projects/registry.json" "$CORTEX_DIR/projects/registry.json" 2>/dev/null
+        [ -f "$TEMP_DIR/projects/registry.json" ] && { cp -n "$TEMP_DIR/projects/registry.json" "$CORTEX_DIR/projects/registry.json" 2>/dev/null || true; }
         # Copy project instincts
         for proj_dir in "$TEMP_DIR/projects"/*/instincts; do
             [ -d "$proj_dir" ] || continue
             proj_id=$(basename "$(dirname "$proj_dir")")
             mkdir -p "$CORTEX_DIR/projects/$proj_id/instincts/personal"
-            cp -n "$proj_dir/personal/"*.yaml "$CORTEX_DIR/projects/$proj_id/instincts/personal/" 2>/dev/null
+            cp -n "$proj_dir/personal/"*.yaml "$CORTEX_DIR/projects/$proj_id/instincts/personal/" 2>/dev/null || true
         done
         # Copy evolved content
-        [ -d "$TEMP_DIR/evolved" ] && cp -rn "$TEMP_DIR/evolved/"* "$CORTEX_DIR/evolved/" 2>/dev/null
+        [ -d "$TEMP_DIR/evolved" ] && { cp -r -n "$TEMP_DIR/evolved/"* "$CORTEX_DIR/evolved/" 2>/dev/null || true; }
         # Copy daily summaries
-        [ -d "$TEMP_DIR/daily-summaries" ] && cp -n "$TEMP_DIR/daily-summaries/"*.md "$CORTEX_DIR/daily-summaries/" 2>/dev/null
+        [ -d "$TEMP_DIR/daily-summaries" ] && { cp -n "$TEMP_DIR/daily-summaries/"*.md "$CORTEX_DIR/daily-summaries/" 2>/dev/null || true; }
 
         IMPORTED_LAWS=$(find "$CORTEX_DIR/laws" -name "*.txt" 2>/dev/null | wc -l | tr -d ' ')
         IMPORTED_INST=$(find "$CORTEX_DIR/instincts/personal" -name "*.yaml" 2>/dev/null | wc -l | tr -d ' ')
