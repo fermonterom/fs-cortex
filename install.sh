@@ -115,7 +115,8 @@ fi
 
 if $HAS_CORTEX; then
     echo ""
-    if ! ask_yes_no "Overwrite existing cortex installation?" "n"; then
+    echo -e "${YELLOW}Existing cortex data will be preserved. Only hooks, commands, and skill will be updated.${NC}"
+    if ! ask_yes_no "Update cortex installation?" "y"; then
         echo "Installation cancelled."
         exit 0
     fi
@@ -123,16 +124,31 @@ fi
 
 # Step 4: Create directory structure
 print_step "Creating directory structure..."
-mkdir -p "$CORTEX_DIR"/{laws,instincts/{personal,inherited},projects,evolved/{skills,commands,agents},exports}
+mkdir -p "$CORTEX_DIR"/{laws/archive,instincts/{personal,inherited},projects,evolved/{skills,commands,agents},exports,daily-summaries}
 chmod 700 "$CORTEX_DIR"
 print_ok "Created ~/.claude/cortex/"
 
-# Step 5: Copy core files
+# Step 5: Copy core files (preserve existing data on reinstall)
 print_step "Installing core files..."
-cp "$SCRIPT_DIR/core/memory.template.json" "$CORTEX_DIR/memory.json" 2>/dev/null || true
-cp "$SCRIPT_DIR/core/reflexes.default.json" "$CORTEX_DIR/reflexes.json" 2>/dev/null || true
-cp "$SCRIPT_DIR/core/catalog.default.json" "$CORTEX_DIR/catalog.json" 2>/dev/null || true
-print_ok "Core files installed"
+if [ ! -f "$CORTEX_DIR/memory.json" ]; then
+    cp "$SCRIPT_DIR/core/memory.template.json" "$CORTEX_DIR/memory.json"
+    print_ok "Created memory.json"
+else
+    print_warn "memory.json exists, preserving user data"
+fi
+if [ ! -f "$CORTEX_DIR/reflexes.json" ]; then
+    cp "$SCRIPT_DIR/core/reflexes.default.json" "$CORTEX_DIR/reflexes.json"
+    print_ok "Created reflexes.json"
+else
+    print_warn "reflexes.json exists, preserving user data"
+fi
+if [ ! -f "$CORTEX_DIR/catalog.json" ]; then
+    cp "$SCRIPT_DIR/core/catalog.default.json" "$CORTEX_DIR/catalog.json"
+    print_ok "Created catalog.json"
+else
+    print_warn "catalog.json exists, preserving user data"
+fi
+print_ok "Core files ready"
 
 # Step 6: Install skill
 print_step "Installing cortex skill..."
@@ -319,8 +335,8 @@ if $MIGRATE; then
     bash "$SCRIPT_DIR/migrate/from-sinapsis.sh"
 fi
 
-# Step 13: Onboarding (if no migration)
-if ! $MIGRATE; then
+# Step 13: Onboarding (only for fresh installs, not updates)
+if ! $MIGRATE && ! $HAS_CORTEX; then
     print_step "Setting up initial configuration..."
 
     # Populate memory.json with user input

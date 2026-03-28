@@ -1,6 +1,6 @@
 #!/bin/bash
 # Cortex Session Start — SessionStart hook
-# Injects condensed Laws at every session start AND after /compact.
+# Injects condensed Laws + EOD Quick Resume at every session start AND after /compact.
 # Reads laws from ~/.claude/cortex/laws/, checks for new day, learn-pending, and EOD.
 
 set -e
@@ -54,11 +54,30 @@ if [ -f "$CORTEX_DIR/.learn-pending" ]; then
   CONTEXT="${CONTEXT}\n\nYou have 50+ new observations. Run /cx-learn to analyze patterns."
 fi
 
-# 4. Check for yesterday's EOD
-if [ -n "$YESTERDAY" ]; then
+# 4. Find and inject EOD Quick Resume (check today first, then yesterday)
+EOD_FILE=""
+EOD_DATE=""
+if [ -f "$EOD_DIR/${TODAY}.md" ]; then
+  EOD_FILE="$EOD_DIR/${TODAY}.md"
+  EOD_DATE="$TODAY"
+elif [ -n "$YESTERDAY" ] && [ -f "$EOD_DIR/${YESTERDAY}.md" ]; then
   EOD_FILE="$EOD_DIR/${YESTERDAY}.md"
-  if [ -f "$EOD_FILE" ]; then
-    CONTEXT="${CONTEXT}\n\nYesterday's EOD found. Read ~/.claude/cortex/daily-summaries/${YESTERDAY}.md for context."
+  EOD_DATE="$YESTERDAY"
+fi
+
+if [ -n "$EOD_FILE" ]; then
+  # Extract Quick Resume section (between "## Quick Resume" and next "##" or EOF)
+  QUICK_RESUME=$(sed -n '/^## Quick Resume/,/^## /{ /^## Quick Resume/d; /^## /d; p; }' "$EOD_FILE" 2>/dev/null | head -10 | sed 's/^[[:space:]]*//' | tr -s '\n' ' ' | sed 's/^[> ]*//' | sed 's/[[:space:]]*$//')
+
+  if [ -n "$QUICK_RESUME" ]; then
+    CONTEXT="${CONTEXT}\n\nEOD RESUME (${EOD_DATE}): ${QUICK_RESUME}"
+  fi
+
+  # Also extract "For tomorrow" section if present (only lines starting with -)
+  FOR_TOMORROW=$(sed -n '/^### For tomorrow/,/^###\|^##\|^---/{ /^### For tomorrow/d; /^###/d; /^##/d; /^---/d; p; }' "$EOD_FILE" 2>/dev/null | grep '^- ' | head -5 | sed 's/^- //' | paste -sd ';' - | sed 's/;$//')
+
+  if [ -n "$FOR_TOMORROW" ]; then
+    CONTEXT="${CONTEXT}\nPRIORITIES: ${FOR_TOMORROW}"
   fi
 fi
 

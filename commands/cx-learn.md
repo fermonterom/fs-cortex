@@ -95,7 +95,11 @@ For each cluster of 3+ related instincts:
 Scan all instincts with confidence >= 0.90.
 
 For each that does not already have a corresponding law in `~/.claude/cortex/laws/`:
-1. Condense the instinct into a one-liner (max 120 chars)
+1. Condense the instinct into an **actionable one-liner** (max 120 chars)
+   - MUST include both WHEN and WHAT: `"When X, do Y"` or `"Always do X when Y"` or `"NEVER do X"`
+   - BAD: `"Before creating commits"` (no action)
+   - GOOD: `"Before creating commits — run git status + diff + log triple-check"`
+   - Read BOTH the `trigger` AND `action` fields from the YAML to compose the one-liner
 2. Write to `~/.claude/cortex/laws/{id}.txt`
 
 If more than 10 laws exist after distillation:
