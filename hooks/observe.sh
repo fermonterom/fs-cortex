@@ -54,11 +54,9 @@ MAX_FILE_SIZE_MB=10
 
 # -- Session guards --
 
-# Skip non-CLI sessions
-case "${CLAUDE_CODE_ENTRYPOINT:-cli}" in
-  cli) ;;
-  *) exit 0 ;;
-esac
+# Accept all Claude Code sessions (CLI, VS Code, Cursor, JetBrains, etc.)
+# Only skip if explicitly set to a non-Claude entrypoint
+# CLAUDE_CODE_ENTRYPOINT values are not officially documented and may change
 
 # Skip minimal profile
 [ "${ECC_HOOK_PROFILE:-standard}" = "minimal" ] && exit 0
