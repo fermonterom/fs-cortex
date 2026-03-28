@@ -163,10 +163,12 @@ for hook in "$SCRIPT_DIR/hooks/"*.sh; do
 done
 print_ok "Hooks installed to ~/.claude/hooks/cortex/"
 
-# Step 9: Install seed instinct
+# Step 9: Install seed instinct (only if not already present)
 print_step "Installing seed instinct..."
-if [ -f "$SCRIPT_DIR/rules/seed.md" ]; then
-    cp "$SCRIPT_DIR/rules/seed.md" "$CORTEX_DIR/instincts/personal/read-instructions-before-executing.yaml" 2>/dev/null || true
+if [ -f "$CORTEX_DIR/instincts/personal/read-instructions-before-executing.yaml" ]; then
+    print_warn "Seed instinct already exists, preserving"
+elif [ -f "$SCRIPT_DIR/rules/seed.md" ]; then
+    cp "$SCRIPT_DIR/rules/seed.md" "$CORTEX_DIR/instincts/personal/read-instructions-before-executing.yaml"
     print_ok "Seed instinct installed"
 else
     print_warn "Seed rule not found, skipping"
@@ -270,21 +272,17 @@ cortex_hooks = {
     ]
 }
 
-# Merge cortex hooks with existing (remove old sinapsis/cortex, keep others)
+# Merge cortex hooks with existing (remove old cortex hooks, keep others)
 existing_hooks = settings.get("hooks", {})
 for event, handlers in cortex_hooks.items():
-    # Get existing handlers for this event, filter out sinapsis/cortex/daily-startup
     existing = existing_hooks.get(event, [])
     cleaned = [
         h for h in existing
         if not any(
-            "sinapsis" in str(hook.get("command", "")) or
-            "cortex" in str(hook.get("command", "")) or
-            "daily-startup" in str(hook.get("command", ""))
+            "cortex" in str(hook.get("command", ""))
             for hook in h.get("hooks", [])
         )
     ]
-    # Add cortex handlers
     existing_hooks[event] = cleaned + handlers
 
 settings["hooks"] = existing_hooks
@@ -327,10 +325,10 @@ if [ -n "$IMPORT_BACKUP" ]; then
         [ -d "$TEMP_DIR/laws" ] && cp -n "$TEMP_DIR/laws/"*.txt "$CORTEX_DIR/laws/" 2>/dev/null
         # Copy instincts
         [ -d "$TEMP_DIR/instincts/personal" ] && cp -n "$TEMP_DIR/instincts/personal/"*.yaml "$CORTEX_DIR/instincts/personal/" 2>/dev/null
-        # Copy memory.json
-        [ -f "$TEMP_DIR/memory.json" ] && [ ! -s "$CORTEX_DIR/memory.json" ] && cp "$TEMP_DIR/memory.json" "$CORTEX_DIR/memory.json" 2>/dev/null
-        # Copy reflexes.json
-        [ -f "$TEMP_DIR/reflexes.json" ] && cp -n "$TEMP_DIR/reflexes.json" "$CORTEX_DIR/reflexes.json" 2>/dev/null
+        # Copy memory.json (backup has real user data, overwrite template)
+        [ -f "$TEMP_DIR/memory.json" ] && cp "$TEMP_DIR/memory.json" "$CORTEX_DIR/memory.json" 2>/dev/null
+        # Copy reflexes.json (backup has user customizations, overwrite default)
+        [ -f "$TEMP_DIR/reflexes.json" ] && cp "$TEMP_DIR/reflexes.json" "$CORTEX_DIR/reflexes.json" 2>/dev/null
         # Copy projects registry
         [ -f "$TEMP_DIR/projects/registry.json" ] && cp -n "$TEMP_DIR/projects/registry.json" "$CORTEX_DIR/projects/registry.json" 2>/dev/null
         # Copy project instincts
