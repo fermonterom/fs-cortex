@@ -148,6 +148,7 @@ Display what happened:
 
 - Delete `.learn-pending` marker if it exists in `~/.claude/cortex/`
 - Update project's `last_learned` timestamp in registry.json
+- Update `~/.claude/cortex/memory.json` stats: count all observations (from all projects' `observations.jsonl`), all instincts (from `instincts/personal/*.yaml`), and all laws (from `laws/*.txt`)
 
 ## Edge cases
 
