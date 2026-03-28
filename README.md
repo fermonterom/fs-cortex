@@ -55,9 +55,9 @@ bash install.sh
 
 The installer will:
 - Create `~/.claude/cortex/` data directory
-- Install the cortex skill and 5 commands
+- Install the cortex skill and 7 commands
 - Configure hooks in `settings.json` (with backup)
-- Detect and migrate existing sinapsis data (if found)
+- Import knowledge from a previous backup (if provided)
 - Append Cortex section to `CLAUDE.md`
 - Ask your name, role, and language for personalization
 
@@ -79,6 +79,8 @@ Open Claude Code and work normally. Cortex works automatically:
 | `/cx-eod` | End of day summary, saves context for next session |
 | `/cx-gotcha` | Capture error→fix pattern as high-priority instinct |
 | `/cx-export` | Generate portable skill for Claude web/app |
+| `/cx-backup` | Create portable .tar.gz backup for machine transfer |
+| `/cx-restore` | Import knowledge from a backup archive |
 
 ### /cx-learn — The Power Command
 
@@ -146,18 +148,24 @@ Default reflexes:
 
 Add custom reflexes by editing `~/.claude/cortex/reflexes.json`.
 
-## Migration from sinapsis
+## Backup & Restore
 
-If you have an existing sinapsis installation, the installer detects it automatically and offers migration:
+Transfer your knowledge between machines:
 
-- Instincts → copied to `cortex/instincts/personal/`
-- Observations → copied to `cortex/projects/{hash}/`
-- Evolved content → copied to `cortex/evolved/`
-- Projects registry → copied to `cortex/projects/registry.json`
-- High-confidence instincts → auto-distilled into Laws
-- Old data → backed up (never deleted)
+```bash
+# On old machine — export knowledge
+/cx-backup
+# → Creates ~/cortex-backup-YYYY-MM-DD.tar.gz
 
-Manual migration: `bash migrate/from-sinapsis.sh`
+# On new machine — install and import
+bash install.sh
+# → Installer asks for backup path during setup
+
+# Or restore into an existing installation
+/cx-restore ~/cortex-backup-2026-03-28.tar.gz
+```
+
+Backups include: laws, instincts, memory, reflexes, evolved content, daily summaries, and exports. Raw observations are excluded (too large, and patterns are already captured in instincts).
 
 ## Token Budget
 
@@ -167,7 +175,7 @@ Manual migration: `bash migrate/from-sinapsis.sh`
 | Laws (max 10) | ~300 | Always (SessionStart hook) |
 | Instincts | ~50-100 each | On demand (/cx-status, /cx-learn) |
 | Observations | 0 | Never (async hooks, disk only) |
-| **Total overhead** | **~1,800** | **vs ~25,000 with sinapsis** |
+| **Total overhead** | **~1,800** | **Per session** |
 
 ## Uninstall
 
@@ -175,7 +183,7 @@ Manual migration: `bash migrate/from-sinapsis.sh`
 bash uninstall.sh
 ```
 
-Offers data backup before removal. Cleans settings.json and CLAUDE.md.
+Offers portable backup before removal. Preserves learned data by default. Cleans settings.json and CLAUDE.md.
 
 ## Credits
 

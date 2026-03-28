@@ -25,32 +25,65 @@ fi
 
 # Show what will be removed
 echo "This will remove:"
-echo "  - ~/.claude/cortex/ (data directory)"
 echo "  - ~/.claude/skills/cortex/ (skill)"
 echo "  - ~/.claude/hooks/cortex/ (hooks)"
 echo "  - ~/.claude/commands/cx-*.md (commands)"
 echo "  - Cortex hooks from settings.json"
 echo "  - Cortex section from CLAUDE.md"
 echo ""
+echo "Your learned data (~/.claude/cortex/) will be preserved by default."
+echo ""
 
-read -rp "$(echo -e "${BOLD}Are you sure? This cannot be undone. [y/N]:${NC} ")" confirm
+read -rp "$(echo -e "${BOLD}Are you sure? [y/N]:${NC} ")" confirm
 if [[ ! "$confirm" =~ ^[Yy] ]]; then
     echo "Cancelled."
     exit 0
 fi
 
-# Backup data first
-read -rp "$(echo -e "${BOLD}Backup data before removing? [Y/n]:${NC} ")" backup
+# Backup knowledge data as portable archive
+echo ""
+echo -e "${YELLOW}Your learned knowledge (laws, instincts, reflexes) can be exported${NC}"
+echo -e "${YELLOW}as a portable .tar.gz to import on another machine.${NC}"
+read -rp "$(echo -e "${BOLD}Create portable backup before uninstalling? [Y/n]:${NC} ")" backup
 backup="${backup:-y}"
+BACKUP_FILE=""
 if [[ "$backup" =~ ^[Yy] ]]; then
-    BACKUP="$CLAUDE_DIR/cortex.backup.$(date +%Y%m%d-%H%M%S)"
+    BACKUP_FILE="$HOME/cortex-backup-$(date +%Y-%m-%d).tar.gz"
     if [ -d "$CORTEX_DIR" ]; then
-        cp -r "$CORTEX_DIR" "$BACKUP" 2>/dev/null && echo -e "${GREEN}  Backed up to $BACKUP${NC}"
+        # Create portable backup (only knowledge, not raw observations)
+        tar -czf "$BACKUP_FILE" -C "$CORTEX_DIR" \
+            laws/ \
+            instincts/ \
+            memory.json \
+            reflexes.json \
+            evolved/ \
+            daily-summaries/ \
+            exports/ \
+            projects/registry.json \
+            2>/dev/null || true
+        # Also add project instincts
+        for proj_inst in "$CORTEX_DIR"/projects/*/instincts; do
+            [ -d "$proj_inst" ] || continue
+            proj_id=$(basename "$(dirname "$proj_inst")")
+            tar -rf "${BACKUP_FILE%.gz}" -C "$CORTEX_DIR" "projects/$proj_id/instincts/" 2>/dev/null || true
+        done
+        # Re-gzip if we appended
+        if [ -f "${BACKUP_FILE%.gz}" ]; then
+            gzip -f "${BACKUP_FILE%.gz}" 2>/dev/null || true
+        fi
+        echo -e "${GREEN}  Portable backup: $BACKUP_FILE${NC}"
+        echo -e "  Import on new machine with: ${BOLD}/cx-restore $BACKUP_FILE${NC}"
     fi
 fi
 
-# Remove data
-[ -d "$CORTEX_DIR" ] && rm -rf "$CORTEX_DIR" && echo "  Removed ~/.claude/cortex/"
+# Remove cortex data directory
+echo ""
+read -rp "$(echo -e "${BOLD}Also delete learned data (laws, instincts, observations)? [y/N]:${NC} ")" delete_data
+if [[ "$delete_data" =~ ^[Yy] ]]; then
+    [ -d "$CORTEX_DIR" ] && rm -rf "$CORTEX_DIR" && echo "  Removed ~/.claude/cortex/"
+else
+    echo -e "  ${YELLOW}Keeping ~/.claude/cortex/ (data preserved)${NC}"
+fi
 [ -d "$CLAUDE_DIR/skills/cortex" ] && rm -rf "$CLAUDE_DIR/skills/cortex" && echo "  Removed skill"
 [ -d "$CLAUDE_DIR/hooks/cortex" ] && rm -rf "$CLAUDE_DIR/hooks/cortex" && echo "  Removed hooks"
 rm -f "$CLAUDE_DIR/commands/cx-"*.md 2>/dev/null && echo "  Removed commands"
@@ -112,7 +145,8 @@ fi
 
 echo ""
 echo -e "${GREEN}Cortex uninstalled.${NC}"
-if [[ "$backup" =~ ^[Yy] ]]; then
-    echo -e "Data backed up to: ${BOLD}$BACKUP${NC}"
+if [ -n "$BACKUP_FILE" ] && [ -f "$BACKUP_FILE" ]; then
+    echo -e "Portable backup: ${BOLD}$BACKUP_FILE${NC}"
+    echo -e "To restore: install Cortex on new machine, then run ${BOLD}/cx-restore $BACKUP_FILE${NC}"
 fi
 echo ""

@@ -83,42 +83,31 @@ fi
 # Step 2: Check for existing installations
 print_step "Checking for existing installations..."
 
-HAS_SINAPSIS=false
 HAS_CORTEX=false
-
-if [ -d "$HOME/.claude/homunculus" ] || [ -d "$SKILLS_DIR/sinapsis" ]; then
-    HAS_SINAPSIS=true
-    print_warn "Existing sinapsis installation detected"
-fi
 
 if [ -d "$CORTEX_DIR" ]; then
     HAS_CORTEX=true
-    print_warn "Existing cortex installation detected"
-fi
-
-# Step 3: Ask about migration
-MIGRATE=false
-if $HAS_SINAPSIS; then
-    echo ""
-    echo -e "${YELLOW}Found existing sinapsis data:${NC}"
-    [ -d "$HOME/.claude/homunculus/instincts/personal" ] && \
-        echo "  - $(ls "$HOME/.claude/homunculus/instincts/personal/" 2>/dev/null | wc -l | tr -d ' ') instincts"
-    [ -f "$HOME/.claude/homunculus/projects.json" ] && \
-        echo "  - Projects registry"
-    [ -d "$HOME/.claude/homunculus/evolved" ] && \
-        echo "  - Evolved skills/commands/agents"
-    echo ""
-    if ask_yes_no "Migrate sinapsis data to cortex?"; then
-        MIGRATE=true
-    fi
-fi
-
-if $HAS_CORTEX; then
-    echo ""
-    echo -e "${YELLOW}Existing cortex data will be preserved. Only hooks, commands, and skill will be updated.${NC}"
+    # Check if there's actual learned data
+    LAW_COUNT=$(find "$CORTEX_DIR/laws" -name "*.txt" 2>/dev/null | wc -l | tr -d ' ')
+    INSTINCT_COUNT=$(find "$CORTEX_DIR/instincts" -name "*.yaml" 2>/dev/null | wc -l | tr -d ' ')
+    print_warn "Existing cortex installation detected (${LAW_COUNT} laws, ${INSTINCT_COUNT} instincts)"
+    echo -e "${YELLOW}Existing data will be preserved. Only hooks, commands, and skill will be updated.${NC}"
     if ! ask_yes_no "Update cortex installation?" "y"; then
         echo "Installation cancelled."
         exit 0
+    fi
+fi
+
+# Step 3: Check for backup to import
+IMPORT_BACKUP=""
+if ! $HAS_CORTEX; then
+    echo ""
+    echo -e "${BOLD}Do you have a backup from a previous Cortex installation?${NC}"
+    echo "  (Created with /cx-backup — a .tar.gz file)"
+    read -rp "  Path to backup (or Enter to skip): " IMPORT_BACKUP
+    if [ -n "$IMPORT_BACKUP" ] && [ ! -f "$IMPORT_BACKUP" ]; then
+        print_error "File not found: $IMPORT_BACKUP"
+        IMPORT_BACKUP=""
     fi
 fi
 
@@ -263,7 +252,7 @@ cortex_hooks = {
             "hooks": [{
                 "type": "command",
                 "command": "bash ~/.claude/hooks/cortex/observe.sh pre",
-                "timeout": 10,
+                "timeout": 10000,
                 "async": True
             }]
         }
@@ -274,7 +263,7 @@ cortex_hooks = {
             "hooks": [{
                 "type": "command",
                 "command": "bash ~/.claude/hooks/cortex/observe.sh post",
-                "timeout": 10,
+                "timeout": 10000,
                 "async": True
             }]
         }
@@ -329,14 +318,44 @@ else
     print_ok "Created CLAUDE.md with Cortex section"
 fi
 
-# Step 12: Migration
-if $MIGRATE; then
-    print_step "Migrating sinapsis data..."
-    bash "$SCRIPT_DIR/migrate/from-sinapsis.sh"
+# Step 12: Import backup (if provided)
+if [ -n "$IMPORT_BACKUP" ]; then
+    print_step "Importing backup..."
+    TEMP_DIR=$(mktemp -d)
+    if tar -xzf "$IMPORT_BACKUP" -C "$TEMP_DIR" 2>/dev/null; then
+        # Copy laws
+        [ -d "$TEMP_DIR/laws" ] && cp -n "$TEMP_DIR/laws/"*.txt "$CORTEX_DIR/laws/" 2>/dev/null
+        # Copy instincts
+        [ -d "$TEMP_DIR/instincts/personal" ] && cp -n "$TEMP_DIR/instincts/personal/"*.yaml "$CORTEX_DIR/instincts/personal/" 2>/dev/null
+        # Copy memory.json
+        [ -f "$TEMP_DIR/memory.json" ] && [ ! -s "$CORTEX_DIR/memory.json" ] && cp "$TEMP_DIR/memory.json" "$CORTEX_DIR/memory.json" 2>/dev/null
+        # Copy reflexes.json
+        [ -f "$TEMP_DIR/reflexes.json" ] && cp -n "$TEMP_DIR/reflexes.json" "$CORTEX_DIR/reflexes.json" 2>/dev/null
+        # Copy projects registry
+        [ -f "$TEMP_DIR/projects/registry.json" ] && cp -n "$TEMP_DIR/projects/registry.json" "$CORTEX_DIR/projects/registry.json" 2>/dev/null
+        # Copy project instincts
+        for proj_dir in "$TEMP_DIR/projects"/*/instincts; do
+            [ -d "$proj_dir" ] || continue
+            proj_id=$(basename "$(dirname "$proj_dir")")
+            mkdir -p "$CORTEX_DIR/projects/$proj_id/instincts/personal"
+            cp -n "$proj_dir/personal/"*.yaml "$CORTEX_DIR/projects/$proj_id/instincts/personal/" 2>/dev/null
+        done
+        # Copy evolved content
+        [ -d "$TEMP_DIR/evolved" ] && cp -rn "$TEMP_DIR/evolved/"* "$CORTEX_DIR/evolved/" 2>/dev/null
+        # Copy daily summaries
+        [ -d "$TEMP_DIR/daily-summaries" ] && cp -n "$TEMP_DIR/daily-summaries/"*.md "$CORTEX_DIR/daily-summaries/" 2>/dev/null
+
+        IMPORTED_LAWS=$(find "$CORTEX_DIR/laws" -name "*.txt" 2>/dev/null | wc -l | tr -d ' ')
+        IMPORTED_INST=$(find "$CORTEX_DIR/instincts/personal" -name "*.yaml" 2>/dev/null | wc -l | tr -d ' ')
+        print_ok "Backup imported: ${IMPORTED_LAWS} laws, ${IMPORTED_INST} instincts"
+    else
+        print_error "Failed to extract backup. Continuing with fresh install."
+    fi
+    rm -rf "$TEMP_DIR"
 fi
 
 # Step 13: Onboarding (only for fresh installs, not updates)
-if ! $MIGRATE && ! $HAS_CORTEX; then
+if ! $HAS_CORTEX && [ -z "$IMPORT_BACKUP" ]; then
     print_step "Setting up initial configuration..."
 
     # Populate memory.json with user input
@@ -386,7 +405,7 @@ echo -e "  1. Open Claude Code and work normally"
 echo -e "  2. Laws inject automatically at session start"
 echo -e "  3. Run ${BOLD}/cx-learn${NC} when suggested to crystallize patterns"
 echo ""
-if $MIGRATE; then
-    echo -e "  ${YELLOW}Sinapsis data migrated. Old data backed up.${NC}"
+if [ -n "$IMPORT_BACKUP" ]; then
+    echo -e "  ${YELLOW}Knowledge imported from backup.${NC}"
 fi
 echo ""

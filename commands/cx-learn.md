@@ -147,6 +147,8 @@ Display what happened:
 ### Step 8: Cleanup
 
 - Delete `.learn-pending` marker if it exists in `~/.claude/cortex/`
+- Delete `.obs-count` file if it exists (reset counter)
+- Count total observation lines across all projects and write to `~/.claude/cortex/.last-learn-count` (used by session-start fallback)
 - Update project's `last_learned` timestamp in registry.json
 - Update `~/.claude/cortex/memory.json` stats: count all observations (from all projects' `observations.jsonl`), all instincts (from `instincts/personal/*.yaml`), and all laws (from `laws/*.txt`)
 

@@ -49,9 +49,22 @@ elif [ -z "$LAST_DATE" ]; then
   CONTEXT="${CONTEXT}\n\nNEW DAY (last session: first time). Consider running /cx-learn to crystallize patterns."
 fi
 
-# 3. Check for .learn-pending marker
+# 3. Check for .learn-pending marker OR count observations as fallback
 if [ -f "$CORTEX_DIR/.learn-pending" ]; then
   CONTEXT="${CONTEXT}\n\nYou have 50+ new observations. Run /cx-learn to analyze patterns."
+else
+  # Fallback: count actual observations vs last learn count
+  LAST_LEARN_COUNT=0
+  [ -f "$CORTEX_DIR/.last-learn-count" ] && LAST_LEARN_COUNT=$(cat "$CORTEX_DIR/.last-learn-count" 2>/dev/null | tr -d '[:space:]')
+  LAST_LEARN_COUNT="${LAST_LEARN_COUNT:-0}"
+  TOTAL_OBS=0
+  for _obs_file in "$CORTEX_DIR"/projects/*/observations.jsonl; do
+    [ -f "$_obs_file" ] && TOTAL_OBS=$((TOTAL_OBS + $(wc -l < "$_obs_file" 2>/dev/null || echo 0)))
+  done
+  NEW_OBS=$((TOTAL_OBS - LAST_LEARN_COUNT))
+  if [ "$NEW_OBS" -ge 50 ]; then
+    CONTEXT="${CONTEXT}\n\nYou have ${NEW_OBS} new observations since last /cx-learn. Run /cx-learn to analyze patterns."
+  fi
 fi
 
 # 4. Find and inject EOD Quick Resume (check today first, then yesterday)

@@ -4,7 +4,7 @@ description: |
   Continuous learning system for Claude Code. Observes sessions,
   crystallizes patterns as atomic instincts with confidence scoring,
   distills proven knowledge into laws. Commands: /cx-status, /cx-learn,
-  /cx-eod, /cx-gotcha, /cx-export.
+  /cx-eod, /cx-gotcha, /cx-export, /cx-backup, /cx-restore.
 auto_activate: true
 ---
 
@@ -42,6 +42,8 @@ Laws (TXT one-liners, injected every session, ~30 tokens each)
 - `/cx-eod` -- End of day summary, saves context for next session
 - `/cx-gotcha` -- Capture error->fix as high-priority instinct
 - `/cx-export` -- Generate portable skill with condensed instincts for Claude web/app
+- `/cx-backup` -- Create portable .tar.gz backup of all knowledge for machine transfer
+- `/cx-restore` -- Import knowledge from a backup archive, merging with existing data
 
 ## Confidence Tiers
 
