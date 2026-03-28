@@ -185,7 +185,7 @@ if [ -f "$SETTINGS_FILE" ]; then
 fi
 
 # Use Python to safely merge hooks into settings.json
-"$PYTHON_CMD" << 'PYEOF'
+if "$PYTHON_CMD" << 'PYEOF'
 import json, os
 
 settings_file = os.path.expanduser("~/.claude/settings.json")
@@ -291,14 +291,11 @@ settings["hooks"] = existing_hooks
 with open(settings_file, "w") as f:
     json.dump(settings, f, indent=2)
     f.write("\n")
-
-print("OK")
 PYEOF
-
-if [ $? -eq 0 ]; then
+then
     print_ok "Hooks configured in settings.json"
 else
-    print_error "Failed to configure hooks. Manual setup may be needed."
+    print_error "Failed to configure hooks. Check that settings.json is valid JSON."
 fi
 
 # Step 11: Append to CLAUDE.md
