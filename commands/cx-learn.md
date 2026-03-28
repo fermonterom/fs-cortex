@@ -89,6 +89,7 @@ For each cluster of 3+ related instincts:
 1. Analyze if the cluster represents a coherent skill, command, or agent pattern
 2. Ask: "These N instincts in [domain] could become a [Skill/Command/Agent]: '[proposed name]'. Generate? (Y/N)"
 3. If yes: generate and write to `~/.claude/cortex/evolved/{skills,commands,agents}/`
+4. **Naming convention**: all evolved artifacts MUST use the `fs-` prefix (e.g., `fs-edit-verify-loop.md`)
 
 ### Step 5: Distill Laws
 
