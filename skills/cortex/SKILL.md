@@ -32,9 +32,22 @@ Laws (TXT one-liners, injected every session, ~30 tokens each)
 
 ### Automatic (no user action needed)
 - **Laws** injected at session start via SessionStart hook
+- **EOD Resume** injected at session start -- Claude MUST present it proactively (see below)
 - **Observations** captured silently via async PreToolUse/PostToolUse hooks
 - **Reflexes** fire deterministically via PreToolUse hook (reflex-engine.sh)
 - After ~50 observations, session-start suggests running /cx-learn
+
+### Session Start Behavior (MANDATORY)
+
+When the system prompt contains `EOD RESUME`, Claude MUST proactively present it in the **first response** of the session, WITHOUT the user asking. Format:
+
+1. **Greeting** -- Brief saludo
+2. **Yesterday's summary** -- Paraphrase the EOD RESUME content (1-2 lines)
+3. **Learning status** -- If there are pending observations, mention `/cx-learn`
+4. **Today's priorities** -- List the PRIORITIES as a numbered list
+5. **Ask** -- "¿Por dónde empezamos?"
+
+This is the default opening behavior. If the user's first message already asks for something specific, address their request first, then briefly mention the EOD context if relevant.
 
 ### On Demand (user invokes)
 - `/cx-learn` -- Full pipeline: analyze observations, create/update instincts, distill laws, check promotions, offer inheritance/bootstrap for new projects
