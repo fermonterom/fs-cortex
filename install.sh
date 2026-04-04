@@ -105,9 +105,14 @@ if ! $HAS_CORTEX; then
     echo -e "${BOLD}Do you have a backup from a previous Cortex installation?${NC}"
     echo "  (Created with /cx-backup — a .tar.gz file)"
     read -rp "  Path to backup (or Enter to skip): " IMPORT_BACKUP
-    if [ -n "$IMPORT_BACKUP" ] && [ ! -f "$IMPORT_BACKUP" ]; then
-        print_error "File not found: $IMPORT_BACKUP"
-        IMPORT_BACKUP=""
+    if [ -n "$IMPORT_BACKUP" ]; then
+        if [ ! -f "$IMPORT_BACKUP" ]; then
+            print_warn "Not a valid file: $IMPORT_BACKUP — skipping backup import"
+            IMPORT_BACKUP=""
+        elif ! tar -tzf "$IMPORT_BACKUP" >/dev/null 2>&1; then
+            print_warn "Not a valid .tar.gz archive — skipping backup import"
+            IMPORT_BACKUP=""
+        fi
     fi
 fi
 
