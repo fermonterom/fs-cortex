@@ -7,36 +7,42 @@
 ## What it does
 
 - **Observes** every tool call silently via async hooks (0 tokens overhead)
-- **Learns** patterns and crystallizes them as instincts (YAML, confidence-scored)
+- **Injects** matched instincts and reflexes per tool use via PreToolUse (~120 tokens max)
+- **Analyzes** patterns on demand and proposes instincts with evidence
 - **Distills** proven knowledge into Laws — one-liners injected every session (~300 tokens)
+- **Evolves** clusters of mature instincts into reusable skills, commands, and rules
 - **Protects** with deterministic reflex hooks (not probabilistic instructions)
-- **Remembers** decisions across all projects via persistent memory
 
 ## How it works
 
 ```
-Session 1, 2, 3...        Every ~50 observations       Proven patterns
-     |                           |                           |
-  [observe.sh]              [/cx-learn]                 [auto-distill]
-     |                           |                           |
-  OBSERVATIONS ──────────> INSTINCTS ──────────────> LAWS
-  (JSONL, async)           (YAML, on demand)         (TXT, always injected)
-  0 tokens                 ~50-100 tokens each       ~30 tokens each
+Observe (hooks)  →  Analyze  →  Validate  →  Distill  →  Evolve  →  Audit
+    auto             manual      manual       manual      manual     manual
+
+   OBSERVATIONS  →  PROPOSALS  →  INSTINCTS  →  LAWS  →  SKILLS/COMMANDS/RULES
+   (JSONL, 0 tok)                  (YAML)       (TXT)     (evolved/)
 ```
+
+### Dual Injection
+
+1. **SessionStart**: Laws (max 10) + EOD resume + project context bridge (~550 tokens)
+2. **PreToolUse**: Matched instincts (max 2) + reflexes (max 2) per tool use (~120 tokens max)
 
 ### Confidence Lifecycle
 
-Every pattern goes through 5 confidence tiers:
+Continuous 0.0–0.95 scale (capped, always refinable):
 
-| Confidence | Tier | What it means |
+| Confidence | Label | Injection behavior |
 |---|---|---|
-| 0.0 - 0.3 | Observation | Raw, unvalidated |
-| 0.3 - 0.5 | Hypothesis | Seen 2x, plausible |
-| 0.5 - 0.7 | Pattern | Consistent, likely correct |
-| 0.7 - 0.9 | Instinct | Validated, reliable |
-| 0.9 - 1.0 | Law | Proven cross-project, crystallized |
+| 0.00 - 0.29 | Observation | Not injected |
+| 0.30 - 0.49 | Hypothesis | Only if trigger + tool match |
+| 0.50 - 0.69 | Pattern | When trigger matches |
+| 0.70 - 0.89 | Instinct | Automatic, promotion candidate |
+| 0.90 - 0.95 | Law | Auto-distilled one-liner, injected always |
 
-When an instinct reaches **0.90+ confidence**, it's auto-proposed for condensation into a **Law** — a single sentence injected at every session start.
+**Decay**: -0.05 per 30 days without seeing the pattern. What you don't use fades.
+
+**Promotion**: Jaccard similarity ≥ 0.70 + 2 projects + avg confidence ≥ 0.80 → global.
 
 ## Quick Start
 
@@ -55,8 +61,8 @@ bash install.sh
 
 The installer will:
 - Create `~/.claude/cortex/` data directory
-- Install the cortex skill and 7 commands
-- Configure hooks in `settings.json` (with backup)
+- Install the cortex skill and 12 commands
+- Configure 4 hooks in `settings.json` (with backup)
 - Import knowledge from a previous backup (if provided)
 - Append Cortex section to `CLAUDE.md`
 - Ask your name, role, and language for personalization
@@ -66,116 +72,133 @@ The installer will:
 Open Claude Code and work normally. Cortex works automatically:
 
 1. **Laws inject at session start** — your crystallized knowledge, always present
-2. **Observations capture in background** — silent, zero overhead
-3. **Reflexes fire on triggers** — deterministic rules, not suggestions
-4. Every ~50 tool calls, you'll see: *"Run `/cx-learn` to crystallize patterns"*
+2. **Context bridge injects** — yesterday's session context, auto-resumed
+3. **Instincts inject per tool use** — matched patterns, confidence-gated
+4. **Observations capture in background** — silent, zero overhead
+5. **Session learner runs at close** — detects patterns, writes proposals
+6. Every ~50 tool calls, you'll see: *"Run `/cx-analyze` to detect patterns"*
 
-## Commands
+## Commands (12)
 
 | Command | What it does |
 |---------|-------------|
-| `/cx-status` | Dashboard: laws, instincts, projects, reflexes, system health |
-| `/cx-learn` | Full pipeline: analyze → evolve → distill → promote → inherit |
-| `/cx-eod` | End of day summary, saves context for next session |
-| `/cx-gotcha` | Capture error→fix pattern as high-priority instinct |
-| `/cx-export` | Generate portable skill for Claude web/app |
+| `/cx-status` | Dashboard: laws, instincts, projects, reflexes, health |
+| `/cx-analyze` | Detect patterns in observations → proposals |
+| `/cx-distill` | Distill laws, apply decay, check Jaccard promotions |
+| `/cx-validate` | Review/confirm/reject proposals and weak instincts |
+| `/cx-evolve` | Cluster mature instincts → skills/commands/rules |
+| `/cx-bootstrap` | Seed new project from git history or similar projects |
+| `/cx-audit` | Token overhead, duplicates, conflicts, cleanup |
+| `/cx-eod` | End-of-day summary, saves context for next session |
+| `/cx-gotcha` | Capture error→fix as high-priority instinct |
+| `/cx-export` | Generate portable skill for Claude.ai or sharing |
 | `/cx-backup` | Create portable .tar.gz backup for machine transfer |
 | `/cx-restore` | Import knowledge from a backup archive |
 
-### /cx-learn — The Power Command
+### Learning Pipeline
 
-`/cx-learn` does everything in one pipeline:
-
-1. **Analyze** observations → detect patterns → create instincts
-2. **Evolve** related instincts → propose skills/commands/agents
-3. **Distill** high-confidence instincts → condense into Laws
-4. **Promote** cross-project patterns → move to global scope
-5. **Bootstrap** new projects → scan git history or inherit from similar projects
+```
+/cx-analyze  →  /cx-validate  →  /cx-distill  →  /cx-evolve  →  /cx-audit
+ detect          confirm          laws + decay     skills         cleanup
+ patterns        or reject        + promotions     commands
+                                                   rules
+```
 
 ## Architecture
 
-### Hooks (always running)
+### Hooks (4, always running)
 
 | Hook | Event | Purpose | Blocking? |
 |------|-------|---------|-----------|
-| `session-start.sh` | SessionStart | Inject Laws, detect new day, check EOD | Yes (5s) |
-| `session-start.sh` | SessionStart(compact) | Re-inject Laws after /compact | Yes (5s) |
-| `git-guard.sh` | PreToolUse(Bash) | Git best practices reminder (commit/push/merge) | Yes (5s) |
-| `reflex-engine.sh` | PreToolUse(*) | Fire matching reflexes | Yes (500ms) |
-| `observe.sh pre` | PreToolUse(*) | Capture tool start | No (async) |
-| `observe.sh post` | PostToolUse(*) | Capture tool result | No (async) |
+| `session-start.sh` | SessionStart | Inject Laws + EOD resume + context.md bridge | Sync (5s) |
+| `observe.sh` | PreToolUse / PostToolUse | Capture tool start/complete | Async (0 tokens) |
+| `injector.sh` | PreToolUse | Inject matched reflexes + instincts | Sync (3s) |
+| `session-learner.js` | Stop | Analyze session, proposals, context.md | Sync (15s) |
+
+Also fires `session-start.sh` on `/compact` to re-inject laws.
 
 ### Agents (invoked on demand)
 
 | Agent | Model | Purpose |
 |-------|-------|---------|
-| `cortex-observer` | Haiku | Detect patterns in observations, create instincts |
-| `cortex-reviewer` | Haiku | Code review after edits |
+| `cortex-observer` | Haiku | Detect patterns in observations |
+| `cortex-reviewer` | Sonnet x3 parallel | Code review: security + quality + correctness |
 | `cortex-planner` | Sonnet | Decompose complex tasks into steps |
 
 ### Data Directory
 
 ```
 ~/.claude/cortex/
-├── memory.json              # Your identity + config + stats
-├── reflexes.json            # Active reflexes (deterministic rules)
-├── laws/                    # Crystallized wisdom (one-liners)
-│   └── *.txt
+├── memory.json              # Identity + config + stats
+├── reflexes.json            # Deterministic rules (8 default)
+├── proposals.json           # Pending proposals from session-learner + cx-analyze
+├── laws/                    # One-liners (max 10 active)
+│   ├── *.txt
+│   └── archive/
 ├── instincts/
-│   ├── personal/            # Global instincts (YAML)
-│   └── inherited/           # From /cx-learn inheritance
+│   ├── global/              # Promoted cross-project instincts
+│   └── archive/             # Decayed below 0.10
 ├── projects/
 │   ├── registry.json        # All known projects
-│   └── {hash}/              # Per-project data
+│   └── {hash}/
 │       ├── observations.jsonl
-│       └── instincts/personal/
-├── evolved/                 # Skills/commands/agents from /cx-learn
-├── daily-summaries/         # EOD summaries for session continuity
-└── exports/                 # Portable skills from /cx-export
+│       ├── context.md       # Session bridge (14d TTL)
+│       └── instincts/       # Project-scoped instincts
+├── evolved/
+│   ├── skills/              # Generated by /cx-evolve (fs- prefix)
+│   ├── commands/
+│   └── rules/
+├── daily-summaries/         # EOD summaries
+├── exports/                 # Portable skills
+└── log/
 ```
 
 ## Reflexes
 
-Reflexes are **deterministic rules** that fire via real hooks — not probabilistic instructions that Claude might forget.
+Deterministic rules that fire via hooks — not probabilistic instructions.
 
-Default reflexes:
+Default reflexes (8):
 
 | Reflex | Trigger | Action |
 |--------|---------|--------|
-| `read-before-edit` | Edit/Write tool | Verify file was Read first |
+| `read-before-edit` | Edit/Write | Verify file was Read first |
 | `env-never-commit` | git add/commit | Check .env in .gitignore |
 | `test-after-change` | Edit route.ts/component | Suggest running tests |
+| `git-commit-quality` | git commit | Verify tests, lint, conventional format |
+| `git-push-safety` | git push / gh pr create | Fetch+rebase, --force-with-lease |
+| `git-merge-verify` | gh pr merge | Verify checks, clean up branch |
+| `api-auth-check` | Edit route.ts/api/ | Validate authentication |
+| `security-headers` | Edit vercel.json/next.config | Verify security headers |
 
-Add custom reflexes by editing `~/.claude/cortex/reflexes.json`.
+Each reflex tracks `fireCount` and `lastFired` for audit purposes.
 
 ## Backup & Restore
 
-Transfer your knowledge between machines:
-
 ```bash
-# On old machine — export knowledge
+# Export knowledge
 /cx-backup
 # → Creates ~/cortex-backup-YYYY-MM-DD.tar.gz
 
-# On new machine — install and import
+# Install on new machine and import
 bash install.sh
-# → Installer asks for backup path during setup
+# → Asks for backup path during setup
 
-# Or restore into an existing installation
+# Or restore into existing installation
 /cx-restore ~/cortex-backup-2026-03-28.tar.gz
 ```
 
-Backups include: laws, instincts, memory, reflexes, evolved content, daily summaries, and exports. Raw observations are excluded (too large, and patterns are already captured in instincts).
+Backups include: laws, instincts, memory, reflexes, evolved content, proposals, daily summaries, exports. Raw observations excluded (patterns captured in instincts).
 
 ## Token Budget
 
 | Component | Tokens | When |
 |-----------|--------|------|
-| SKILL.md | ~1,500 | Always (auto_activate) |
-| Laws (max 10) | ~300 | Always (SessionStart hook) |
-| Instincts | ~50-100 each | On demand (/cx-status, /cx-learn) |
-| Observations | 0 | Never (async hooks, disk only) |
-| **Total overhead** | **~1,800** | **Per session** |
+| Laws (max 10) | ~300 | SessionStart (1x) |
+| EOD resume | ~150 | SessionStart (1x) |
+| Context bridge | ~100 | SessionStart (1x) |
+| Instincts (max 2) | ~80 | PreToolUse (if match) |
+| Reflexes (max 2) | ~40 | PreToolUse (if match) |
+| **Session total** | **~1,750** | **Estimated** |
 
 ## Uninstall
 
@@ -187,11 +210,13 @@ Offers portable backup before removal. Preserves learned data by default. Cleans
 
 ## Credits
 
+Cortex — Continuous Learning Engine for Claude Code
+(c) 2026 Fernando Montero / Fersora Solutions
+
 Inspired by:
-- [sinapsis](https://github.com/Luispitik/sinapsis) by Luis Salgado (SalgadoIA)
-- [Everything Claude Code](https://github.com/anthropics/claude-code) (agent patterns)
+- [Sinapsis](https://salgadoia.com) by Luis Salgado — hook architecture and injection patterns
+- [Everything Claude Code](https://github.com/AffaanMustafa/everything-claude-code) by Affaan Mustafa — observation format and project scoping
 
 ## License
 
 MIT
-
