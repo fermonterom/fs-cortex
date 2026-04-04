@@ -45,7 +45,7 @@ When the system prompt contains `EOD RESUME`, Claude MUST proactively present it
 2. **Yesterday's summary** -- Paraphrase the EOD RESUME content (1-2 lines)
 3. **Learning status** -- If there are pending observations, mention `/cx-learn`
 4. **Today's priorities** -- List the PRIORITIES as a numbered list
-5. **Ask** -- "¿Por dónde empezamos?"
+5. **Ask** -- Ask where to start (use the user's language from memory.json)
 
 This is the default opening behavior. If the user's first message already asks for something specific, address their request first, then briefly mention the EOD context if relevant.
 

@@ -92,6 +92,9 @@ if [ -n "$EOD_FILE" ]; then
   if [ -n "$FOR_TOMORROW" ]; then
     CONTEXT="${CONTEXT}\nPRIORITIES: ${FOR_TOMORROW}"
   fi
+
+  # Instruction for Claude to present EOD proactively
+  CONTEXT="${CONTEXT}\nIMPORTANT: Present the EOD resume and priorities to the user in your FIRST response. Do NOT wait for the user to ask. Greet, summarize yesterday, list priorities, ask where to start."
 fi
 
 # -- Output JSON via python3 --

@@ -1,6 +1,6 @@
 #!/bin/bash
-# Cortex Git Workflow Guard — PreToolUse hook for Bash
-# Reminds about git workflow phases before commit/push/merge
+# Cortex Git Guard — PreToolUse hook for Bash
+# Reminds about git best practices before commit/push/merge
 
 set -e
 
@@ -43,19 +43,19 @@ print(json.dumps({
 
 # Check for git commit
 if echo "$COMMAND" | grep -qE 'git commit'; then
-  emit_context "[CORTEX GIT GUARD] Before committing: verify tests pass, lint clean, build OK, and user has confirmed (Phase 6)."
+  emit_context "[CORTEX GIT GUARD] Before committing: verify tests pass, lint is clean, and build succeeds."
   exit 0
 fi
 
 # Check for git push or PR create
 if echo "$COMMAND" | grep -qE 'git push|gh pr create'; then
-  emit_context "[CORTEX GIT GUARD] Before pushing: git fetch && git rebase origin/dev done? Push with --force-with-lease. PR targets dev branch (Phase 7)."
+  emit_context "[CORTEX GIT GUARD] Before pushing: ensure branch is up to date (fetch + rebase). Use --force-with-lease for force pushes. Verify PR base branch is correct."
   exit 0
 fi
 
 # Check for PR merge
 if echo "$COMMAND" | grep -qE 'gh pr merge'; then
-  emit_context "[CORTEX GIT GUARD] Before merging: use --rebase flag. After merge: delete branch (local + remote), checkout dev (Phase 8)."
+  emit_context "[CORTEX GIT GUARD] Before merging: verify all checks pass. After merge: clean up branch (local + remote)."
   exit 0
 fi
 

@@ -100,7 +100,7 @@ Open Claude Code and work normally. Cortex works automatically:
 |------|-------|---------|-----------|
 | `session-start.sh` | SessionStart | Inject Laws, detect new day, check EOD | Yes (5s) |
 | `session-start.sh` | SessionStart(compact) | Re-inject Laws after /compact | Yes (5s) |
-| `git-guard.sh` | PreToolUse(Bash) | Protect git workflow (commit/push/merge) | Yes (5s) |
+| `git-guard.sh` | PreToolUse(Bash) | Git best practices reminder (commit/push/merge) | Yes (5s) |
 | `reflex-engine.sh` | PreToolUse(*) | Fire matching reflexes | Yes (500ms) |
 | `observe.sh pre` | PreToolUse(*) | Capture tool start | No (async) |
 | `observe.sh post` | PostToolUse(*) | Capture tool result | No (async) |

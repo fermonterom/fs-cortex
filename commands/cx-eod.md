@@ -22,7 +22,7 @@ Generates an end-of-day summary and saves context for the next session. Optional
 
 ### Step 1: Gather Context
 
-Scan active projects in `~/github/` (or configured project roots):
+Scan active projects (auto-detect git repositories from the project registry, or ask the user for project roots):
 
 For each project directory:
 ```bash

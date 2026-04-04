@@ -15,7 +15,7 @@ tools:
 Parallel code review system. Launches 3 specialized sub-agents simultaneously, then consolidates findings into a single report.
 
 ## When to Invoke
-- Before committing code (Phase 4 of workflow)
+- Before committing code (pre-commit review)
 - After editing 3+ files in sequence
 - When user requests code review
 - When user says "revisa", "review", "doble check"
