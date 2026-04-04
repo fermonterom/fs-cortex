@@ -65,8 +65,7 @@ Use `tar` to create the archive:
 ```bash
 tar -czf cortex-backup-YYYY-MM-DD.tar.gz -C ~/.claude/cortex \
   laws/ \
-  instincts/global/ \
-  instincts/archive/ \
+  instincts/ \
   projects/registry.json \
   projects/*/instincts/ \
   memory.json \

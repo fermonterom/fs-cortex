@@ -51,20 +51,20 @@ if [[ "$backup" =~ ^[Yy] ]]; then
     BACKUP_FILE="$HOME/cortex-backup-$(date +%Y-%m-%d).tar.gz"
     if [ -d "$CORTEX_DIR" ]; then
         # Build list of items to backup (only knowledge, not raw observations)
-        BACKUP_ITEMS=""
+        BACKUP_ITEMS=()
         for item in laws instincts memory.json reflexes.json evolved daily-summaries exports; do
-            [ -e "$CORTEX_DIR/$item" ] && BACKUP_ITEMS="$BACKUP_ITEMS $item"
+            [ -e "$CORTEX_DIR/$item" ] && BACKUP_ITEMS+=("$item")
         done
-        [ -f "$CORTEX_DIR/projects/registry.json" ] && BACKUP_ITEMS="$BACKUP_ITEMS projects/registry.json"
+        [ -f "$CORTEX_DIR/projects/registry.json" ] && BACKUP_ITEMS+=("projects/registry.json")
         # Include project instincts (not observations)
         for proj_inst in "$CORTEX_DIR"/projects/*/instincts; do
             [ -d "$proj_inst" ] || continue
             proj_id=$(basename "$(dirname "$proj_inst")")
-            BACKUP_ITEMS="$BACKUP_ITEMS projects/$proj_id/instincts"
+            BACKUP_ITEMS+=("projects/$proj_id/instincts")
         done
         # Create backup in a single tar command
-        if [ -n "$BACKUP_ITEMS" ]; then
-            if tar -czf "$BACKUP_FILE" -C "$CORTEX_DIR" $BACKUP_ITEMS 2>/dev/null; then
+        if [ "${#BACKUP_ITEMS[@]}" -gt 0 ]; then
+            if tar -czf "$BACKUP_FILE" -C "$CORTEX_DIR" "${BACKUP_ITEMS[@]}" 2>/dev/null; then
                 echo -e "${GREEN}  Portable backup: $BACKUP_FILE${NC}"
                 echo -e "  Import on new machine with: ${BOLD}/cx-restore $BACKUP_FILE${NC}"
             else

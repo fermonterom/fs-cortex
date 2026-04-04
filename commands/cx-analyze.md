@@ -55,7 +55,7 @@ git log --oneline -200
 git log --pretty=format: --name-only -200 | sort | uniq -c | sort -rn | head -20
 
 # Fix/hotfix patterns (error-resolution signal)
-git log --oneline -200 --grep="fix" --grep="hotfix" --grep="patch" --grep="bug" --grep-reflog="all"
+git log --oneline -200 --grep="fix" --grep="hotfix" --grep="patch" --grep="bug"
 
 # Files that change together (coupling)
 git log --pretty=format: --name-only -200 | awk '/^$/{if(NR>1)print "---";next}{print}' | head -100
@@ -79,8 +79,37 @@ Git-derived proposals get source: "git-history" and initial confidence 0.30-0.50
 2. Invoke the `cortex-observer` agent (Haiku):
    - Pass the observations file path
    - Agent detects: error-fix pairs, repeated workflows, tool preferences, correction sequences
-   - Agent returns patterns as instinct proposals
-3. For each returned pattern:
+   - Agent returns patterns as instinct proposals (YAML format, one block per pattern)
+3. **Step 3b: Translate cortex-observer output → proposals.json format**
+   - The cortex-observer agent returns YAML instinct blocks. cx-analyze is responsible for converting each one into a JSON proposal entry.
+   - For each YAML instinct returned by the agent, create a JSON object with ALL of the agent's fields PLUS these additional fields:
+     - `detected`: today's date (YYYY-MM-DD)
+     - `project_id`: current project hash
+     - `project_name`: current project name (from registry)
+     - `status`: `"pending"`
+   - Example conversion:
+     ```
+     # cortex-observer returns YAML:
+     trigger: "Edit|Write"
+     action: "Always read file before editing"
+     confidence: 0.45
+     domain: "workflow"
+
+     # cx-analyze writes to proposals.json as:
+     {
+       "id": "generated-id",
+       "trigger": "Edit|Write",
+       "action": "Always read file before editing",
+       "confidence": 0.45,
+       "domain": "workflow",
+       "source": "cx-analyze",
+       "detected": "2026-04-04",
+       "project_id": "abc123def456",
+       "project_name": "my-project",
+       "status": "pending"
+     }
+     ```
+4. For each converted proposal:
    - Check for existing instinct with similar trigger (Jaccard >= 0.50)
    - If matches existing: note as "update candidate" (bump confidence)
    - If new: add to proposals
@@ -123,7 +152,9 @@ CORTEX ANALYZE — Results
 
 If --accept is passed, skip proposals and directly:
 1. Create instinct YAML files from proposals
-2. Write to project's `instincts/` or `instincts/global/` based on scope
+2. Write to the appropriate path based on scope:
+   - Global scope → `~/.claude/cortex/instincts/global/{id}.yaml`
+   - Project scope → `~/.claude/cortex/projects/{hash}/instincts/{id}.yaml`
 3. Clear accepted proposals from proposals.json
 
 ## What NOT to do

@@ -42,7 +42,9 @@ new_confidence = confidence - (0.05 * decay_periods)
 ```
 
 If new_confidence < 0.10:
-- Move YAML file to `~/.claude/cortex/instincts/archive/`
+- Move YAML file to archive based on scope:
+  - Global instincts → `~/.claude/cortex/instincts/archive/`
+  - Project instincts → `~/.claude/cortex/projects/{hash}/instincts/archive/`
 - Display: "Archived [id] — confidence decayed to [value]"
 
 If confidence changed:

@@ -85,10 +85,10 @@ if [ -n "$PYTHON_CMD" ] && [ -n "$INPUT_JSON" ]; then
       _CONTEXT_FILE="$PROJECTS_DIR/$_PHASH/context.md"
       if [ -n "$_PHASH" ] && [ -f "$_CONTEXT_FILE" ]; then
         # Check TTL (14 days)
-        _FILE_AGE_DAYS=$("$PYTHON_CMD" -c "
+        _FILE_AGE_DAYS=$(_CF="$_CONTEXT_FILE" "$PYTHON_CMD" -c "
 import os, time
 try:
-    age = (time.time() - os.path.getmtime('$_CONTEXT_FILE')) / 86400
+    age = (time.time() - os.path.getmtime(os.environ['_CF'])) / 86400
     print(int(age))
 except:
     print(999)
@@ -124,7 +124,8 @@ if [ -n "$EOD_FILE" ]; then
   fi
 
   # Also extract "For tomorrow" section if present (only lines starting with -)
-  FOR_TOMORROW=$(sed -n '/^### For tomorrow/,/^###\|^##\|^---/{ /^### For tomorrow/d; /^###/d; /^##/d; /^---/d; p; }' "$EOD_FILE" 2>/dev/null | grep '^- ' | head -5 | sed 's/^- //' | paste -sd ';' - | sed 's/;$//')
+  # Use -E (extended regex) for portable alternation (works on both macOS BSD sed and GNU sed)
+  FOR_TOMORROW=$(sed -En '/^### For tomorrow/,/^(###|##|---)/{ /^### For tomorrow/d; /^(###|##|---)/d; p; }' "$EOD_FILE" 2>/dev/null | grep '^- ' | head -5 | sed 's/^- //' | paste -sd ';' - | sed 's/;$//')
 
   if [ -n "$FOR_TOMORROW" ]; then
     CONTEXT="${CONTEXT}\nPRIORITIES: ${FOR_TOMORROW}"

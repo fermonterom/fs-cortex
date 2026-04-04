@@ -65,8 +65,9 @@ For **Commands**: Generate a command .md with:
 - Step-by-step implementation
 - Based on patterns from source instincts
 
-For **Rules**: Add entries to `~/.claude/cortex/reflexes.json` with:
+For **Rules**: The canonical output is new entries appended to `~/.claude/cortex/reflexes.json` with:
 - matcher, condition, action derived from instinct triggers/actions
+- A backup copy of the generated rule entries is also written to `~/.claude/cortex/evolved/rules/` for reference (not authoritative — reflexes.json is the source of truth)
 
 ### Step 4: Write and Mark Sources
 

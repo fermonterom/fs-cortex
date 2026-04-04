@@ -52,7 +52,7 @@ When the system prompt contains `EOD RESUME`, Claude MUST proactively present it
 4. **Priorities** — List PRIORITIES as numbered list
 5. **Ask** — Ask where to start (user's language from memory.json)
 
-### Commands (12)
+### Commands (11)
 
 | Command | Purpose |
 |---------|---------|

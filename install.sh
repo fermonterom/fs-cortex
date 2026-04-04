@@ -209,6 +209,11 @@ if "~/.claude/cortex" not in settings["permissions"].get("additionalDirectories"
 
 # Define cortex hooks (v2.0: 4 hooks — observe, session-start, injector, session-learner)
 cortex_hooks = {
+    # SessionStart fires once at normal session start. The "compact" matcher fires
+    # specifically when /compact is used (context wipe). Both entries are needed
+    # because they are separate events in Claude Code's hook system — the global
+    # SessionStart does NOT fire on /compact. The compact entry re-injects laws
+    # and context after the context window is cleared.
     "SessionStart": [
         {
             "hooks": [{

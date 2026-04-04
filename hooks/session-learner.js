@@ -197,7 +197,7 @@ function resolveProjectAndObservations(stdinData) {
   // Filter by session
   let sessionObs;
   if (sessionId) {
-    sessionObs = allObs.filter((o) => o.session === sessionId);
+    sessionObs = allObs.filter((o) => o.sid === sessionId);
     if (sessionObs.length === 0) {
       log(`Session ${sessionId} not found, falling back to last 200 lines`);
       sessionObs = allObs.slice(-200);
@@ -206,17 +206,17 @@ function resolveProjectAndObservations(stdinData) {
     // Find the most recent session
     const sessions = {};
     for (const o of allObs) {
-      if (!o.session || o.session === 'unknown') continue;
-      if (!sessions[o.session]) sessions[o.session] = [];
-      sessions[o.session].push(o);
+      if (!o.sid || o.sid === 'unknown') continue;
+      if (!sessions[o.sid]) sessions[o.sid] = [];
+      sessions[o.sid].push(o);
     }
     const sessionIds = Object.keys(sessions);
     if (sessionIds.length > 0) {
       // Pick the one with the most recent timestamp
       let latest = sessionIds[0];
       for (const sid of sessionIds) {
-        const lastTs = sessions[sid][sessions[sid].length - 1].timestamp || '';
-        const bestTs = sessions[latest][sessions[latest].length - 1].timestamp || '';
+        const lastTs = sessions[sid][sessions[sid].length - 1].ts || '';
+        const bestTs = sessions[latest][sessions[latest].length - 1].ts || '';
         if (lastTs > bestTs) latest = sid;
       }
       sessionId = latest;
@@ -252,7 +252,7 @@ function detectErrorResolutions(observations) {
     for (let j = i + 1; j < Math.min(i + WINDOW + 1, observations.length); j++) {
       const candidate = observations[j];
       if (candidate.tool === errorTool && !isError(candidate)) {
-        const hash = shortHash(`${errorTool}-${obs.timestamp || i}`);
+        const hash = shortHash(`${errorTool}-${obs.ts || i}`);
         proposals.push({
           id: `fix-${errorTool}-${hash}`,
           trigger: errorTool,
@@ -261,7 +261,7 @@ function detectErrorResolutions(observations) {
           domain: 'tooling',
           source: 'session-learner',
           detected: TODAY,
-          session: obs._resolvedSession || obs.session || 'unknown',
+          session: obs._resolvedSession || obs.sid || 'unknown',
         });
         break; // Only one proposal per error
       }
@@ -361,7 +361,9 @@ function updateInstincts(observations) {
         let newContent = updateYamlField(content, 'last_seen', TODAY);
         const currentOccurrences = parseInt(parsed.fields.occurrences, 10) || 0;
         newContent = updateYamlField(newContent, 'occurrences', currentOccurrences + 1);
-        fs.writeFileSync(yamlPath, newContent, { mode: 0o600 });
+        const tmp = yamlPath + '.tmp.' + process.pid;
+        fs.writeFileSync(tmp, newContent, { mode: 0o600 });
+        fs.renameSync(tmp, yamlPath);
         updated++;
       }
     } catch (e) {
@@ -505,7 +507,9 @@ Session observations: ${observations.length}
   ensureDir(projectDir);
   const contextPath = path.join(projectDir, 'context.md');
   try {
-    fs.writeFileSync(contextPath, content, { mode: 0o600 });
+    const tmp = contextPath + '.tmp.' + process.pid;
+    fs.writeFileSync(tmp, content, { mode: 0o600 });
+    fs.renameSync(tmp, contextPath);
     log(`Wrote context.md for project ${projectName}`);
   } catch (e) {
     log(`Failed to write context.md: ${e.message}`);

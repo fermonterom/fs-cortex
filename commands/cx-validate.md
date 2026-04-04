@@ -59,7 +59,28 @@ HYPOTHESIS: [id] (conf: [value])
 
 ### Step 4: Execute Choices
 
-- Accept proposal: create YAML file in appropriate instincts directory with confidence + 0.20
+- Accept proposal: create YAML file in appropriate instincts directory with confidence + 0.20.
+  The YAML file written must follow this exact schema:
+  ```yaml
+  ---
+  id: {proposal.id}
+  trigger: "{proposal.trigger}"
+  action: "{proposal.action}"
+  confidence: {proposal.confidence + 0.20}
+  domain: {proposal.domain}
+  tags: []
+  scope: project
+  project_id: "{proposal.project_id}"
+  project_name: "{proposal.project_name}"
+  source: "{proposal.source}"
+  first_seen: "{proposal.detected}"
+  last_seen: "{today}"
+  occurrences: 1
+  evidence:
+    - "{proposal.detected}: Detected by {proposal.source}"
+  ---
+  ```
+  Confidence is clamped to [0.0, 0.95] after adjustment.
 - Reject proposal: remove from proposals.json
 - Confirm instinct: update confidence + 0.20, update last_seen
 - Dismiss instinct: reduce confidence by 0.20, archive if below 0.10
