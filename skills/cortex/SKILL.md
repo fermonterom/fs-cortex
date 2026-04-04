@@ -5,7 +5,7 @@ description: |
   crystallizes patterns as atomic instincts with confidence scoring,
   distills proven knowledge into laws. Commands: /cx-status, /cx-analyze,
   /cx-distill, /cx-validate, /cx-evolve, /cx-eod, /cx-gotcha, /cx-audit,
-  /cx-export, /cx-backup, /cx-restore, /cx-bootstrap.
+  /cx-export, /cx-backup, /cx-restore.
 auto_activate: true
 ---
 
@@ -61,7 +61,6 @@ When the system prompt contains `EOD RESUME`, Claude MUST proactively present it
 | `/cx-distill` | Distill laws, apply decay, check Jaccard promotions |
 | `/cx-validate` | Review/confirm/reject proposals and weak instincts |
 | `/cx-evolve` | Cluster mature instincts → skills/commands/rules |
-| `/cx-bootstrap` | Seed new project from git history or similar projects |
 | `/cx-audit` | Token overhead, duplicates, conflicts, cleanup proposals |
 | `/cx-eod` | End-of-day summary for next session |
 | `/cx-gotcha` | Capture error→fix as high-priority instinct |

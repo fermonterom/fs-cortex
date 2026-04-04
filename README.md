@@ -61,7 +61,7 @@ bash install.sh
 
 The installer will:
 - Create `~/.claude/cortex/` data directory
-- Install the cortex skill and 12 commands
+- Install the cortex skill and 11 commands
 - Configure 4 hooks in `settings.json` (with backup)
 - Import knowledge from a previous backup (if provided)
 - Append Cortex section to `CLAUDE.md`
@@ -78,7 +78,7 @@ Open Claude Code and work normally. Cortex works automatically:
 5. **Session learner runs at close** — detects patterns, writes proposals
 6. Every ~50 tool calls, you'll see: *"Run `/cx-analyze` to detect patterns"*
 
-## Commands (12)
+## Commands (11)
 
 | Command | What it does |
 |---------|-------------|
@@ -87,7 +87,6 @@ Open Claude Code and work normally. Cortex works automatically:
 | `/cx-distill` | Distill laws, apply decay, check Jaccard promotions |
 | `/cx-validate` | Review/confirm/reject proposals and weak instincts |
 | `/cx-evolve` | Cluster mature instincts → skills/commands/rules |
-| `/cx-bootstrap` | Seed new project from git history or similar projects |
 | `/cx-audit` | Token overhead, duplicates, conflicts, cleanup |
 | `/cx-eod` | End-of-day summary, saves context for next session |
 | `/cx-gotcha` | Capture error→fix as high-priority instinct |

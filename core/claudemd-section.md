@@ -6,7 +6,7 @@ Cortex observes sessions and distills knowledge in 3 levels:
 - **Observations** (async hooks, 0 tokens) — raw data
 
 ### Commands
-`/cx-status` `/cx-analyze` `/cx-distill` `/cx-validate` `/cx-evolve` `/cx-bootstrap` `/cx-audit` `/cx-eod` `/cx-gotcha` `/cx-export` `/cx-backup` `/cx-restore`
+`/cx-status` `/cx-analyze` `/cx-distill` `/cx-validate` `/cx-evolve` `/cx-audit` `/cx-eod` `/cx-gotcha` `/cx-export` `/cx-backup` `/cx-restore`
 
 ### Data: ~/.claude/cortex/
 ### Laws inject automatically. Instincts inject per tool use. No action needed.
