@@ -13,7 +13,8 @@ Reads ALL observations for the current project (or all projects with --global), 
 ## Usage
 
 ```
-/cx-analyze              # Current project
+/cx-analyze              # Current project (observations only)
+/cx-analyze --git        # Also mine git history for patterns
 /cx-analyze --global     # All projects
 /cx-analyze --accept     # Auto-accept all proposals as instincts
 /cx-analyze --dry-run    # Show what would be proposed without writing
@@ -38,9 +39,39 @@ CORTEX ANALYZE — Context
 
 ### Step 2: Validate
 
-- If < 10 observations: inform and exit
-  "Only N observations found. Need at least 10 for meaningful analysis. Keep working and run /cx-analyze again later."
+- If < 10 observations AND --git not passed: inform and exit
+  "Only N observations found. Need at least 10 for meaningful analysis. Try /cx-analyze --git to mine git history instead."
 - If --global: iterate all projects in registry.json
+
+### Step 2b: Mine Git History (--git flag)
+
+If --git is passed, also analyze the project's git history as supplementary data:
+
+```bash
+# Recent commits (last 200)
+git log --oneline -200
+
+# Most frequently changed files
+git log --pretty=format: --name-only -200 | sort | uniq -c | sort -rn | head -20
+
+# Fix/hotfix patterns (error-resolution signal)
+git log --oneline -200 --grep="fix" --grep="hotfix" --grep="patch" --grep="bug" --grep-reflog="all"
+
+# Files that change together (coupling)
+git log --pretty=format: --name-only -200 | awk '/^$/{if(NR>1)print "---";next}{print}' | head -100
+
+# Tech stack detection
+# Read package.json, Cargo.toml, requirements.txt, etc.
+```
+
+From git data, detect:
+- **Hotspot files**: files changed 5+ times → instinct about careful testing before editing
+- **Fix patterns**: repeated "fix:" commits on same area → gotcha instinct candidate
+- **File coupling**: files that always change together → workflow instinct
+- **Tech stack**: frameworks and dependencies → domain-specific instincts
+- **Commit conventions**: detect if conventional commits are used
+
+Git-derived proposals get source: "git-history" and initial confidence 0.30-0.50 (lower than observation-derived since we're inferring, not observing directly).
 
 ### Step 3: Analyze Observations
 
