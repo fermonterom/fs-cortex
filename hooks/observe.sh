@@ -83,14 +83,7 @@ case "$_TOOL_NAME" in
   ToolSearch|Skill) exit 0 ;;
 esac
 
-# -- Sampling: For Read, Glob, Grep tools, only record 1 in 3 --
-case "$_TOOL_NAME" in
-  Read|Glob|Grep)
-    if [ $(( RANDOM % 3 )) -ne 0 ]; then
-      exit 0
-    fi
-    ;;
-esac
+# -- v2.0: No sampling. Capture ALL tool uses. Filter noise in analysis, not capture. --
 
 # -- Dedup: Skip exact duplicates within session --
 SESSION_ID=$(echo "$INPUT_JSON" | "$PYTHON_CMD" -c "import json,sys,re; sid=json.load(sys.stdin).get('session_id','unknown'); print(re.sub(r'[^a-zA-Z0-9_-]','',sid))" 2>/dev/null || echo "unknown")
@@ -202,20 +195,28 @@ if [ ! -f "$PURGE_MARKER" ] || [ "$(find "$PURGE_MARKER" -mtime +1 2>/dev/null)"
   touch "$PURGE_MARKER" 2>/dev/null || true
 fi
 
-# -- Parse input JSON (truncate input to 2000, output to 1000) --
+# -- Parse input JSON (v2.0: short field names, add err/err_msg) --
 PARSED=$(echo "$INPUT_JSON" | HOOK_PHASE="$HOOK_PHASE" "$PYTHON_CMD" -c '
 import json, sys, os
 
 try:
     data = json.load(sys.stdin)
     hook_phase = os.environ.get("HOOK_PHASE", "post")
-    event = "tool_start" if hook_phase == "pre" else "tool_complete"
+    event = "ts" if hook_phase == "pre" else "tc"  # tool_start / tool_complete
 
     tool_name = data.get("tool_name", data.get("tool", "unknown"))
     tool_input = data.get("tool_input", data.get("input", {}))
     tool_output = data.get("tool_response", data.get("tool_output", data.get("output", "")))
-    session_id = data.get("session_id", "unknown")
+    session_id = data.get("session_id", "unknown")[:16]  # first 16 chars only
     cwd = data.get("cwd", "")
+
+    # v2.0: is_error flag (deterministic, from Claude Code PostToolUse)
+    is_error = data.get("is_error", False)
+    error_msg = None
+    if is_error and isinstance(tool_output, dict):
+        error_msg = str(tool_output.get("error", tool_output.get("message", "")))[:500]
+    elif is_error and isinstance(tool_output, str):
+        error_msg = tool_output[:500]
 
     if isinstance(tool_input, dict):
         tool_input_str = json.dumps(tool_input)[:2000]
@@ -229,11 +230,13 @@ try:
 
     print(json.dumps({
         "parsed": True,
-        "event": event,
+        "ev": event,
         "tool": tool_name,
-        "input": tool_input_str if event == "tool_start" else None,
-        "output": tool_output_str if event == "tool_complete" else None,
-        "session": session_id,
+        "err": is_error,
+        "err_msg": error_msg,
+        "input": tool_input_str if event == "ts" else None,
+        "output": tool_output_str if event == "tc" else None,
+        "sid": session_id,
         "cwd": cwd
     }))
 except Exception as e:
@@ -267,6 +270,7 @@ import json, sys, os, re
 
 parsed = json.load(sys.stdin)
 
+# -- Secret scrubbing (v2.0: enhanced with SSH, AWS keys) --
 SECRET_RE = re.compile(
     r"(?i)(api[_-]?key|token|secret|password|authorization|credentials?|auth|bearer)"
     r"""(["'"'"'"'"'"'\s:=]+)"""
@@ -275,6 +279,8 @@ SECRET_RE = re.compile(
 )
 JWT_RE = re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}")
 PEM_RE = re.compile(r"-----BEGIN[A-Z \n]+-----[\s\S]*?-----END[A-Z \n]+-----")
+SSH_RE = re.compile(r"-----BEGIN OPENSSH[A-Z \n]+-----[\s\S]*?-----END OPENSSH[A-Z \n]+-----")
+AWS_RE = re.compile(r"AKIA[A-Z0-9]{16}")
 
 def scrub(val):
     if val is None:
@@ -283,16 +289,24 @@ def scrub(val):
     s = SECRET_RE.sub(lambda m: m.group(1) + m.group(2) + (m.group(3) or "") + "[REDACTED]", s)
     s = JWT_RE.sub("[JWT_REDACTED]", s)
     s = PEM_RE.sub("[PEM_REDACTED]", s)
+    s = SSH_RE.sub("[SSH_KEY_REDACTED]", s)
+    s = AWS_RE.sub("[AWS_KEY_REDACTED]", s)
     return s
 
+# v2.0: short field names
 observation = {
-    "timestamp": os.environ["TIMESTAMP"],
-    "event": parsed["event"],
+    "ts": os.environ["TIMESTAMP"],
+    "ev": parsed["ev"],
     "tool": parsed["tool"],
-    "session": parsed["session"],
-    "project_id": os.environ.get("PROJECT_ID_ENV", "global"),
-    "project_name": os.environ.get("PROJECT_NAME_ENV", "global"),
+    "err": parsed.get("err", False),
+    "sid": parsed["sid"],
+    "pid": os.environ.get("PROJECT_ID_ENV", "global"),
+    "pname": os.environ.get("PROJECT_NAME_ENV", "global"),
 }
+
+# Only include err_msg when there is an error
+if parsed.get("err") and parsed.get("err_msg"):
+    observation["err_msg"] = scrub(parsed["err_msg"])
 
 if parsed.get("input"):
     observation["input"] = scrub(parsed["input"])
@@ -318,13 +332,13 @@ _write_observation() {
 
 # -- Watchdog: proactive alerts on critical errors --
 if [ "$HOOK_PHASE" = "post" ]; then
-  _OUTPUT=$(echo "$PARSED" | "$PYTHON_CMD" -c "import json,sys; print(json.load(sys.stdin).get('output','') or '')" 2>/dev/null || echo "")
+  _OUTPUT=$(echo "$PARSED" | "$PYTHON_CMD" -c "import json,sys; d=json.load(sys.stdin); print(d.get('output','') or '')" 2>/dev/null || echo "")
   if echo "$_OUTPUT" | grep -qiE "(FATAL|PANIC|OOM|segfault|killed|ENOSPC|out of memory)"; then
     echo "[cortex-watchdog] Critical error detected in output. Consider capturing it." >&2
   fi
 fi
 
-# -- Learn trigger: marker every 50 observations --
+# -- Analyze trigger: marker every 50 observations --
 OBS_COUNT_FILE="${CORTEX_DIR}/.obs-count"
 LEARN_THRESHOLD=50
 if [ -f "$OBS_COUNT_FILE" ]; then

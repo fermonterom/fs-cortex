@@ -1,28 +1,84 @@
 {
-  "version": "1.0.0",
+  "version": "2.0.0",
   "reflexes": [
     {
       "id": "read-before-edit",
       "matcher": "Edit|Write",
-      "action": "Verify the file was Read in the last 5 tool calls. If not, suggest reading it first before making changes.",
+      "action": "Verify the file was Read recently. If not, read it first.",
       "severity": "high",
-      "enabled": true
+      "enabled": true,
+      "fireCount": 0,
+      "lastFired": null
     },
     {
       "id": "env-never-commit",
       "matcher": "Bash",
       "condition": "git add|git commit",
-      "action": "Verify .env* files are listed in .gitignore. NEVER commit secrets or environment files.",
+      "action": "Verify .env* files are in .gitignore. NEVER commit secrets.",
       "severity": "critical",
-      "enabled": true
+      "enabled": true,
+      "fireCount": 0,
+      "lastFired": null
     },
     {
       "id": "test-after-change",
       "matcher": "Edit|Write",
       "condition": "route\\.ts|component|\\.test\\.",
-      "action": "Code was modified. Consider running tests to verify nothing is broken.",
+      "action": "Code modified. Consider running tests.",
       "severity": "medium",
-      "enabled": true
+      "enabled": true,
+      "fireCount": 0,
+      "lastFired": null
+    },
+    {
+      "id": "git-commit-quality",
+      "matcher": "Bash",
+      "condition": "git commit",
+      "action": "Before committing: verify tests pass, lint clean, conventional format.",
+      "severity": "high",
+      "enabled": true,
+      "fireCount": 0,
+      "lastFired": null
+    },
+    {
+      "id": "git-push-safety",
+      "matcher": "Bash",
+      "condition": "git push|gh pr create",
+      "action": "Before pushing: fetch+rebase first. Use --force-with-lease for force pushes.",
+      "severity": "high",
+      "enabled": true,
+      "fireCount": 0,
+      "lastFired": null
+    },
+    {
+      "id": "git-merge-verify",
+      "matcher": "Bash",
+      "condition": "gh pr merge",
+      "action": "Verify all checks pass. Clean up branch after merge.",
+      "severity": "high",
+      "enabled": true,
+      "fireCount": 0,
+      "lastFired": null
+    },
+    {
+      "id": "api-auth-check",
+      "matcher": "Edit|Write",
+      "condition": "route\\.ts|api/",
+      "action": "API routes must validate authentication before returning data.",
+      "severity": "high",
+      "enabled": true,
+      "fireCount": 0,
+      "lastFired": null
+    },
+    {
+      "id": "security-headers",
+      "matcher": "Edit|Write",
+      "condition": "vercel\\.json|next\\.config",
+      "action": "Verify security headers: X-Frame-Options, CSP, Referrer-Policy.",
+      "severity": "high",
+      "enabled": true,
+      "fireCount": 0,
+      "lastFired": null
     }
   ]
 }

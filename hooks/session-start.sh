@@ -1,7 +1,7 @@
 #!/bin/bash
-# Cortex Session Start — SessionStart hook
-# Injects condensed Laws + EOD Quick Resume at every session start AND after /compact.
-# Reads laws from ~/.claude/cortex/laws/, checks for new day, learn-pending, and EOD.
+# Cortex Session Start v2.0 — SessionStart hook
+# Injects Laws + EOD Quick Resume + context.md bridge at session start AND after /compact.
+# Reads laws from ~/.claude/cortex/laws/, EOD from daily-summaries/, context.md from project.
 
 set -e
 
@@ -9,10 +9,18 @@ CORTEX_DIR="$HOME/.claude/cortex"
 LAWS_DIR="$CORTEX_DIR/laws"
 LAST_DATE_FILE="$CORTEX_DIR/.last-session-date"
 EOD_DIR="$CORTEX_DIR/daily-summaries"
+PROJECTS_DIR="$CORTEX_DIR/projects"
+CONTEXT_TTL_DAYS=14
 
 # Cross-platform date handling (macOS + Linux)
 TODAY=$(date +%Y-%m-%d)
 YESTERDAY=$(date -v-1d +%Y-%m-%d 2>/dev/null || date -d "yesterday" +%Y-%m-%d 2>/dev/null)
+
+# Read stdin for cwd (project detection)
+INPUT_JSON=$(cat 2>/dev/null || echo "{}")
+PYTHON_CMD=""
+command -v python3 >/dev/null 2>&1 && PYTHON_CMD="python3"
+[ -z "$PYTHON_CMD" ] && command -v python >/dev/null 2>&1 && PYTHON_CMD="python"
 
 # -- Build context string --
 CONTEXT=""
@@ -44,16 +52,15 @@ mkdir -p "$CORTEX_DIR"
 echo "$TODAY" > "$LAST_DATE_FILE"
 
 if [ "$LAST_DATE" != "$TODAY" ] && [ -n "$LAST_DATE" ]; then
-  CONTEXT="${CONTEXT}\n\nNEW DAY (last session: ${LAST_DATE}). Consider running /cx-learn to crystallize patterns."
+  CONTEXT="${CONTEXT}\n\nNEW DAY (last session: ${LAST_DATE}). Consider running /cx-analyze to detect patterns."
 elif [ -z "$LAST_DATE" ]; then
-  CONTEXT="${CONTEXT}\n\nNEW DAY (last session: first time). Consider running /cx-learn to crystallize patterns."
+  CONTEXT="${CONTEXT}\n\nNEW DAY (first session). Welcome to Cortex."
 fi
 
 # 3. Check for .learn-pending marker OR count observations as fallback
 if [ -f "$CORTEX_DIR/.learn-pending" ]; then
-  CONTEXT="${CONTEXT}\n\nYou have 50+ new observations. Run /cx-learn to analyze patterns."
+  CONTEXT="${CONTEXT}\n\nYou have 50+ new observations. Run /cx-analyze to detect patterns."
 else
-  # Fallback: count actual observations vs last learn count
   LAST_LEARN_COUNT=0
   [ -f "$CORTEX_DIR/.last-learn-count" ] && LAST_LEARN_COUNT=$(cat "$CORTEX_DIR/.last-learn-count" 2>/dev/null | tr -d '[:space:]')
   LAST_LEARN_COUNT="${LAST_LEARN_COUNT:-0}"
@@ -63,7 +70,37 @@ else
   done
   NEW_OBS=$((TOTAL_OBS - LAST_LEARN_COUNT))
   if [ "$NEW_OBS" -ge 50 ]; then
-    CONTEXT="${CONTEXT}\n\nYou have ${NEW_OBS} new observations since last /cx-learn. Run /cx-learn to analyze patterns."
+    CONTEXT="${CONTEXT}\n\nYou have ${NEW_OBS} new observations since last /cx-analyze. Run /cx-analyze to detect patterns."
+  fi
+fi
+
+# 3b. Inject context.md bridge from current project (v2.0)
+if [ -n "$PYTHON_CMD" ] && [ -n "$INPUT_JSON" ]; then
+  _CWD=$(echo "$INPUT_JSON" | "$PYTHON_CMD" -c 'import json,sys; print(json.load(sys.stdin).get("cwd",""))' 2>/dev/null || echo "")
+  if [ -n "$_CWD" ] && [ -d "$_CWD" ] && command -v git &>/dev/null; then
+    _PROJECT_ROOT=$(git -C "$_CWD" rev-parse --show-toplevel 2>/dev/null || true)
+    if [ -n "$_PROJECT_ROOT" ]; then
+      _REMOTE=$(git -C "$_PROJECT_ROOT" remote get-url origin 2>/dev/null || echo "$_PROJECT_ROOT")
+      _PHASH=$(printf '%s' "$_REMOTE" | "$PYTHON_CMD" -c "import sys,hashlib; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest()[:12])" 2>/dev/null || echo "")
+      _CONTEXT_FILE="$PROJECTS_DIR/$_PHASH/context.md"
+      if [ -n "$_PHASH" ] && [ -f "$_CONTEXT_FILE" ]; then
+        # Check TTL (14 days)
+        _FILE_AGE_DAYS=$("$PYTHON_CMD" -c "
+import os, time
+try:
+    age = (time.time() - os.path.getmtime('$_CONTEXT_FILE')) / 86400
+    print(int(age))
+except:
+    print(999)
+" 2>/dev/null || echo "999")
+        if [ "$_FILE_AGE_DAYS" -lt "$CONTEXT_TTL_DAYS" ]; then
+          _CTX_CONTENT=$(head -10 "$_CONTEXT_FILE" 2>/dev/null | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+          if [ -n "$_CTX_CONTENT" ]; then
+            CONTEXT="${CONTEXT}\n\nPROJECT CONTEXT: ${_CTX_CONTENT}"
+          fi
+        fi
+      fi
+    fi
   fi
 fi
 
@@ -98,9 +135,6 @@ if [ -n "$EOD_FILE" ]; then
 fi
 
 # -- Output JSON via python3 --
-PYTHON_CMD=""
-command -v python3 >/dev/null 2>&1 && PYTHON_CMD="python3"
-[ -z "$PYTHON_CMD" ] && command -v python >/dev/null 2>&1 && PYTHON_CMD="python"
 [ -z "$PYTHON_CMD" ] && exit 0
 
 "$PYTHON_CMD" -c "

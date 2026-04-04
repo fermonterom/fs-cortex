@@ -111,9 +111,9 @@ if ! $HAS_CORTEX; then
     fi
 fi
 
-# Step 4: Create directory structure
+# Step 4: Create directory structure (v2.0)
 print_step "Creating directory structure..."
-mkdir -p "$CORTEX_DIR"/{laws/archive,instincts/{personal,inherited},projects,evolved/{skills,commands,agents},exports,daily-summaries}
+mkdir -p "$CORTEX_DIR"/{laws/archive,instincts/{global,archive},projects,evolved/{skills,commands,rules},exports,daily-summaries,log}
 chmod 700 "$CORTEX_DIR"
 print_ok "Created ~/.claude/cortex/"
 
@@ -130,12 +130,6 @@ if [ ! -f "$CORTEX_DIR/reflexes.json" ]; then
     print_ok "Created reflexes.json"
 else
     print_warn "reflexes.json exists, preserving user data"
-fi
-if [ ! -f "$CORTEX_DIR/catalog.json" ]; then
-    cp "$SCRIPT_DIR/core/catalog.default.json" "$CORTEX_DIR/catalog.json"
-    print_ok "Created catalog.json"
-else
-    print_warn "catalog.json exists, preserving user data"
 fi
 print_ok "Core files ready"
 
@@ -155,20 +149,20 @@ done
 INSTALLED_CMDS=$(ls "$SCRIPT_DIR/commands/"*.md 2>/dev/null | xargs -I{} basename {} .md | tr '\n' ', ' | sed 's/,$//')
 print_ok "Commands installed: $INSTALLED_CMDS"
 
-# Step 8: Install hooks
+# Step 8: Install hooks (v2.0: observe.sh, session-start.sh, injector.sh, session-learner.js)
 print_step "Installing hooks..."
 mkdir -p "$HOOKS_DIR"
-for hook in "$SCRIPT_DIR/hooks/"*.sh; do
+for hook in "$SCRIPT_DIR/hooks/"*.sh "$SCRIPT_DIR/hooks/"*.js; do
     [ -f "$hook" ] && cp "$hook" "$HOOKS_DIR/" && chmod +x "$HOOKS_DIR/$(basename "$hook")"
 done
 print_ok "Hooks installed to ~/.claude/hooks/cortex/"
 
 # Step 9: Install seed instinct (only if not already present)
 print_step "Installing seed instinct..."
-if [ -f "$CORTEX_DIR/instincts/personal/read-instructions-before-executing.yaml" ]; then
+if [ -f "$CORTEX_DIR/instincts/global/read-instructions-before-executing.yaml" ]; then
     print_warn "Seed instinct already exists, preserving"
 elif [ -f "$SCRIPT_DIR/rules/seed.md" ]; then
-    cp "$SCRIPT_DIR/rules/seed.md" "$CORTEX_DIR/instincts/personal/read-instructions-before-executing.yaml"
+    cp "$SCRIPT_DIR/rules/seed.md" "$CORTEX_DIR/instincts/global/read-instructions-before-executing.yaml"
     print_ok "Seed instinct installed"
 else
     print_warn "Seed rule not found, skipping"
@@ -213,7 +207,7 @@ for perm in cortex_perms:
 if "~/.claude/cortex" not in settings["permissions"].get("additionalDirectories", []):
     settings["permissions"]["additionalDirectories"].append("~/.claude/cortex")
 
-# Define cortex hooks
+# Define cortex hooks (v2.0: 4 hooks — observe, session-start, injector, session-learner)
 cortex_hooks = {
     "SessionStart": [
         {
@@ -234,29 +228,20 @@ cortex_hooks = {
     ],
     "PreToolUse": [
         {
-            "matcher": "Bash",
-            "hooks": [{
-                "type": "command",
-                "command": "bash ~/.claude/hooks/cortex/git-guard.sh",
-                "timeout": 5000
-            }]
-        },
-        {
             "matcher": "*",
-            "hooks": [{
-                "type": "command",
-                "command": "bash ~/.claude/hooks/cortex/reflex-engine.sh",
-                "timeout": 500
-            }]
-        },
-        {
-            "matcher": "*",
-            "hooks": [{
-                "type": "command",
-                "command": "bash ~/.claude/hooks/cortex/observe.sh pre",
-                "timeout": 10000,
-                "async": True
-            }]
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": "bash ~/.claude/hooks/cortex/observe.sh pre",
+                    "timeout": 10000,
+                    "async": True
+                },
+                {
+                    "type": "command",
+                    "command": "bash ~/.claude/hooks/cortex/injector.sh",
+                    "timeout": 3000
+                }
+            ]
         }
     ],
     "PostToolUse": [
@@ -267,6 +252,15 @@ cortex_hooks = {
                 "command": "bash ~/.claude/hooks/cortex/observe.sh post",
                 "timeout": 10000,
                 "async": True
+            }]
+        }
+    ],
+    "Stop": [
+        {
+            "hooks": [{
+                "type": "command",
+                "command": "node ~/.claude/hooks/cortex/session-learner.js",
+                "timeout": 15000
             }]
         }
     ]
@@ -320,8 +314,9 @@ if [ -n "$IMPORT_BACKUP" ]; then
     if tar -xzf "$IMPORT_BACKUP" -C "$TEMP_DIR" 2>/dev/null; then
         # Copy laws (|| true: macOS cp -n returns 1 if target exists)
         [ -d "$TEMP_DIR/laws" ] && { cp -n "$TEMP_DIR/laws/"*.txt "$CORTEX_DIR/laws/" 2>/dev/null || true; }
-        # Copy instincts
-        [ -d "$TEMP_DIR/instincts/personal" ] && { cp -n "$TEMP_DIR/instincts/personal/"*.yaml "$CORTEX_DIR/instincts/personal/" 2>/dev/null || true; }
+        # Copy instincts (v2.0: global instead of personal)
+        [ -d "$TEMP_DIR/instincts/personal" ] && { cp -n "$TEMP_DIR/instincts/personal/"*.yaml "$CORTEX_DIR/instincts/global/" 2>/dev/null || true; }
+        [ -d "$TEMP_DIR/instincts/global" ] && { cp -n "$TEMP_DIR/instincts/global/"*.yaml "$CORTEX_DIR/instincts/global/" 2>/dev/null || true; }
         # Copy memory.json (backup has real user data, overwrite template)
         [ -f "$TEMP_DIR/memory.json" ] && cp "$TEMP_DIR/memory.json" "$CORTEX_DIR/memory.json" 2>/dev/null
         # Copy reflexes.json (backup has user customizations, overwrite default)
@@ -332,8 +327,9 @@ if [ -n "$IMPORT_BACKUP" ]; then
         for proj_dir in "$TEMP_DIR/projects"/*/instincts; do
             [ -d "$proj_dir" ] || continue
             proj_id=$(basename "$(dirname "$proj_dir")")
-            mkdir -p "$CORTEX_DIR/projects/$proj_id/instincts/personal"
-            cp -n "$proj_dir/personal/"*.yaml "$CORTEX_DIR/projects/$proj_id/instincts/personal/" 2>/dev/null || true
+            mkdir -p "$CORTEX_DIR/projects/$proj_id/instincts"
+            cp -n "$proj_dir/"*.yaml "$CORTEX_DIR/projects/$proj_id/instincts/" 2>/dev/null || true
+            [ -d "$proj_dir/personal" ] && cp -n "$proj_dir/personal/"*.yaml "$CORTEX_DIR/projects/$proj_id/instincts/" 2>/dev/null || true
         done
         # Copy evolved content
         [ -d "$TEMP_DIR/evolved" ] && { cp -r -n "$TEMP_DIR/evolved/"* "$CORTEX_DIR/evolved/" 2>/dev/null || true; }
@@ -341,7 +337,7 @@ if [ -n "$IMPORT_BACKUP" ]; then
         [ -d "$TEMP_DIR/daily-summaries" ] && { cp -n "$TEMP_DIR/daily-summaries/"*.md "$CORTEX_DIR/daily-summaries/" 2>/dev/null || true; }
 
         IMPORTED_LAWS=$(find "$CORTEX_DIR/laws" -name "*.txt" 2>/dev/null | wc -l | tr -d ' ')
-        IMPORTED_INST=$(find "$CORTEX_DIR/instincts/personal" -name "*.yaml" 2>/dev/null | wc -l | tr -d ' ')
+        IMPORTED_INST=$(find "$CORTEX_DIR/instincts" -name "*.yaml" 2>/dev/null | wc -l | tr -d ' ')
         print_ok "Backup imported: ${IMPORTED_LAWS} laws, ${IMPORTED_INST} instincts"
     else
         print_error "Failed to extract backup. Continuing with fresh install."
@@ -398,7 +394,7 @@ echo ""
 echo -e "  ${BOLD}Next steps:${NC}"
 echo -e "  1. Open Claude Code and work normally"
 echo -e "  2. Laws inject automatically at session start"
-echo -e "  3. Run ${BOLD}/cx-learn${NC} when suggested to crystallize patterns"
+echo -e "  3. Run ${BOLD}/cx-analyze${NC} when suggested to detect patterns"
 echo ""
 if [ -n "$IMPORT_BACKUP" ]; then
     echo -e "  ${YELLOW}Knowledge imported from backup.${NC}"
