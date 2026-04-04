@@ -72,7 +72,7 @@ The installer will:
 Open Claude Code and work normally. Cortex works automatically:
 
 1. **Laws inject at session start** — your crystallized knowledge, always present
-2. **Context bridge injects** — yesterday's session context, auto-resumed
+2. **Context bridge injects** — yesterday's session context, auto-resumed (shown once, not repeated)
 3. **Instincts inject per tool use** — matched patterns, confidence-gated
 4. **Observations capture in background** — silent, zero overhead
 5. **Session learner runs at close** — detects patterns, writes proposals
@@ -109,7 +109,7 @@ Open Claude Code and work normally. Cortex works automatically:
 
 | Hook | Event | Purpose | Blocking? |
 |------|-------|---------|-----------|
-| `session-start.sh` | SessionStart | Inject Laws + EOD resume + context.md bridge | Sync (5s) |
+| `session-start.sh` | SessionStart | Inject Laws + EOD resume (once) + context.md bridge | Sync (5s) |
 | `observe.sh` | PreToolUse / PostToolUse | Capture tool start/complete | Async (0 tokens) |
 | `injector.sh` | PreToolUse | Inject matched reflexes + instincts | Sync (3s) |
 | `session-learner.js` | Stop | Analyze session, proposals, context.md | Sync (15s) |
@@ -193,7 +193,7 @@ Backups include: laws, instincts, memory, reflexes, evolved content, proposals, 
 | Component | Tokens | When |
 |-----------|--------|------|
 | Laws (max 10) | ~300 | SessionStart (1x) |
-| EOD resume | ~150 | SessionStart (1x) |
+| EOD resume | ~150 | SessionStart (1x per EOD, not repeated) |
 | Context bridge | ~100 | SessionStart (1x) |
 | Instincts (max 2) | ~80 | PreToolUse (if match) |
 | Reflexes (max 2) | ~40 | PreToolUse (if match) |

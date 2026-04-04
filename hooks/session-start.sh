@@ -1,5 +1,5 @@
 #!/bin/bash
-# Cortex Session Start v2.0 — SessionStart hook
+# Cortex Session Start v2.1 — SessionStart hook
 # Injects Laws + EOD Quick Resume + context.md bridge at session start AND after /compact.
 # Reads laws from ~/.claude/cortex/laws/, EOD from daily-summaries/, context.md from project.
 
@@ -105,6 +105,11 @@ except:
 fi
 
 # 4. Find and inject EOD Quick Resume (check today first, then yesterday)
+# Only inject ONCE per EOD — use .eod-last-read marker to avoid repeating in every session
+EOD_LAST_READ_FILE="$CORTEX_DIR/.eod-last-read"
+EOD_LAST_READ=""
+[ -f "$EOD_LAST_READ_FILE" ] && EOD_LAST_READ=$(cat "$EOD_LAST_READ_FILE" 2>/dev/null | tr -d '[:space:]')
+
 EOD_FILE=""
 EOD_DATE=""
 if [ -f "$EOD_DIR/${TODAY}.md" ]; then
@@ -115,7 +120,7 @@ elif [ -n "$YESTERDAY" ] && [ -f "$EOD_DIR/${YESTERDAY}.md" ]; then
   EOD_DATE="$YESTERDAY"
 fi
 
-if [ -n "$EOD_FILE" ]; then
+if [ -n "$EOD_FILE" ] && [ "$EOD_LAST_READ" != "$EOD_DATE" ]; then
   # Extract Quick Resume section (between "## Quick Resume" and next "##" or EOF)
   QUICK_RESUME=$(sed -n '/^## Quick Resume/,/^## /{ /^## Quick Resume/d; /^## /d; p; }' "$EOD_FILE" 2>/dev/null | head -10 | sed 's/^[[:space:]]*//' | tr -s '\n' ' ' | sed 's/^[> ]*//' | sed 's/[[:space:]]*$//')
 
@@ -133,6 +138,9 @@ if [ -n "$EOD_FILE" ]; then
 
   # Instruction for Claude to present EOD proactively
   CONTEXT="${CONTEXT}\nIMPORTANT: Present the EOD resume and priorities to the user in your FIRST response. Do NOT wait for the user to ask. Greet, summarize yesterday, list priorities, ask where to start."
+
+  # Mark this EOD as read so subsequent sessions don't repeat it
+  echo "$EOD_DATE" > "$EOD_LAST_READ_FILE"
 fi
 
 # -- Output JSON via python3 --
