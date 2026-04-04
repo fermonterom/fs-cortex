@@ -17,6 +17,20 @@ Background agent that analyzes observations.jsonl to detect recurring patterns a
 Reads observations from project-scoped files:
 - Project: `~/.claude/cortex/projects/<hash>/observations.jsonl`
 
+### v2.0 Observation Format
+
+Observations use short field names for compact storage:
+- `ts` — timestamp (ISO 8601)
+- `ev` — event type: `ts` (tool_start) or `tc` (tool_complete)
+- `tool` — tool name
+- `err` — boolean, whether the tool errored
+- `err_msg` — error message string (only present when `err: true`)
+- `sid` — session ID
+- `pid` — project ID (hash)
+- `pname` — project name
+- `input` — tool input (truncated)
+- `output` — tool output (truncated)
+
 ## Pattern Detection
 
 ### 1. User Corrections
@@ -49,25 +63,24 @@ When a following message corrects the previous action:
 
 ## Output Format
 
+Instinct proposals use frontmatter-only YAML (no markdown body, except gotchas):
+
 ```yaml
 ---
 id: [kebab-case-descriptive]
-trigger: "[when it activates]"
+trigger: "regex|pattern"
+action: "Concrete action text"
 confidence: [0.3-0.9]
 domain: "[domain]"
-source: "session-observation"
+tags: [tag1, tag2]
 scope: [project|global]
+source: "session-observation"
+first_seen: "YYYY-MM-DD"
+last_seen: "YYYY-MM-DD"
+occurrences: N
+evidence:
+  - "YYYY-MM-DD: description of observation"
 ---
-
-# [Descriptive Title]
-
-## Action
-[What to do -- concrete, actionable]
-
-## Evidence
-- [What observations generated this]
-- [Frequency]
-- [Last observation: date]
 ```
 
 ## Confidence Scoring
