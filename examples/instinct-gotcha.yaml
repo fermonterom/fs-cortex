@@ -1,21 +1,28 @@
 ---
 id: gotcha-framework-boundary-required
-trigger: "when using client-side hooks that require wrapper components"
+trigger: "useSearchParams|usePathname|client.hook|boundary"
+action: "Wrap component in required boundary (Suspense for useSearchParams). Check framework docs for which hooks need boundaries."
 confidence: 0.88
-domain: "web-development"
-type: gotcha
-source: "session-observation"
+domain: web-development
+tags: [nextjs, react, suspense, gotcha]
 scope: project
+type: gotcha
+severity: high
+source: session-observation
+first_seen: "2026-03-20"
+last_seen: "2026-04-02"
+occurrences: 3
+evidence:
+  - "2026-03-20: Build error without Suspense boundary"
+  - "2026-03-28: Same error in different component"
+  - "2026-04-02: Pattern confirmed — all useSearchParams need Suspense"
 ---
 
-# Framework Boundary Required for Client Hooks
+## Problem
+useSearchParams() and similar client hooks crash without proper boundary wrapper in Next.js 14+ App Router.
 
-## Action
-When using client-side hooks that depend on context providers,
-always wrap the component in the required boundary component.
-Check framework docs for which hooks need which boundaries.
+## Fix
+Wrap component in `<Suspense fallback={<Loading/>}>`.
 
-## Evidence
-- Build error occurred 3 times before pattern was captured
-- Framework-specific: applies to React/Next.js projects
-- Severity: high (causes build failures)
+## Prevention
+Always check if a client hook requires a boundary before using it.

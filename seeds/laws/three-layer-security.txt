@@ -1,0 +1,1 @@
+Enforce 3-layer security: middleware auth → API route validation → Supabase RLS.

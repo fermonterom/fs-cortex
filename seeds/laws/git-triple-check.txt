@@ -1,0 +1,1 @@
+Before any git commit: run git status + git diff + git log to triple-check changes.

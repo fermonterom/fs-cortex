@@ -374,10 +374,25 @@ with open(mem_path, "w") as f:
     json.dump(mem, f, indent=2)
 ' 2>/dev/null || true
 
-    # Create seed law
+    # Copy seed laws
     mkdir -p "$CORTEX_DIR/laws"
-    echo "Always read documentation and instructions before executing any skill or command." > "$CORTEX_DIR/laws/read-first.txt"
-    print_ok "Seed law created"
+    if [ -d "$SCRIPT_DIR/seeds/laws" ]; then
+        for law in "$SCRIPT_DIR/seeds/laws/"*.txt; do
+            [ -f "$law" ] && cp "$law" "$CORTEX_DIR/laws/"
+        done
+        SEED_LAWS=$(ls "$SCRIPT_DIR/seeds/laws/"*.txt 2>/dev/null | wc -l | tr -d ' ')
+        print_ok "Seed laws installed: $SEED_LAWS"
+    fi
+
+    # Copy seed instincts
+    mkdir -p "$CORTEX_DIR/instincts/global"
+    if [ -d "$SCRIPT_DIR/seeds/instincts" ]; then
+        for inst in "$SCRIPT_DIR/seeds/instincts/"*.yaml; do
+            [ -f "$inst" ] && cp "$inst" "$CORTEX_DIR/instincts/global/"
+        done
+        SEED_INST=$(ls "$SCRIPT_DIR/seeds/instincts/"*.yaml 2>/dev/null | wc -l | tr -d ' ')
+        print_ok "Seed instincts installed: $SEED_INST"
+    fi
 fi
 
 # Step 14: Summary

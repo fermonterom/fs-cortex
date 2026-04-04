@@ -1,0 +1,1 @@
+Always Grep → Read → Verify before editing any file. Never edit blind.
