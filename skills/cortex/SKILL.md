@@ -3,25 +3,28 @@ name: cortex
 description: |
   Continuous learning system for Claude Code. Observes sessions,
   crystallizes patterns as atomic instincts with confidence scoring,
-  distills proven knowledge into laws. Commands: /cx-status, /cx-learn,
-  /cx-eod, /cx-gotcha, /cx-export, /cx-backup, /cx-restore.
+  distills proven knowledge into laws. Commands: /cx-status, /cx-analyze,
+  /cx-distill, /cx-validate, /cx-evolve, /cx-eod, /cx-gotcha, /cx-audit,
+  /cx-export, /cx-backup, /cx-restore, /cx-bootstrap.
 auto_activate: true
 ---
 
-# Cortex -- Continuous Learning System
+# Cortex v2.0 — Continuous Learning System
 
 > Every session creates a connection. Cortex turns them into instinct.
 
 ## Architecture
 
-3-level knowledge distillation:
+3-level knowledge distillation with dual injection:
 
 ```
 Observations (JSONL, async hooks, 0 tokens)
-    | /cx-learn
-Instincts (YAML, on demand, ~50-100 tokens each)
-    | confidence >= 0.90
-Laws (TXT one-liners, injected every session, ~30 tokens each)
+    ↓ /cx-analyze (cortex-observer agent, Haiku)
+Instincts (YAML, confidence 0.0-0.95, injected via PreToolUse)
+    ↓ confidence >= 0.90 via /cx-distill
+Laws (TXT one-liners ≤120 chars, injected every SessionStart)
+    ↓ clusters of 3+ mature instincts via /cx-evolve
+Evolved artifacts (skills, commands, rules in evolved/)
 ```
 
 ## Data Location
@@ -31,112 +34,99 @@ Laws (TXT one-liners, injected every session, ~30 tokens each)
 ## How It Works
 
 ### Automatic (no user action needed)
-- **Laws** injected at session start via SessionStart hook
-- **EOD Resume** injected at session start -- Claude MUST present it proactively (see below)
-- **Observations** captured silently via async PreToolUse/PostToolUse hooks
-- **Reflexes** fire deterministically via PreToolUse hook (reflex-engine.sh)
-- After ~50 observations, session-start suggests running /cx-learn
+- **Laws** injected at SessionStart (~300 tokens for max 10 laws)
+- **Context bridge** injected at SessionStart (project context.md, 14d TTL)
+- **EOD Resume** injected at SessionStart — Claude MUST present it proactively
+- **Instincts** injected per PreToolUse via injector.sh (max 2 instincts + 2 reflexes)
+- **Observations** captured silently via async hooks (0 tokens)
+- **Session analysis** runs at Stop (session-learner.js: proposals, context.md)
+- After ~50 observations, session-start suggests running /cx-analyze
 
 ### Session Start Behavior (MANDATORY)
 
-When the system prompt contains `EOD RESUME`, Claude MUST proactively present it in the **first response** of the session, WITHOUT the user asking. Format:
+When the system prompt contains `EOD RESUME`, Claude MUST proactively present it in the **first response**, WITHOUT the user asking:
 
-1. **Greeting** -- Brief saludo
-2. **Yesterday's summary** -- Paraphrase the EOD RESUME content (1-2 lines)
-3. **Learning status** -- If there are pending observations, mention `/cx-learn`
-4. **Today's priorities** -- List the PRIORITIES as a numbered list
-5. **Ask** -- Ask where to start (use the user's language from memory.json)
+1. **Greeting** — Brief saludo
+2. **Yesterday's summary** — Paraphrase EOD RESUME (1-2 lines)
+3. **Learning status** — If pending observations, mention `/cx-analyze`
+4. **Priorities** — List PRIORITIES as numbered list
+5. **Ask** — Ask where to start (user's language from memory.json)
 
-This is the default opening behavior. If the user's first message already asks for something specific, address their request first, then briefly mention the EOD context if relevant.
+### Commands (12)
 
-### On Demand (user invokes)
-- `/cx-learn` -- Full pipeline: analyze observations, create/update instincts, distill laws, check promotions, offer inheritance/bootstrap for new projects
-- `/cx-status` -- Dashboard: laws, instincts, projects, reflexes, system health
-- `/cx-eod` -- End of day summary, saves context for next session
-- `/cx-gotcha` -- Capture error->fix as high-priority instinct
-- `/cx-export` -- Generate portable skill with condensed instincts for Claude web/app
-- `/cx-backup` -- Create portable .tar.gz backup of all knowledge for machine transfer
-- `/cx-restore` -- Import knowledge from a backup archive, merging with existing data
+| Command | Purpose |
+|---------|---------|
+| `/cx-status` | Dashboard: laws, instincts, projects, reflexes, health |
+| `/cx-analyze` | Detect patterns in observations → proposals |
+| `/cx-distill` | Distill laws, apply decay, check Jaccard promotions |
+| `/cx-validate` | Review/confirm/reject proposals and weak instincts |
+| `/cx-evolve` | Cluster mature instincts → skills/commands/rules |
+| `/cx-bootstrap` | Seed new project from git history or similar projects |
+| `/cx-audit` | Token overhead, duplicates, conflicts, cleanup proposals |
+| `/cx-eod` | End-of-day summary for next session |
+| `/cx-gotcha` | Capture error→fix as high-priority instinct |
+| `/cx-export` | Portable skill for Claude.ai or sharing |
+| `/cx-backup` | .tar.gz backup for machine transfer |
+| `/cx-restore` | Import backup with intelligent merge |
 
-## Confidence Tiers
+### Learning Pipeline
 
-| Range | Tier | Meaning |
-|-------|------|---------|
-| 0.0-0.3 | Observation | Raw, unvalidated |
-| 0.3-0.5 | Hypothesis | Seen 2x, plausible |
-| 0.5-0.7 | Pattern | Consistent, likely correct |
-| 0.7-0.9 | Instinct | Validated, reliable |
-| 0.9-1.0 | Law | Proven cross-project, crystallized |
+```
+Observe (hooks) → Analyze → Validate → Distill → Evolve → Audit
+   auto            manual    manual     manual    manual   manual
+```
 
-## Confidence Adjustments
+## Confidence System
 
-| Event | Change |
-|-------|--------|
-| User says "always/never" | +0.3 |
-| User corrects Claude | +0.2 |
-| Pattern seen 2x same session | +0.1 |
-| Pattern in 3+ sessions | +0.2 |
-| Pattern in 5+ sessions | +0.3 |
-| Pattern in 2+ projects | +0.15 |
-| Reinforced (applied, not corrected) | +0.1 |
-| 60 days without observation | -0.1 |
-| User contradicts instinct | -0.2 |
+Continuous 0.0–0.95 (capped, always refinable):
 
-## Instinct Format (YAML)
+| Range | Label | Injection |
+|-------|-------|-----------|
+| 0.00-0.29 | Observation | Not injected |
+| 0.30-0.49 | Hypothesis | Only if trigger+tool match |
+| 0.50-0.69 | Pattern | When trigger matches |
+| 0.70-0.89 | Instinct | Automatic, promotion candidate |
+| 0.90-0.95 | Law | Auto-distilled, injected always |
+
+**Up**: +0.10/occurrence (max +0.30/cycle), +0.20 user validation, +0.20 cross-project
+**Down**: -0.20 contradiction, -0.10 failed application, -0.05/30 days unused
+**Promotion**: Jaccard ≥0.70 + 2 projects + avg conf ≥0.80
+
+## Instinct Format (v2.0 YAML)
 
 ```yaml
 ---
-id: example-instinct
-trigger: "when doing X in context Y"
-confidence: 0.7
-domain: "workflow-general"
-source: "session-observation"
+id: supabase-rls-auth-uid
+trigger: "rls|policy|supabase|auth\\.uid"
+action: "Verify auth.uid() in WHERE. Test with auth and service roles."
+confidence: 0.75
+domain: database
+tags: [supabase, rls, security]
 scope: project
+project_id: "hash"
+source: session-observation
+first_seen: "2026-03-28"
+last_seen: "2026-04-03"
+occurrences: 4
+evidence:
+  - "2026-03-28: User corrected missing auth.uid()"
 ---
-
-# Descriptive Title
-
-## Action
-What to do -- concrete, actionable.
-
-## Evidence
-- What observations generated this
-- Frequency and last seen date
 ```
 
 ## Domains
 
-| Domain | Description |
-|--------|-------------|
-| workflow-general | Cross-project patterns (git, tools, workflow) |
-| web-development | Frontend, backend, APIs, frameworks |
-| saas-development | SaaS, multi-tenancy, subscriptions |
-| deployment | CI/CD, Docker, infrastructure |
-| automation | Scripts, workflows, integrations |
-| documentation | Docs, READMEs, specs |
-| testing | Unit, integration, E2E, QA |
-| security | Auth, permissions, secrets, compliance |
-
-## Promotion Criteria (project -> global)
-
-- Same pattern in **2+ projects** (semantic matching, Jaccard >= 0.70)
-- Average confidence **>= 0.80**
-- Compatible domain (workflow-general, security, testing, documentation, automation)
-
-## Reflexes
-
-`~/.claude/cortex/reflexes.json` -- deterministic rules fired via hooks.
-Applied automatically, never interrupt the user. Silent enforcement.
-
-## Memory
-
-`~/.claude/cortex/memory.json` -- persistent memory (identity, config, and stats).
-Read when you need user context (identity, config, preferences).
+workflow-general | web-development | saas-development | database |
+deployment | automation | documentation | testing | security
 
 ## Agents
 
-| Agent | Purpose | Model |
-|-------|---------|-------|
-| cortex-observer | Detect patterns in observations | Haiku |
-| cortex-reviewer | Code review after edits | Haiku |
-| cortex-planner | Decompose complex tasks | Sonnet |
+| Agent | Model | Purpose |
+|-------|-------|---------|
+| cortex-observer | Haiku | Detect patterns in observations |
+| cortex-reviewer | Sonnet x3 | Parallel code review (security + quality + correctness) |
+| cortex-planner | Sonnet | Task decomposition |
+
+## Token Budget (~1,750/session)
+
+- SessionStart: ~550 (laws + EOD + context bridge)
+- PreToolUse: ~30 avg per tool use (max 2 instincts + 2 reflexes)

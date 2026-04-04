@@ -28,8 +28,8 @@ LAWS (Level 3 — always loaded):
 ### Step 2: Instincts (Level 2 — on demand)
 
 Scan both locations:
-- Global: `~/.claude/cortex/instincts/personal/*.yaml`
-- Project: `~/.claude/cortex/projects/<hash>/instincts/personal/*.yaml`
+- Global: `~/.claude/cortex/instincts/global/*.yaml`
+- Project: `~/.claude/cortex/projects/<hash>/instincts/*.yaml`
 
 Detect current project via git remote hash or cwd.
 
@@ -81,9 +81,9 @@ Display:
 
 ```
 REFLEXES:
-  ID                        MATCHER              SEVERITY    ENABLED
-  reflex-no-env-commit      *.env*               critical    yes
-  reflex-test-before-push   pre-push             high        yes
+  ID                        MATCHER              SEVERITY    FIRES  LAST FIRED
+  reflex-no-env-commit      *.env*               critical    12     2 days ago
+  reflex-test-before-push   pre-push             high        47     today
 ```
 
 ### Step 5: System Health
@@ -95,7 +95,7 @@ SYSTEM HEALTH:
   Hooks active:          [yes/no] (check ~/.claude/settings.json)
   Last observation:      [timestamp or "never"]
   Disk usage:            [size of ~/.claude/cortex/]
-  .learn-pending:        [yes/no]
+  .learn-pending:        [yes/no — run /cx-analyze if yes]
   memory.json:           [populated/empty/missing]
 ```
 
@@ -107,7 +107,7 @@ Count files in each evolved directory:
 EVOLVED:
   Skills:    N files in ~/.claude/cortex/evolved/skills/
   Commands:  N files in ~/.claude/cortex/evolved/commands/
-  Agents:    N files in ~/.claude/cortex/evolved/agents/
+  Rules:     N files in ~/.claude/cortex/evolved/rules/
 ```
 
 ## Output format

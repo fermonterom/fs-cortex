@@ -30,7 +30,7 @@ CORTEX BACKUP — Inventory
   Projects:        N registered
   Reflexes:        N rules
   Daily summaries: N files
-  Evolved content: N skills + N commands + N agents
+  Evolved content: N skills + N commands + N rules
   Memory:          identity + config
 ```
 
@@ -41,14 +41,14 @@ Gather these paths (relative to `~/.claude/cortex/`):
 **INCLUDE (valuable knowledge):**
 - `laws/*.txt` — Crystallized wisdom
 - `laws/archive/*.txt` — Archived laws
-- `instincts/personal/*.yaml` — Global instincts
-- `instincts/inherited/*.yaml` — Inherited instincts
+- `instincts/global/*.yaml` — Global instincts
+- `instincts/archive/*.yaml` — Archived instincts
 - `projects/registry.json` — Project registry
-- `projects/*/instincts/personal/*.yaml` — Project-specific instincts
-- `projects/*/instincts/inherited/*.yaml` — Project inherited instincts
+- `projects/*/instincts/*.yaml` — Project-specific instincts
+- `proposals.json` — Pending proposals
 - `memory.json` — Identity and config
 - `reflexes.json` — Custom reflexes
-- `evolved/**` — Generated skills, commands, agents
+- `evolved/**` — Generated skills, commands, rules
 - `daily-summaries/*.md` — EOD summaries
 - `exports/*.md` and `exports/*.json` — Previous exports
 
@@ -56,7 +56,7 @@ Gather these paths (relative to `~/.claude/cortex/`):
 - `projects/*/observations.jsonl` — Raw data, too large (can be 10MB+ per project)
 - `projects/*/observations.archive/` — Archived observations
 - `.obs-count`, `.learn-pending`, `.last-session-date`, `.last-learn-count` — Ephemeral markers
-- `catalog.json` — Template data, recreated on install
+- `log/` — Session logs, too large
 
 ### Step 3: Build Archive
 
@@ -65,11 +65,13 @@ Use `tar` to create the archive:
 ```bash
 tar -czf cortex-backup-YYYY-MM-DD.tar.gz -C ~/.claude/cortex \
   laws/ \
-  instincts/ \
+  instincts/global/ \
+  instincts/archive/ \
   projects/registry.json \
   projects/*/instincts/ \
   memory.json \
   reflexes.json \
+  proposals.json \
   evolved/ \
   daily-summaries/ \
   exports/

@@ -1,6 +1,6 @@
 ---
 name: cx-eod
-description: End-of-day summary — saves context for tomorrow and triggers mini-learn
+description: End-of-day summary — saves context for tomorrow
 command: true
 ---
 
@@ -8,13 +8,12 @@ command: true
 
 ## What it does
 
-Generates an end-of-day summary and saves context for the next session. Optionally triggers a quick learning cycle if enough new observations exist.
+Generates an end-of-day summary and saves context for the next session.
 
 ## Usage
 
 ```
 /cx-eod              # Full end-of-day summary
-/cx-eod --quick      # Summary only, skip mini-learn
 /cx-eod --yesterday  # Show the most recent saved summary
 ```
 
@@ -39,7 +38,7 @@ gh pr list --state open --author @me 2>/dev/null
 Only include projects with activity today (commits, changes, or open PRs).
 
 Also gather from Cortex:
-- Read `~/.claude/cortex/projects/*/observations.jsonl` — count today's entries
+- Read `~/.claude/cortex/projects/*/observations.jsonl` — count observations
 - Read instincts created/updated today (check file modification timestamps)
 
 ### Step 2: Generate Summary
@@ -84,19 +83,7 @@ Branch: [current branch]
 Write to `~/.claude/cortex/daily-summaries/YYYY-MM-DD.md`.
 Create directory if it does not exist.
 
-### Step 4: Mini-Learn
-
-Check if there are 10+ new observations since the last `/cx-learn` run.
-Determine last learn time from `.learn-pending` marker or project registry `last_learned` field.
-
-If 10+ new observations exist and `--quick` was NOT passed:
-1. Run a lightweight version of the analyze step from `/cx-learn`
-2. Only create new instincts (skip evolve, distill, promote)
-3. Show any new instincts detected
-
-If fewer than 10 new observations: skip silently.
-
-### Step 5: Display Summary
+### Step 4: Display Summary
 
 Show compact visual format:
 
@@ -148,5 +135,4 @@ Or: `/cx-eod --yesterday`
 ## What NOT to do
 
 - Do not invent activity that did not happen — use git data only
-- Do not run a full /cx-learn — only the mini-learn subset
 - Do not delete or modify any project files

@@ -57,10 +57,11 @@ For each category, merge intelligently:
   - If same filename exists locally: keep local (user may have updated it)
   - If new: copy to `~/.claude/cortex/laws/`
 
-**Instincts** (`instincts/personal/*.yaml`, `projects/*/instincts/personal/*.yaml`):
+**Instincts** (`instincts/global/*.yaml`, `projects/*/instincts/*.yaml`):
 - For each instinct in backup:
   - If same filename exists locally: compare confidence scores, keep the higher one
   - If new: copy to appropriate location
+  - Handle backward compatibility: if backup uses old `instincts/personal/` path, map to `instincts/global/`; if backup uses `projects/*/instincts/personal/`, map to `projects/*/instincts/`
 
 **Projects** (`projects/registry.json`):
 - Merge registries: for each project in backup registry:

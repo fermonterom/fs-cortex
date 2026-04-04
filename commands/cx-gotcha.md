@@ -78,8 +78,8 @@ created: "YYYY-MM-DDTHH:MM:SSZ"
 
 Detect current project (git remote hash or cwd).
 
-- Project detected: write to `~/.claude/cortex/projects/<hash>/instincts/personal/`
-- No project: write to `~/.claude/cortex/instincts/personal/`
+- Project detected: write to `~/.claude/cortex/projects/<hash>/instincts/`
+- No project: write to `~/.claude/cortex/instincts/global/`
 
 If a similar gotcha already exists (same error pattern, Jaccard >= 0.70 on trigger keywords):
 - Update existing: bump confidence by 0.05
@@ -92,7 +92,7 @@ Check if this gotcha pattern exists in other projects:
 - Compare trigger keywords
 
 If found in 2+ projects with average confidence >= 0.75:
-- Auto-promote: copy to `~/.claude/cortex/instincts/personal/` with scope: global
+- Auto-promote: copy to `~/.claude/cortex/instincts/global/` with scope: global
 - Inform user: "This gotcha was found in N projects. Promoted to global."
 
 ### Step 6: Display
@@ -113,7 +113,7 @@ If found in 2+ projects with average confidence >= 0.75:
   Fix:
   Wrap component using useSearchParams in <Suspense fallback={...}>
 
-  Saved: ~/.claude/cortex/projects/[hash]/instincts/personal/gotcha-suspense-*.yaml
+  Saved: ~/.claude/cortex/projects/[hash]/instincts/gotcha-suspense-*.yaml
 
 ================================================================
 ```
@@ -157,6 +157,6 @@ With `--list`, display:
 
 ## What NOT to do
 
-- Do not capture non-errors as gotchas (use /cx-learn for general patterns)
+- Do not capture non-errors as gotchas (use /cx-analyze for general patterns)
 - Do not set confidence above 0.80 on first capture
 - Do not auto-promote on first occurrence — require 2+ projects

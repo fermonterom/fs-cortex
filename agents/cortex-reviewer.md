@@ -1,7 +1,7 @@
 ---
 name: cortex-reviewer
-description: Parallel code review agent. Launches multiple sub-agents simultaneously for security, quality, and correctness review. Uses Haiku for speed.
-model: haiku
+description: Parallel code review agent. Launches multiple sub-agents simultaneously for security, quality, and correctness review. Uses Sonnet for quality.
+model: sonnet
 tools:
   - Read
   - Grep
@@ -30,7 +30,7 @@ Run `git diff --name-only` (staged + unstaged) to get the list of modified files
 
 Launch ALL THREE agents simultaneously using the Agent tool in a single message:
 
-**Agent 1 — Security Review** (model: haiku)
+**Agent 1 — Security Review** (model: sonnet)
 ```
 Review these files for security issues: [file list]
 
@@ -51,7 +51,7 @@ FIX: what to do
 If no issues found, report "No security issues found."
 ```
 
-**Agent 2 — Quality & Consistency Review** (model: haiku)
+**Agent 2 — Quality & Consistency Review** (model: sonnet)
 ```
 Review these files for code quality: [file list]
 
@@ -72,7 +72,7 @@ FIX: what to do
 If no issues found, report "No quality issues found."
 ```
 
-**Agent 3 — Correctness & Logic Review** (model: haiku)
+**Agent 3 — Correctness & Logic Review** (model: sonnet)
 ```
 Review these files for correctness: [file list]
 
