@@ -4,6 +4,20 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.1.1] — 2026-04-06
+
+### Added
+- Semi-automatic maintenance reminders in `session-start.sh`:
+  - `/cx-distill` reminder after 7+ days without running
+  - `/cx-audit` reminder after 30+ days without running
+  - `/cx-validate` reminder when pending proposals exist
+- Marker files (`.last-distill`, `.last-audit`) touched by commands after execution
+
+### Changed
+- `session-start.sh` v2.2 — added maintenance reminder injection
+- `cx-distill.md` — Step 6: touch `.last-distill` marker after completion
+- `cx-audit.md` — Step 9: touch `.last-audit` marker after completion
+
 ## [2.1.0] — 2026-04-04
 
 ### Fixed

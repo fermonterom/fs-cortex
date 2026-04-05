@@ -91,6 +91,14 @@ CORTEX DISTILL — Results
   Active laws: N/10
 ```
 
+### Step 6: Update Maintenance Marker
+
+After completing distillation, update the marker so session-start knows when this last ran:
+```bash
+touch ~/.claude/cortex/.last-distill
+```
+
 ## Recommended schedule
 
 Run weekly, or when /cx-status shows mature instincts ready for distillation.
+Session-start will remind you after 7+ days without running.

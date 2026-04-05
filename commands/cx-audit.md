@@ -156,9 +156,17 @@ AUDIT COMPLETE
   - Archived [c] (unused 90 days)
 ```
 
+### Step 9: Update Maintenance Marker
+
+After completing audit, update the marker so session-start knows when this last ran:
+```bash
+touch ~/.claude/cortex/.last-audit
+```
+
 ## Important Notes
 
 - Never delete permanently — always archive
+- Session-start will remind you after 30+ days without running
 - Show token impact for every proposed action
 - Ask permission before merging or archiving
 - Respect user choices (keep is always valid)

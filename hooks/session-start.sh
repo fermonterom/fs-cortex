@@ -1,6 +1,6 @@
 #!/bin/bash
-# Cortex Session Start v2.1 — SessionStart hook
-# Injects Laws + EOD Quick Resume + context.md bridge at session start AND after /compact.
+# Cortex Session Start v2.2 — SessionStart hook
+# Injects Laws + EOD Quick Resume + context.md bridge + maintenance reminders at session start AND after /compact.
 # Reads laws from ~/.claude/cortex/laws/, EOD from daily-summaries/, context.md from project.
 
 set -e
@@ -74,7 +74,37 @@ else
   fi
 fi
 
-# 3b. Inject context.md bridge from current project (v2.0)
+# 3b. Maintenance reminders (semi-automatic)
+# Distill reminder: weekly
+LAST_DISTILL="$CORTEX_DIR/.last-distill"
+if [ ! -f "$LAST_DISTILL" ] || [ "$(find "$LAST_DISTILL" -mtime +7 2>/dev/null)" ]; then
+  CONTEXT="${CONTEXT}\n\n⚙️ Run /cx-distill — 7+ days since last distillation (decay, promotions, law extraction)."
+fi
+
+# Audit reminder: monthly
+LAST_AUDIT="$CORTEX_DIR/.last-audit"
+if [ ! -f "$LAST_AUDIT" ] || [ "$(find "$LAST_AUDIT" -mtime +30 2>/dev/null)" ]; then
+  CONTEXT="${CONTEXT}\n\n🧹 Run /cx-audit — 30+ days since last audit (duplicates, token overhead, cleanup)."
+fi
+
+# Validate reminder: if there are pending proposals
+if [ -f "$CORTEX_DIR/proposals.json" ] && [ -n "$PYTHON_CMD" ]; then
+  _PENDING=$("$PYTHON_CMD" -c "
+import json
+try:
+    with open('$CORTEX_DIR/proposals.json') as f:
+        p = json.load(f)
+    pending = [x for x in p if x.get('status','pending') == 'pending']
+    print(len(pending))
+except:
+    print(0)
+" 2>/dev/null || echo "0")
+  if [ "$_PENDING" -gt 0 ]; then
+    CONTEXT="${CONTEXT}\n\n📋 ${_PENDING} pending proposals. Run /cx-validate to review."
+  fi
+fi
+
+# 3c. Inject context.md bridge from current project (v2.0)
 if [ -n "$PYTHON_CMD" ] && [ -n "$INPUT_JSON" ]; then
   _CWD=$(echo "$INPUT_JSON" | "$PYTHON_CMD" -c 'import json,sys; print(json.load(sys.stdin).get("cwd",""))' 2>/dev/null || echo "")
   if [ -n "$_CWD" ] && [ -d "$_CWD" ] && command -v git &>/dev/null; then
