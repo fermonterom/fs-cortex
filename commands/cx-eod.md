@@ -21,25 +21,31 @@ Generates an end-of-day summary and saves context for the next session.
 
 ### Step 1: Gather Context
 
-Scan active projects (auto-detect git repositories from the project registry, or ask the user for project roots):
+**CRITICAL**: Scan ALL projects in the registry, not just the current one.
 
-For each project directory:
+Read `~/.claude/cortex/projects/registry.json` to get ALL project roots.
+
+For EACH project root in the registry:
 ```bash
-# Commits today
-git log --oneline --since="00:00" --author="$(git config user.email)" 2>/dev/null
+# Commits in the last 24 hours
+git -C "$PROJECT_ROOT" log --oneline --since="24 hours ago" 2>/dev/null
 # Current branch
-git branch --show-current 2>/dev/null
+git -C "$PROJECT_ROOT" branch --show-current 2>/dev/null
 # Uncommitted changes
-git status -s 2>/dev/null
-# Open PRs
-gh pr list --state open --author @me 2>/dev/null
+git -C "$PROJECT_ROOT" status -s 2>/dev/null
+# Open PRs (if gh available)
+gh pr list --repo "$REMOTE" --state open --author @me 2>/dev/null
 ```
 
-Only include projects with activity today (commits, changes, or open PRs).
+**IMPORTANT**: Use `--since="24 hours ago"` instead of `--since="00:00"` or date-based filters.
+This captures all activity regardless of when the user runs EOD (23:00, midnight, 2:00 AM).
+Git resolves "24 hours ago" relative to local time, avoiding UTC mismatch issues.
 
-Also gather from Cortex:
-- Read `~/.claude/cortex/projects/*/observations.jsonl` — count observations
-- Read instincts created/updated today (check file modification timestamps)
+Include a project if it has ANY of: commits in last 24h, uncommitted changes, open PRs, or observations in last 24h.
+
+Also gather from Cortex (last 24 hours):
+- Count recent observations per project: grep timestamps from the last 24h in each `observations.jsonl`
+- Read instincts created/updated recently (check file modification timestamps)
 
 ### Step 2: Generate Summary
 
@@ -136,3 +142,5 @@ Or: `/cx-eod --yesterday`
 
 - Do not invent activity that did not happen — use git data only
 - Do not delete or modify any project files
+- Do not limit EOD to the current project — scan ALL registered projects
+- Do not use `--since="00:00"` or date-based filters — always use `--since="24 hours ago"` for timezone safety
