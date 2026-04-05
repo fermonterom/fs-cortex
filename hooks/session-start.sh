@@ -148,6 +148,13 @@ if [ -f "$EOD_DIR/${TODAY}.md" ]; then
 elif [ -n "$YESTERDAY" ] && [ -f "$EOD_DIR/${YESTERDAY}.md" ]; then
   EOD_FILE="$EOD_DIR/${YESTERDAY}.md"
   EOD_DATE="$YESTERDAY"
+elif [ -d "$EOD_DIR" ]; then
+  # Fallback: find the most recent EOD file (covers skipped days / weekend gaps)
+  _LATEST=$(ls -1 "$EOD_DIR"/*.md 2>/dev/null | sort -r | head -1)
+  if [ -n "$_LATEST" ]; then
+    EOD_FILE="$_LATEST"
+    EOD_DATE=$(basename "$_LATEST" .md)
+  fi
 fi
 
 if [ -n "$EOD_FILE" ] && [ "$EOD_LAST_READ" != "$EOD_DATE" ]; then
