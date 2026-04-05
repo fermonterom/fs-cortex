@@ -213,8 +213,8 @@ Cortex — Continuous Learning Engine for Claude Code
 (c) 2026 Fernando Montero / Fersora Solutions
 
 Inspired by:
+- [Everything Claude Code](https://github.com/affaan-m/everything-claude-code) by Affaan Mustafa — observation format and project scoping
 - [Sinapsis](https://salgadoia.com) by Luis Salgado — hook architecture and injection patterns
-- [Everything Claude Code](https://github.com/AffaanMustafa/everything-claude-code) by Affaan Mustafa — observation format and project scoping
 
 ## License
 
