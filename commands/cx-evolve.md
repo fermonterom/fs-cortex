@@ -27,9 +27,25 @@ Group by domain. For each domain with 3+ instincts:
 1. Compute pairwise Jaccard similarity on trigger + action tokens
 2. Cluster instincts with Jaccard >= 0.50 (related patterns)
 
-### Step 2: Propose Artifact Type
+### Step 2: Cross-reference with Existing Skills
 
-For each cluster of 3+ related instincts, determine the best artifact type:
+Before proposing any artifact, check what already exists:
+
+1. List all installed skills: `~/.claude/skills/*/SKILL.md`
+2. For each cluster, search for an existing skill whose domain overlaps:
+   - Compare cluster domain/keywords against skill name, description, and trigger patterns
+   - If a candidate skill is found, read its content and check section-by-section coverage
+3. Classify each cluster into one of three outcomes:
+
+| Outcome | Condition | Action |
+|---------|-----------|--------|
+| **Already covered** | All instincts in the cluster are already present in an existing skill | Discard cluster, report to user |
+| **Partially covered** | Some instincts overlap, others are new | Propose MERGE into existing skill |
+| **Not covered** | No existing skill covers this domain | Propose new artifact (skill/command/rule) |
+
+### Step 3: Propose Artifacts (Shorthand Input)
+
+For each cluster, determine the best artifact type:
 
 | Pattern | Artifact | Example |
 |---------|----------|---------|
@@ -37,23 +53,67 @@ For each cluster of 3+ related instincts, determine the best artifact type:
 | All about same workflow step | Command (.md) | fs-pre-deploy-check.md |
 | All simple guard rules | Passive Rule (reflexes.json) | New entries in reflexes.json |
 
-Present to user:
+#### 3a: Check for pending evolved skills
+
+Before presenting new clusters, check `~/.claude/cortex/evolved/skills/` for previously generated but not yet installed skills:
+
 ```
-EVOLUTION CANDIDATE: [domain]
-  Instincts in cluster:
-    1. [id] (conf: [value]) — [action summary]
-    2. [id] (conf: [value]) — [action summary]
-    3. [id] (conf: [value]) — [action summary]
+PENDING INSTALLS (from previous evolve runs):
+  1. fs-vps-checklist (generated 2026-04-07)
+  2. fs-api-error-handling (generated 2026-04-05)
 
-  Proposed artifact: [Skill | Command | Rule]
-  Proposed name: fs-[descriptive-name]
-
-  [G] Generate  [S] Skip  [C] Change type
+  I=Install  S=Skip
+  Ejemplo: "1I, 2S"
 ```
 
-### Step 3: Generate Artifact
+Wait for user input before proceeding.
 
-Use Sonnet to synthesize the cluster into a coherent artifact:
+#### 3b: Present new clusters with shorthand
+
+Present ALL clusters in a single consolidated view with recommendations:
+
+```
+CLUSTERS:
+1. server-provisioning (12 instincts) → Skill: fs-vps-provisioning-checklist
+   ✅ RECOMIENDO ACEPTAR — 12 gotchas críticos sin skill existente
+2. web-design (4 instincts) → ⚠️ YA CUBIERTO en fs-web-design sección 13 (líneas 789-814)
+   ⏭️ OMITIR — Las 4 preferencias ya están en la skill existente
+3. supabase-rls (5 instincts) → 🔀 PARCIAL — 3 de 5 ya en fs-supabase-gotchas
+   🔀 MERGE RECOMENDADO — Mergear 2 instincts nuevos en fs-supabase-gotchas sección RLS
+4. web-dev (3 instincts) → Rules en reflexes.json
+   ✅ RECOMIENDO ACEPTAR — Gotchas puntuales, mejor como reflexes
+
+Shorthand: A=Aceptar  X=Rechazar  M=Merge con skill existente  O=Omitir  S=Skip
+Ejemplo: "1A, 2O, 3M, 4A"
+```
+
+If the user provides invalid shorthand, ask them to repeat with the correct format.
+
+NEVER use AskUserQuestion — always present clusters as plain text.
+
+**CRITICAL**: After collecting user shorthand input, do NOT execute yet. Proceed to Step 3c.
+
+#### 3c: Confirmation gate
+
+After receiving user input, display a summary of ALL actions that will be executed:
+
+```
+RESUMEN DE ACCIONES:
+  1. GENERAR skill fs-vps-provisioning-checklist (12 instincts)
+  2. OMITIR web-design (ya cubierto en fs-web-design)
+  3. MERGE 2 instincts en fs-supabase-gotchas sección RLS
+  4. GENERAR reflexes.json entries para web-dev (3 instincts)
+
+  Confirmar? (Y/N)
+```
+
+**NEVER chain recommendation and execution in the same turn.** Wait for explicit "Y" confirmation before proceeding to Step 4.
+
+### Step 4: Generate Artifacts
+
+Only after explicit user confirmation in Step 3c, generate the approved artifacts:
+
+Use Sonnet to synthesize each approved cluster into a coherent artifact:
 
 For **Skills**: Generate a SKILL.md with:
 - Metadata (name, description, triggers)
@@ -69,20 +129,31 @@ For **Rules**: The canonical output is new entries appended to `~/.claude/cortex
 - matcher, condition, action derived from instinct triggers/actions
 - A backup copy of the generated rule entries is also written to `~/.claude/cortex/evolved/rules/` for reference (not authoritative — reflexes.json is the source of truth)
 
-### Step 4: Write and Mark Sources
+For **Merges**: Read the target skill, identify the correct section, and append the new instinct content:
+- Show a preview/diff of the proposed changes to the user BEFORE writing (merges modify existing files — this is more invasive than creating new ones)
+- Add new content under the most relevant existing section
+- If no section fits, create a new section at the end
+- Preserve existing content — never overwrite or reorder
 
-1. Write artifact to `~/.claude/cortex/evolved/{skills,commands,rules}/`
-2. All generated files MUST use `fs-` prefix (e.g., `fs-supabase-rls.md`)
-3. Update source instincts: set `evolved_to: "{artifact-id}"` in their YAML
+### Step 5: Write and Mark Sources
 
-### Step 5: Summary
+1. Write NEW artifacts to `~/.claude/cortex/evolved/{skills,commands,rules}/`
+2. Write MERGED content directly into the existing skill file in `~/.claude/skills/`
+3. All generated files MUST use `fs-` prefix (e.g., `fs-supabase-rls.md`)
+4. Update source instincts: set `evolved_to: "{artifact-id}"` in their YAML
+
+### Step 6: Summary
 
 ```
 CORTEX EVOLVE — Results
   Clusters found: N
+  Already covered (omitted): M
   Artifacts generated:
     - fs-supabase-rls.md (Skill, from 4 instincts)
     - fs-pre-deploy-check.md (Command, from 3 instincts)
+  Merged into existing skills:
+    - 2 instincts → fs-supabase-gotchas (sección RLS)
+  Pending installs installed: K
 
   Install evolved skills with:
     cp ~/.claude/cortex/evolved/skills/*.md ~/.claude/skills/

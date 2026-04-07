@@ -83,16 +83,33 @@ Open Claude Code and work normally. Cortex works automatically:
 | Command | What it does |
 |---------|-------------|
 | `/cx-status` | Dashboard: laws, instincts, projects, reflexes, health |
-| `/cx-analyze` | Detect patterns in observations → proposals |
-| `/cx-distill` | Distill laws, apply decay, check Jaccard promotions |
-| `/cx-validate` | Review/confirm/reject proposals and weak instincts |
-| `/cx-evolve` | Cluster mature instincts → skills/commands/rules |
+| `/cx-analyze` | Detect patterns in observations → proposals (with descriptions) |
+| `/cx-distill` | Distill laws (universality gate), decay, Jaccard promotions |
+| `/cx-validate` | Review proposals with Claude verdicts + shorthand input |
+| `/cx-evolve` | Cluster instincts → skills/commands/rules (checks existing skills) |
 | `/cx-audit` | Token overhead, duplicates, conflicts, cleanup |
 | `/cx-eod` | End-of-day summary, saves context for next session |
 | `/cx-gotcha` | Capture error→fix as high-priority instinct |
 | `/cx-export` | Generate portable skill for Claude.ai or sharing |
 | `/cx-backup` | Create portable .tar.gz backup for machine transfer |
 | `/cx-restore` | Import knowledge from a backup archive |
+
+### Interactive Shorthand (v2.2)
+
+All interactive commands use a consistent shorthand system — no modal dialogs:
+
+| Letter | Meaning | Used in |
+|--------|---------|---------|
+| A | Accept / Promote | validate, distill, evolve |
+| X | Reject / No promote | validate, distill, evolve |
+| S | Skip (review later) | validate, distill, evolve |
+| M | Merge | distill, evolve |
+| O | Omit (already covered) | evolve |
+| I | Install (pending skill) | evolve |
+
+Example: `"1A, 2A, 3X, 4S"` or `"all-A"` to accept all.
+
+Claude provides a verdict with reasoning per item before you decide. All commands require explicit confirmation before writing files.
 
 ### Learning Pipeline
 
