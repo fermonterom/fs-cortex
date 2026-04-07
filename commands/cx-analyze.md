@@ -138,15 +138,26 @@ Deduplicate by id (keep most recent).
 
 ### Step 5: Summary
 
+Display each proposal with its confidence emoji, score, id, scope, AND a short description (~60 chars) summarizing the instinct action. Format:
+
 ```
 CORTEX ANALYZE — Results
   Observations analyzed: N
   New proposals: N
   Update candidates: N (existing instincts to bump)
 
+  Proposals:
+  🔴 0.88  gotcha-ssh-hardening-last (vps) — SSH hardening debe ser ultimo en Phase 1
+  🟡 0.55  workflow-read-before-edit (global) — Always read file before editing
+  🟢 0.35  tool-pref-glob-over-find (project) — Prefer Glob tool instead of find command
+
   Review proposals with /cx-validate
   Or accept all with /cx-analyze --accept
 ```
+
+Each line MUST include `— short description` after the scope. The description is derived from the proposal's `action` field, truncated to ~60 chars if needed. This gives the user immediate context without having to open each proposal.
+
+**CONFIRMAR ANTES DE EJECUTAR**: After presenting results, STOP. NEVER chain opinion or execution in the same turn. Wait for the user to decide what to do next (`/cx-validate`, `--accept`, or dismiss). The summary is informational only.
 
 ### --accept flag
 

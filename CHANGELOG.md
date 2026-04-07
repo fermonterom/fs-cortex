@@ -4,6 +4,35 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.2.0] — 2026-04-07
+
+### Changed
+- **cx-analyze**: Summary now shows a short description (~60 chars) per proposal for instant context
+- **cx-validate**: Complete interaction redesign:
+  - Claude emits a verdict (RECOMIENDO ACEPTAR/RECHAZAR) with reasoning per proposal
+  - Shorthand input system (A/X/S) replaces AskUserQuestion windows
+  - Mandatory confirmation gate before writing any files
+  - Dynamic scope handling (global vs project paths)
+  - Graceful handling of missing proposals.json and invalid shorthand
+- **cx-distill**: Stricter law promotion criteria:
+  - Universality filter: laws must apply to 3+ projects or be fundamentally universal
+  - Compares candidates against existing laws before proposing (max 10 slots)
+  - Shorthand input (A/X/M/S) with Claude recommendations
+  - Jaccard promotions now have their own shorthand (A=Promote/X=No promote)
+  - Confirmation gate before executing any changes
+- **cx-evolve**: Skills-aware evolution:
+  - Scans existing skills before proposing — detects already/partially covered clusters
+  - Manages pending evolved skills from previous runs (I=Install/S=Skip)
+  - Shorthand input (A/X/M/O/S) with coverage-aware recommendations
+  - Preview/diff required before merging into existing skills
+  - Confirmation gate before executing any changes
+
+### Added
+- Consistent shorthand system across all interactive commands (base: A/X/S)
+- "Confirm before executing" principle enforced in all 4 commands
+- Explicit AskUserQuestion prohibition in validate, distill, evolve
+- Invalid shorthand handling in all interactive commands
+
 ## [2.1.1] — 2026-04-06
 
 ### Added
