@@ -8,7 +8,7 @@ command: true
 
 ## What it does
 
-Reads ALL observations for the current project (or all projects with --global), detects patterns using the cortex-observer agent (Haiku), and writes proposals to `~/.claude/cortex/proposals.json`.
+Reads ALL observations for the current project (or all projects with --global), pre-processes them for context efficiency, then detects patterns using a single Opus 1M agent with full cross-project visibility. Writes proposals to `~/.claude/cortex/proposals.json`.
 
 ## Usage
 
@@ -73,46 +73,106 @@ From git data, detect:
 
 Git-derived proposals get source: "git-history" and initial confidence 0.30-0.50 (lower than observation-derived since we're inferring, not observing directly).
 
-### Step 3: Analyze Observations
+### Step 3: Pre-process Observations
 
-1. Read `observations.jsonl` from the project directory
-2. Invoke the `cortex-observer` agent (Haiku):
-   - Pass the observations file path
-   - Agent detects: error-fix pairs, repeated workflows, tool preferences, correction sequences
-   - Agent returns patterns as instinct proposals (YAML format, one block per pattern)
-3. **Step 3b: Translate cortex-observer output → proposals.json format**
-   - The cortex-observer agent returns YAML instinct blocks. cx-analyze is responsible for converting each one into a JSON proposal entry.
-   - For each YAML instinct returned by the agent, create a JSON object with ALL of the agent's fields PLUS these additional fields:
-     - `detected`: today's date (YYYY-MM-DD)
-     - `project_id`: current project hash
-     - `project_name`: current project name (from registry)
-     - `status`: `"pending"`
-   - Example conversion:
-     ```
-     # cortex-observer returns YAML:
-     trigger: "Edit|Write"
-     action: "Always read file before editing"
-     confidence: 0.45
-     domain: "workflow"
+Observations JSONL files can be very large (up to 10MB). Most of the weight comes from tool output (full file contents from Read, command output from Bash) which is not needed for pattern detection. Pre-process to reduce size while preserving ALL signal.
 
-     # cx-analyze writes to proposals.json as:
-     {
-       "id": "generated-id",
-       "trigger": "Edit|Write",
-       "action": "Always read file before editing",
-       "confidence": 0.45,
-       "domain": "workflow",
-       "source": "cx-analyze",
-       "detected": "2026-04-04",
-       "project_id": "abc123def456",
-       "project_name": "my-project",
-       "status": "pending"
-     }
-     ```
-4. For each converted proposal:
-   - Check for existing instinct with similar trigger (Jaccard >= 0.50)
-   - If matches existing: note as "update candidate" (bump confidence)
-   - If new: add to proposals
+Run a Python script to create a compressed JSONL file:
+
+```python
+# For each observation in observations.jsonl:
+# 1. KEEP intact: tool, timestamp, _project, _hash, status/success/error
+# 2. KEEP intact: args.file_path, args.command, args.pattern (the action taken)
+# 3. TRUNCATE: result/output → first 200 chars (captures error messages without full output)
+# 4. OMIT: args.content, args.new_string, args.old_string (code written/edited — not useful for patterns)
+# 5. OMIT: args.new_source (notebook content)
+# 6. Keep everything else intact
+```
+
+This typically reduces 10MB → 2-3MB without losing any error messages, tool sequences, or file paths. The agent sees WHAT was done and WHETHER it failed, just not the full code content.
+
+Write the compressed file to a temporary location within the project directory.
+
+**Context budget**: Opus 1M can handle ~3-3.5MB of JSONL in a single context. If the compressed file exceeds 3MB, sample up to 250 most recent observations per project, prioritizing recent activity.
+
+### Step 3b: Analyze with Opus 1M Agent
+
+Generate a knowledge summary file with ALL existing knowledge to avoid duplicates:
+- **Laws**: read all `~/.claude/cortex/laws/*.txt` — one line each
+- **Global instincts**: read all `~/.claude/cortex/instincts/global/*.yaml` — extract id + trigger + action per file
+- **Project instincts**: read all `~/.claude/cortex/projects/*/instincts/*.yaml` — extract id + trigger + action per file
+- **Reflexes**: read `~/.claude/cortex/reflexes.json` — extract matcher + action per reflex
+
+Format as a compact text file:
+```
+=== EXISTING KNOWLEDGE (DO NOT DUPLICATE) ===
+LAWS:
+- Use conventional commits: feat/fix/chore/docs/refactor/test...
+- Always read before editing any file...
+INSTINCTS (global):
+- [global] gotcha-rls-silent-fail | Edit|supabase | RLS policies fail silently...
+- [global] gotcha-gh-cli-path | Bash|gh | gh not in default PATH...
+INSTINCTS (project):
+- [87efd285c5fd] linkedin-oauth-scope | Edit|oauth | OAuth scope alignment...
+REFLEXES:
+- read-before-edit | Edit/Write → Verify file was Read first
+```
+
+Launch a SINGLE Opus 1M agent (`model: opus`) with:
+1. The compressed observations file (ALL projects in one file for cross-project visibility)
+2. The knowledge summary file (laws + instincts + reflexes) to avoid duplicates
+3. The analysis prompt (see below)
+
+**Why one agent, not many**: A single agent with full visibility detects cross-project patterns (e.g., "this error happens in 4 projects") that isolated per-project agents cannot see. Opus 1M has enough context for ~3MB of observations.
+
+**Agent prompt must instruct**:
+- Focus on NON-OBVIOUS patterns — not generic sequences like "Read before Edit"
+- Prioritize: error→fix pairs, gotchas with silent failures, user corrections, cross-project patterns
+- Do NOT propose patterns already covered by existing instincts
+- Include evidence: how many times seen, which projects, what the actual error was
+- Maximum 15 proposals, quality over quantity
+- Output YAML instinct blocks with: id, trigger, action, confidence, domain, scope, projects_seen, tags
+
+### Step 3c: Translate agent output → proposals.json format
+
+For each YAML instinct returned by the agent, create a JSON proposal:
+- Include ALL agent fields
+- Add: `detected` (today), `project_id`, `project_name`, `status: "pending"`, `source: "cx-analyze"`
+- For cross-project patterns: set `project_id: "global"`, `project_name: "cross-project"`
+
+Example:
+```
+# Agent returns:
+id: gotcha-husky-hook-not-executable
+trigger: "Write|.husky/"
+action: "After writing .husky/* files, run chmod +x — hooks fail silently"
+confidence: 0.50
+scope: global
+projects_seen: ["claude-testing-kit", "storyweaver", "LinkedIn"]
+
+# cx-analyze writes:
+{
+  "id": "gotcha-husky-hook-not-executable",
+  "trigger": "Write|.husky/",
+  "action": "After writing .husky/* files, run chmod +x — hooks fail silently",
+  "confidence": 0.50,
+  "domain": "gotcha",
+  "scope": "global",
+  "source": "cx-analyze",
+  "detected": "2026-04-08",
+  "project_id": "global",
+  "project_name": "cross-project",
+  "projects_seen": ["claude-testing-kit", "storyweaver", "LinkedIn"],
+  "status": "pending"
+}
+```
+
+For each converted proposal:
+- Check for existing instinct with similar trigger (Jaccard >= 0.50)
+- If matches existing: note as "update candidate" (bump confidence)
+- If new: add to proposals
+
+Clean up the temporary compressed file after analysis.
 
 ### Step 4: Write Proposals
 

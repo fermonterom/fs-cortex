@@ -67,7 +67,30 @@ The installer will:
 - Append Cortex section to `CLAUDE.md`
 - Ask your name, role, and language for personalization
 
-### 3. Use
+### 3. Update (existing installation)
+
+```bash
+cd fs-cortex
+git pull
+bash install.sh --update
+```
+
+The `--update` flag reinstalls commands, hooks, and skills without touching your learned data (laws, instincts, observations, reflexes). Your knowledge is preserved.
+
+If `--update` is not available, manually copy the updated files:
+```bash
+# Update commands
+cp commands/cx-*.md ~/.claude/commands/
+
+# Update hooks
+cp hooks/cortex/*.sh ~/.claude/hooks/cortex/
+cp hooks/cortex/*.js ~/.claude/hooks/cortex/
+
+# Update skill
+cp core/SKILL.md ~/.claude/skills/cortex/SKILL.md
+```
+
+### 3b. Use
 
 Open Claude Code and work normally. Cortex works automatically:
 
@@ -137,7 +160,7 @@ Also fires `session-start.sh` on `/compact` to re-inject laws.
 
 | Agent | Model | Purpose |
 |-------|-------|---------|
-| `cortex-observer` | Haiku | Detect patterns in observations |
+| `cortex-observer` | Opus 1M | Detect patterns in observations (cross-project, full context) |
 | `cortex-reviewer` | Sonnet x3 parallel | Code review: security + quality + correctness |
 | `cortex-planner` | Sonnet | Decompose complex tasks into steps |
 
@@ -230,7 +253,7 @@ Cortex — Continuous Learning Engine for Claude Code
 (c) 2026 Fernando Montero / Fersora Solutions
 
 Inspired by:
-- [Everything Claude Code](https://github.com/affaan-m/everything-claude-code) by Affaan Mustafa — observation format and project scoping
+- [Everything Claude Code](https://github.com/angelapaia/everything-claude-code) by Ángel Aparicio — observation format and project scoping
 - [Sinapsis](https://github.com/Luispitik/sinapsis-3.2/) by Luis Salgado — hook architecture and injection patterns
 
 ## License

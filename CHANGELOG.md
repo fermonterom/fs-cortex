@@ -4,6 +4,22 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.3.0] — 2026-04-08
+
+### Changed
+- **cx-analyze**: Replaced Haiku-per-project with single Opus 1M agent for cross-project analysis:
+  - Pre-processes observations: truncates `result` to 200 chars, omits `args.content`/`new_string`/`old_string`
+  - Handles up to ~10MB raw observations (compressed to ~3MB for Opus context)
+  - Samples 250 most recent per project if compressed exceeds 3MB
+  - Agent receives full knowledge summary (laws + instincts + reflexes) to avoid duplicates
+  - Single agent sees ALL projects at once for cross-project pattern detection
+
+### Fixed
+- Credits: corrected Everything Claude Code attribution to Ángel Aparicio (angelapaia)
+
+### Added
+- README: Update instructions for existing installations (`install.sh --update` or manual copy)
+
 ## [2.2.0] — 2026-04-07
 
 ### Changed
@@ -66,7 +82,7 @@ Complete rewrite of the Cortex architecture.
 - Continuous confidence scale (0.0–0.95) with decay and Jaccard promotion
 - 11 commands: `/cx-status`, `/cx-analyze`, `/cx-distill`, `/cx-validate`, `/cx-evolve`, `/cx-audit`, `/cx-eod`, `/cx-gotcha`, `/cx-export`, `/cx-backup`, `/cx-restore`
 - 8 default reflexes (deterministic rules via hooks)
-- 3 agents: `cortex-observer` (Haiku), `cortex-reviewer` (Sonnet x3), `cortex-planner` (Sonnet)
+- 3 agents: `cortex-observer` (Opus 1M since v2.3, was Haiku), `cortex-reviewer` (Sonnet x3), `cortex-planner` (Sonnet)
 - Project scoping via git remote hash
 - Context bridge: `context.md` per project with 14-day TTL
 - EOD summaries with Quick Resume injection at session start
