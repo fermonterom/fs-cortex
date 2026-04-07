@@ -15,7 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Single agent sees ALL projects at once for cross-project pattern detection
 
 ### Fixed
-- Credits: corrected Everything Claude Code attribution to Ángel Aparicio (angelapaia)
+- Credits: restored correct Everything Claude Code attribution to Affaan Mustafa (affaan-m)
 
 ### Added
 - README: Update instructions for existing installations (`install.sh --update` or manual copy)
