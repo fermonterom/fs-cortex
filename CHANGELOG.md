@@ -4,6 +4,15 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.0.2] — 2026-04-09
+
+### Changed
+- **README.md**: Full update — added version badge from git tags, 12 commands table (added `/cx-dream`), updated learning pipeline diagram, security section, tests section, fixed manual update paths (`hooks/*.sh` instead of `hooks/cortex/*.sh`)
+- **`.claude/rules/release-workflow.md`**: Extended checklist — now requires README review, git tag creation, and `git push --tags`
+
+### Added
+- **Git tags**: Retroactive annotated tags for all releases (v1.0.0 through v3.0.1)
+
 ## [3.0.1] — 2026-04-09
 
 ### Added

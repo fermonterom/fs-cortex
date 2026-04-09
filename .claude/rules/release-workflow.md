@@ -1,6 +1,6 @@
 # Release Workflow — Mandatory Pre-Push Checklist
 
-## Rule: NEVER push to remote without version + changelog
+## Rule: NEVER push to remote without version + changelog + README review
 
 Before ANY `git push` to `main` or creating a PR that targets `main`, you MUST:
 
@@ -18,7 +18,7 @@ Examples for this project:
 ### 2. Update version in ALL locations
 
 - `CHANGELOG.md` — new entry at top with `## [X.Y.Z] — YYYY-MM-DD`
-- `skills/cortex/SKILL.md` — header `# Cortex vX.Y — Continuous Learning System`
+- `skills/cortex/SKILL.md` — header version only if major/minor bump
 
 ### 3. Write CHANGELOG entry
 
@@ -32,12 +32,53 @@ Follow [Keep a Changelog](https://keepachangelog.com/) format with these section
 
 Each entry must be specific: file/command affected + what changed. No vague descriptions.
 
-### 4. Verify before push
+### 4. Update README.md if needed
+
+Check if any of your changes affect:
+- **Commands table** — new command added? Update count and table
+- **Architecture section** — new hook, agent, or data directory?
+- **Install/Update instructions** — file paths changed?
+- **Security section** — new security measure?
+- **Tests section** — new test suite?
+- **Learning Pipeline diagram** — new step in the workflow?
+
+If yes to any, update the corresponding README section. The README is the public face of the project.
+
+### 5. Create git tag
+
+After committing the version bump, create an annotated tag:
+
+```bash
+git tag -a vX.Y.Z -m "vX.Y.Z — Brief description of release"
+```
+
+Push tags with the code:
+
+```bash
+git push && git push --tags
+```
+
+### 6. Verify before push
 
 ```
 git diff HEAD -- CHANGELOG.md  # Must show changes
-git diff HEAD -- skills/cortex/SKILL.md  # Must show version if bumped major/minor
 bash tests/test_security.sh && bash tests/test_dream_cycle.sh  # Must pass
+```
+
+## Complete push sequence
+
+```bash
+# 1. Tests pass
+bash tests/test_security.sh && bash tests/test_dream_cycle.sh
+
+# 2. Commit with version bump
+git add -A && git commit -m "chore(release): vX.Y.Z — description"
+
+# 3. Tag
+git tag -a vX.Y.Z -m "vX.Y.Z — description"
+
+# 4. Push code + tags
+git push && git push --tags
 ```
 
 ## What NOT to do
@@ -46,3 +87,5 @@ bash tests/test_security.sh && bash tests/test_dream_cycle.sh  # Must pass
 - NEVER use "chore: misc fixes" without itemizing in CHANGELOG
 - NEVER skip tests before push
 - NEVER bump version without a CHANGELOG entry explaining why
+- NEVER forget to push tags after creating them
+- NEVER leave README outdated when adding commands, hooks, or security features

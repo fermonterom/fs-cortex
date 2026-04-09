@@ -1,5 +1,7 @@
 # fs-cortex — Continuous Learning for Claude Code
 
+[![Latest Release](https://img.shields.io/github/v/tag/fermonterom/fs-cortex?label=version&sort=semver)](https://github.com/fermonterom/fs-cortex/releases)
+
 > Your AI assistant learns from every session. Automatically.
 
 **fs-cortex** is a continuous learning system for [Claude Code](https://claude.ai/code) that observes your sessions, detects recurring patterns, and crystallizes them into reusable knowledge — all without slowing you down.
@@ -83,11 +85,12 @@ If `--update` is not available, manually copy the updated files:
 cp commands/cx-*.md ~/.claude/commands/
 
 # Update hooks
-cp hooks/cortex/*.sh ~/.claude/hooks/cortex/
-cp hooks/cortex/*.js ~/.claude/hooks/cortex/
+cp hooks/*.sh ~/.claude/hooks/cortex/
+cp hooks/*.js ~/.claude/hooks/cortex/
+cp -r hooks/lib ~/.claude/hooks/cortex/
 
 # Update skill
-cp core/SKILL.md ~/.claude/skills/cortex/SKILL.md
+cp skills/cortex/SKILL.md ~/.claude/skills/cortex/SKILL.md
 ```
 
 ### 3b. Use
@@ -101,7 +104,7 @@ Open Claude Code and work normally. Cortex works automatically:
 5. **Session learner runs at close** — detects patterns, writes proposals
 6. Every ~50 tool calls, you'll see: *"Run `/cx-analyze` to detect patterns"*
 
-## Commands (11)
+## Commands (12)
 
 | Command | What it does |
 |---------|-------------|
@@ -110,6 +113,7 @@ Open Claude Code and work normally. Cortex works automatically:
 | `/cx-distill` | Distill laws (universality gate), decay, Jaccard promotions |
 | `/cx-validate` | Review proposals with Claude verdicts + shorthand input |
 | `/cx-evolve` | Cluster instincts → skills/commands/rules (checks existing skills) |
+| `/cx-dream` | Dream Cycle: dedup, contradictions, staleness, regex validation, health score |
 | `/cx-audit` | Token overhead, duplicates, conflicts, cleanup |
 | `/cx-eod` | End-of-day summary, saves context for next session |
 | `/cx-gotcha` | Capture error→fix as high-priority instinct |
@@ -117,7 +121,7 @@ Open Claude Code and work normally. Cortex works automatically:
 | `/cx-backup` | Create portable .tar.gz backup for machine transfer |
 | `/cx-restore` | Import knowledge from a backup archive |
 
-### Interactive Shorthand (v2.2)
+### Interactive Shorthand
 
 All interactive commands use a consistent shorthand system — no modal dialogs:
 
@@ -137,10 +141,10 @@ Claude provides a verdict with reasoning per item before you decide. All command
 ### Learning Pipeline
 
 ```
-/cx-analyze  →  /cx-validate  →  /cx-distill  →  /cx-evolve  →  /cx-audit
- detect          confirm          laws + decay     skills         cleanup
- patterns        or reject        + promotions     commands
-                                                   rules
+/cx-analyze  →  /cx-validate  →  /cx-distill  →  /cx-evolve  →  /cx-dream  →  /cx-audit
+ detect          confirm          laws + decay     skills         dedup          cleanup
+ patterns        or reject        + promotions     commands       contradictions
+                                                   rules          staleness
 ```
 
 ## Architecture
@@ -246,6 +250,27 @@ bash uninstall.sh
 ```
 
 Offers portable backup before removal. Preserves learned data by default. Cleans settings.json and CLAUDE.md.
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for the full security policy and vulnerability reporting process.
+
+Key measures in v3.0:
+- Prompt injection sanitization on all injected text (instinct actions, context.md, EOD)
+- Command injection prevention (`execFileSync` instead of `execSync`)
+- 12-pattern secret scrubbing (AWS, GitHub, Stripe, Slack, Anthropic, OpenAI, Google, JWT, PEM, SSH, connection strings)
+- ReDoS protection on regex compilation
+- Atomic file writes with `flock`/perl fallback
+- Instinct validation on import (blocked patterns, wildcard rejection)
+
+## Tests
+
+```bash
+bash tests/test_security.sh      # 7 security regression tests
+bash tests/test_dream_cycle.sh   # 26 dream cycle tests
+```
+
+Both suites run automatically on `git push` to main via the pre-push hook.
 
 ## Credits
 
