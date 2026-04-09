@@ -117,18 +117,23 @@ function listYamlFiles(dir) {
   }
 }
 
-/** Derive project_id from git remote URL: sha256(url)[0:12] */
-function detectProjectId(cwd) {
-  let url;
+/** Derive project_id + root from git remote URL: sha256(url)[0:12] */
+function detectProject(cwd) {
+  let url = "";
+  let root = "";
+  try {
+    root = execFileSync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], {
+      encoding: "utf8", timeout: 2000, stdio: ["pipe", "pipe", "pipe"]
+    }).trim();
+  } catch {}
   try {
     url = execFileSync("git", ["-C", cwd, "remote", "get-url", "origin"], {
-      encoding: "utf8",
-      timeout: 2000,
-      stdio: ["pipe", "pipe", "pipe"]
+      encoding: "utf8", timeout: 2000, stdio: ["pipe", "pipe", "pipe"]
     }).trim();
-  } catch { url = ""; }
-  if (!url) return null;
-  return crypto.createHash("sha256").update(url).digest("hex").slice(0, 12);
+  } catch {}
+  const hashInput = url || root;
+  if (!hashInput) return { id: null, root: cwd };
+  return { id: crypto.createHash("sha256").update(hashInput).digest("hex").slice(0, 12), root: root || cwd };
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────
@@ -178,7 +183,7 @@ try {
   }
 
   // Project-scoped instincts (detected via git remote hash)
-  const projectId = detectProjectId(cwd);
+  const { id: projectId, root: projectRoot } = detectProject(cwd);
   if (projectId) {
     const projectDir = path.join(process.env._CX_CORTEX_DIR, "projects", projectId, "instincts");
     instinctFiles.push(...listYamlFiles(projectDir));
@@ -206,7 +211,7 @@ try {
     return domains;
   }
 
-  const projectDomains = detectProjectDomains(cwd);
+  const projectDomains = detectProjectDomains(projectRoot);
 
   // ── 3. Parse, filter, match instincts ────────────────────────────────
 

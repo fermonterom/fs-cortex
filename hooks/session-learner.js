@@ -20,7 +20,7 @@ const LOG_DIR = path.join(CORTEX_DIR, 'log');
 const LOG_PATH = path.join(LOG_DIR, 'session-learner.log');
 
 const TODAY = new Date().toISOString().slice(0, 10);
-const NOW = new Date().toISOString();
+function now() { return new Date().toISOString(); }
 
 // -- Timeout: hard cap at 15 seconds --
 const TIMEOUT = setTimeout(() => {
@@ -35,7 +35,7 @@ const TIMEOUT = setTimeout(() => {
 function log(msg) {
   try {
     ensureDir(LOG_DIR);
-    const line = `[${NOW}] ${msg}\n`;
+    const line = `[${now()}] ${msg}\n`;
     fs.appendFileSync(LOG_PATH, line);
   } catch (_) {
     // Never crash on log failure
@@ -98,11 +98,11 @@ function readStdin() {
     let data = '';
     process.stdin.setEncoding('utf8');
     process.stdin.on('data', (chunk) => { data += chunk; });
+    const timer = setTimeout(() => resolve({}), 2000);
     process.stdin.on('end', () => {
+      clearTimeout(timer);
       try { resolve(JSON.parse(data)); } catch (_) { resolve({}); }
     });
-    // If stdin doesn't close within 2 seconds, continue without it
-    setTimeout(() => resolve({}), 2000);
   });
 }
 
@@ -335,6 +335,7 @@ function detectRepetitions(observations) {
         confidence: 0.3,
         domain: 'workflow',
         source: 'session-learner',
+        status: 'pending',
         detected: TODAY,
         session: observations[0]?._resolvedSession || 'unknown',
       });
@@ -531,7 +532,7 @@ function updateReflexes(observations) {
 
       if (matched) {
         reflex.fireCount = (reflex.fireCount || 0) + 1;
-        reflex.lastFired = NOW;
+        reflex.lastFired = now();
         changed = true;
       }
     } catch (e) {
@@ -558,9 +559,13 @@ function writeProposals(newProposals) {
   // Append new proposals
   const all = [...existing, ...newProposals];
 
-  // Deduplicate by id, keeping the most recent (last occurrence)
+  // Deduplicate by id, preserving user validation decisions
   const byId = new Map();
   for (const p of all) {
+    const existing = byId.get(p.id);
+    if (existing && existing.status !== 'pending') {
+      continue; // Preserve approved/rejected status
+    }
     byId.set(p.id, p);
   }
   const deduped = Array.from(byId.values());
