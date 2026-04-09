@@ -451,8 +451,11 @@ mem["identity"]["name"] = os.environ.get("CX_USER_NAME", "")
 mem["identity"]["role"] = os.environ.get("CX_USER_ROLE", "")
 mem["identity"]["language"] = os.environ.get("CX_USER_LANG", "en")
 mem["stats"]["installed"] = datetime.datetime.now().strftime("%Y-%m-%d")
-with open(mem_path, "w") as f:
+import tempfile
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(mem_path), suffix=".tmp")
+with os.fdopen(fd, "w") as f:
     json.dump(mem, f, indent=2)
+os.replace(tmp, mem_path)
 ' 2>/dev/null || true
 
     # Copy seed laws

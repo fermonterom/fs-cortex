@@ -139,14 +139,14 @@ rm -rf "$SANDBOX"
 # --- Test 7: Performance benchmark ---
 echo "--- Performance ---"
 elapsed=$(python3 -c "
-import time, subprocess, os
+import time, subprocess, os, tempfile
 start = time.time()
 for _ in range(5):
     p = subprocess.run(
         ['python3', '$PROJECT_ROOT/hooks/observe.py', 'post'],
-        input='{\"tool_name\":\"Read\",\"session_id\":\"bench\",\"cwd\":\"/tmp\"}',
+        input='{\"tool_name\":\"Read\",\"session_id\":\"bench\",\"cwd\":\"' + tempfile.gettempdir() + '\"}',
         capture_output=True, text=True, timeout=5,
-        env={**os.environ, 'HOME': '/tmp/cortex-bench-' + str(os.getpid())}
+        env={**os.environ, 'HOME': os.path.join(tempfile.gettempdir(), 'cortex-bench-' + str(os.getpid()))}
     )
 avg_ms = ((time.time() - start) / 5) * 1000
 print(f'{avg_ms:.0f}')
