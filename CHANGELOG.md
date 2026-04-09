@@ -4,6 +4,15 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.0.1] — 2026-04-09
+
+### Added
+- **SECURITY.md**: Security policy with vulnerability reporting process, scope definition, and v3.0 security measures summary
+- **`.claude/rules/release-workflow.md`**: Claude Code rule enforcing version bump + changelog update before every push to main
+- **`githooks/pre-push`**: Git hook that blocks pushes to main without CHANGELOG.md changes and runs all tests automatically
+- **`.gitignore`**: Project-level gitignore (`.DS_Store`, `__pycache__/`, `node_modules/`, `*.tmp`, `*.lock`)
+- **`install.sh`**: Auto-installs git pre-push hook from `githooks/` directory
+
 ## [3.0.0] — 2026-04-09
 
 ### Security (CRITICAL)

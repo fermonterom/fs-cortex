@@ -162,6 +162,16 @@ for hook in "$SCRIPT_DIR/hooks/"*.sh "$SCRIPT_DIR/hooks/"*.js; do
 done
 print_ok "Hooks installed to ~/.claude/hooks/cortex/"
 
+# Step 8b: Install git pre-push hook (version+changelog enforcement)
+if [ -d "$SCRIPT_DIR/.git" ] || git -C "$SCRIPT_DIR" rev-parse --git-dir >/dev/null 2>&1; then
+    GIT_HOOKS_DIR=$(git -C "$SCRIPT_DIR" rev-parse --git-dir 2>/dev/null)/hooks
+    if [ -f "$SCRIPT_DIR/githooks/pre-push" ]; then
+        cp "$SCRIPT_DIR/githooks/pre-push" "$GIT_HOOKS_DIR/pre-push"
+        chmod +x "$GIT_HOOKS_DIR/pre-push"
+        print_ok "Git pre-push hook installed (version+changelog guard)"
+    fi
+fi
+
 # Step 9: Install seed instinct (only if not already present)
 print_step "Installing seed instinct..."
 if [ -f "$CORTEX_DIR/instincts/global/read-instructions-before-executing.yaml" ]; then
