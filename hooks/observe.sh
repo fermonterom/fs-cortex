@@ -281,6 +281,13 @@ JWT_RE = re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{1
 PEM_RE = re.compile(r"-----BEGIN[A-Z \n]+-----[\s\S]*?-----END[A-Z \n]+-----")
 SSH_RE = re.compile(r"-----BEGIN OPENSSH[A-Z \n]+-----[\s\S]*?-----END OPENSSH[A-Z \n]+-----")
 AWS_RE = re.compile(r"AKIA[A-Z0-9]{16}")
+GITHUB_RE = re.compile(r"gh[pousr]_[A-Za-z0-9_]{36,}")
+STRIPE_RE = re.compile(r"[sr]k_(live|test)_[A-Za-z0-9]{20,}")
+CONNSTR_RE = re.compile(r"(postgres|mysql|mongodb|redis)://[^\s]{10,}")
+GOOGLE_RE = re.compile(r"AIza[A-Za-z0-9_-]{35}")
+SLACK_RE = re.compile(r"xox[bpsa]-[A-Za-z0-9-]{10,}")
+ANTHROPIC_RE = re.compile(r"sk-ant-[A-Za-z0-9_-]{20,}")
+OPENAI_RE = re.compile(r"sk-[A-Za-z0-9]{20,}")
 
 def scrub(val):
     if val is None:
@@ -291,6 +298,13 @@ def scrub(val):
     s = PEM_RE.sub("[PEM_REDACTED]", s)
     s = SSH_RE.sub("[SSH_KEY_REDACTED]", s)
     s = AWS_RE.sub("[AWS_KEY_REDACTED]", s)
+    s = GITHUB_RE.sub("[GITHUB_TOKEN_REDACTED]", s)
+    s = STRIPE_RE.sub("[STRIPE_KEY_REDACTED]", s)
+    s = CONNSTR_RE.sub("[CONNSTR_REDACTED]", s)
+    s = GOOGLE_RE.sub("[GOOGLE_KEY_REDACTED]", s)
+    s = SLACK_RE.sub("[SLACK_TOKEN_REDACTED]", s)
+    s = ANTHROPIC_RE.sub("[ANTHROPIC_KEY_REDACTED]", s)
+    s = OPENAI_RE.sub("[OPENAI_KEY_REDACTED]", s)
     return s
 
 # v2.0: short field names
