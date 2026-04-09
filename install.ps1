@@ -170,7 +170,7 @@ Print-Step "Installing hooks..."
 New-Item -ItemType Directory -Path $HooksDir -Force | Out-Null
 
 # Shell and JS hooks
-foreach ($ext in @("*.sh", "*.js")) {
+foreach ($ext in @("*.sh", "*.js", "*.py")) {
     Get-ChildItem (Join-Path $ScriptDir "hooks" $ext) -ErrorAction SilentlyContinue | ForEach-Object {
         Copy-Item $_.FullName $HooksDir -Force
     }
