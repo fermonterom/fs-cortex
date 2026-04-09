@@ -1,0 +1,41 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ['3.9', '3.12']
+        node-version: ['18', '22']
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Run security tests
+        run: bash tests/test_security.sh
+
+      - name: Run dream cycle tests
+        run: bash tests/test_dream_cycle.sh
+
+      - name: Run observer tests
+        run: bash tests/test_observe.sh
+
+      - name: Run session learner tests
+        run: bash tests/test_session_learner.sh
