@@ -20,6 +20,9 @@ _sanitize_injection() {
 
 CORTEX_DIR="$HOME/.claude/cortex"
 LAWS_DIR="$CORTEX_DIR/laws"
+
+# Reset per-session token budget (prevents silent accumulation across sessions)
+rm -f "$CORTEX_DIR/.session-token-budget"
 LAST_DATE_FILE="$CORTEX_DIR/.last-session-date"
 EOD_DIR="$CORTEX_DIR/daily-summaries"
 PROJECTS_DIR="$CORTEX_DIR/projects"
