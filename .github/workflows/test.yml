@@ -56,3 +56,6 @@ jobs:
 
       - name: Run injector tests
         run: bash tests/test_injector.sh
+
+      - name: Run YAML utils tests
+        run: bash tests/test_yaml_utils.sh

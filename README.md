@@ -277,12 +277,13 @@ Key measures in v3.0:
 ## Tests
 
 ```bash
-bash tests/run_all.sh             # Run all 5 suites (61 tests)
+bash tests/run_all.sh             # Run all 6 suites (74 tests)
 bash tests/test_security.sh       # 7 security regression tests
 bash tests/test_dream_cycle.sh    # 26 dream cycle tests
 bash tests/test_observe.sh        # 7 observer tests (scrubbing, is_error, dedup, perf)
 bash tests/test_session_learner.sh # 7 session learner tests (detectors, proposals)
 bash tests/test_injector.sh       # 14 injector tests (sanitization, ReDoS, limits, markers)
+bash tests/test_yaml_utils.sh     # 13 YAML parser tests (floats, strings, edge cases)
 ```
 
 All suites run automatically on `git push` to main (pre-push hook) and on every PR via GitHub Actions CI (macOS + Linux, Python 3.9/3.12, Node 18/22).

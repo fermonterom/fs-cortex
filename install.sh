@@ -21,7 +21,7 @@ COMMANDS_DIR="$CLAUDE_DIR/commands"
 HOOKS_DIR="$CLAUDE_DIR/hooks/cortex"
 SETTINGS_FILE="$CLAUDE_DIR/settings.json"
 CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
-NEW_VERSION="3.4.0"
+NEW_VERSION="3.5.0"
 
 print_header() {
     echo ""
@@ -392,7 +392,10 @@ if [ -n "$IMPORT_BACKUP" ]; then
     print_step "Importing backup..."
     TEMP_DIR=$(mktemp -d)
     trap "rm -rf '$TEMP_DIR'" EXIT
-    if tar -xzf "$IMPORT_BACKUP" -C "$TEMP_DIR" 2>/dev/null; then
+    # Validate archive: reject entries with path traversal (../) or absolute paths
+    if tar -tzf "$IMPORT_BACKUP" 2>/dev/null | grep -qE '(^/|\.\.)'; then
+        print_error "Backup archive contains unsafe paths (../ or absolute). Aborting import."
+    elif tar -xzf "$IMPORT_BACKUP" -C "$TEMP_DIR" 2>/dev/null; then
         # Copy laws (|| true: macOS cp -n returns 1 if target exists)
         [ -d "$TEMP_DIR/laws" ] && { cp -n "$TEMP_DIR/laws/"*.txt "$CORTEX_DIR/laws/" 2>/dev/null || true; }
         # Copy instincts (v2.0: global instead of personal)

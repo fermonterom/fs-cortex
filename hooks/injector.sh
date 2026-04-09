@@ -216,19 +216,23 @@ try {
 
   // ── 3. Parse, filter, match instincts ────────────────────────────────
 
-  const candidates = [];
+  const candidates = [];    // confidence >= 0.30 — will be injected
+  const draftMatches = [];  // confidence < 0.30 — tracked but not injected
   for (const file of instinctFiles) {
     try {
       const content = fs.readFileSync(file, "utf8");
       const inst = parseInstinctYaml(content);
       if (!inst) continue;
-      if (inst.confidence < 0.30) continue;
       // Domain pre-filter: skip instincts for unrelated domains
       if (inst.domain && inst.domain !== "general" && !projectDomains.has(inst.domain)) continue;
       // Project-scoped instincts must match this project
       if (inst.scope === "project" && inst.project_id && projectId && inst.project_id !== projectId) continue;
       if (!safeRegexTest(inst.trigger, matchTarget)) continue;
-      candidates.push({ ...inst, _file: file });
+      if (inst.confidence < 0.30) {
+        draftMatches.push({ ...inst, _file: file });
+      } else {
+        candidates.push({ ...inst, _file: file });
+      }
     } catch (e) {
       if (process.env.CORTEX_DEBUG) process.stderr.write("[cortex:injector] instinct " + file + ": " + e.message + "\n");
     }
@@ -252,24 +256,39 @@ try {
     totalChars += safeAction.length;
   }
 
-  // ── 3b. Occurrence tracking ─────────────────────────────────────────
+  // ── 3b. Occurrence tracking (ALL matches including drafts) ──────────
 
-  if (matchedInstincts.length > 0) {
+  const allMatched = [...matchedInstincts, ...draftMatches];
+  if (allMatched.length > 0) {
     try {
       const TRACKING_FILE = path.join(process.env._CX_CORTEX_DIR, "instinct-tracking.json");
       let tracking = {};
       try { tracking = JSON.parse(fs.readFileSync(TRACKING_FILE, "utf8")); } catch {}
 
-      for (const inst of matchedInstincts) {
+      for (const inst of allMatched) {
         const key = inst.id;
         if (!tracking[key]) tracking[key] = { count: 0, sessions: [], first_seen: new Date().toISOString() };
         tracking[key].count++;
         if (!tracking[key].sessions.includes(hookData.session_id || "")) {
           tracking[key].sessions.push(hookData.session_id || "");
-          // Keep only last 20 session IDs
           if (tracking[key].sessions.length > 20) tracking[key].sessions = tracking[key].sessions.slice(-20);
         }
         tracking[key].last_seen = new Date().toISOString();
+
+        // Auto-promote drafts: 5+ activations across 3+ sessions → confidence 0.35
+        if (inst.confidence < 0.30 && inst._file &&
+            tracking[key].count >= 5 && tracking[key].sessions.length >= 3) {
+          try {
+            let content = fs.readFileSync(inst._file, "utf8");
+            const confMatch = content.match(/^confidence:\s*["']?([^"'\n]+)/m);
+            if (confMatch && parseFloat(confMatch[1]) < 0.30) {
+              content = content.replace(/^(confidence:\s*).*$/m, "$10.35");
+              const tmp2 = inst._file + ".tmp." + process.pid;
+              fs.writeFileSync(tmp2, content, { mode: 0o600 });
+              fs.renameSync(tmp2, inst._file);
+            }
+          } catch {}
+        }
       }
 
       const tmp = TRACKING_FILE + ".tmp." + process.pid;
@@ -280,7 +299,33 @@ try {
     }
   }
 
-  // ── 4. Build output ──────────────────────────────────────────────────
+  // ── 4. Token budget cap ──────────────────────────────────────────────
+
+  const SESSION_BUDGET_FILE = path.join(process.env._CX_CORTEX_DIR, ".session-token-budget");
+  const MAX_SESSION_TOKENS = 8000;  // configurable via memory.json in future
+  let sessionTokens = 0;
+  try { sessionTokens = parseInt(fs.readFileSync(SESSION_BUDGET_FILE, "utf8").trim(), 10) || 0; } catch {}
+
+  // Estimate tokens for this injection (~4 chars per token)
+  const instinctTokens = matchedInstincts.reduce((sum, i) => sum + Math.ceil(i.action.length / 4) + 20, 0);
+  const reflexTokens = matchedReflexes.reduce((sum, r) => sum + Math.ceil(r.action.length / 4) + 15, 0);
+  const totalNewTokens = instinctTokens + reflexTokens;
+
+  // If budget exceeded, skip instincts (reflexes always pass — safety)
+  if (sessionTokens + totalNewTokens > MAX_SESSION_TOKENS && matchedInstincts.length > 0) {
+    matchedInstincts.length = 0;  // Clear instincts, keep reflexes
+    if (process.env.CORTEX_DEBUG) process.stderr.write("[cortex:injector] token budget exceeded (" + sessionTokens + "/" + MAX_SESSION_TOKENS + "), skipping instincts\n");
+  }
+
+  // Update budget counter
+  const budgetNew = sessionTokens + reflexTokens + (matchedInstincts.length > 0 ? instinctTokens : 0);
+  try {
+    const tmp3 = SESSION_BUDGET_FILE + ".tmp." + process.pid;
+    fs.writeFileSync(tmp3, String(budgetNew), { mode: 0o600 });
+    fs.renameSync(tmp3, SESSION_BUDGET_FILE);
+  } catch {}
+
+  // ── 5. Build output ──────────────────────────────────────────────────
 
   if (matchedReflexes.length === 0 && matchedInstincts.length === 0) {
     process.exit(0); // No matches — silent exit
@@ -288,7 +333,7 @@ try {
 
   const lines = [];
 
-  // Reflexes first (safety)
+  // Reflexes first (safety — always injected regardless of budget)
   for (const r of matchedReflexes) {
     lines.push("[reflex:" + r.id + "] " + r.action);
   }
