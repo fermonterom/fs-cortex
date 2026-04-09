@@ -634,13 +634,21 @@ async function main() {
       return;
     }
 
-    // Step 2: Detect error-resolution pairs
+    // Step 2: Detect error-fix pairs
     const errorProposals = detectErrorResolutions(observations);
-    log(`Detected ${errorProposals.length} error-resolution pair(s)`);
+    log(`Detected ${errorProposals.length} error-fix pair(s)`);
 
     // Step 3: Detect repetitions
     const repetitionProposals = detectRepetitions(observations);
     log(`Detected ${repetitionProposals.length} repetition pattern(s)`);
+
+    // Step 3b: Detect user corrections
+    const correctionProposals = detectUserCorrections(observations);
+    log(`Detected ${correctionProposals.length} user correction(s)`);
+
+    // Step 3c: Detect workflow chains
+    const workflowProposals = detectWorkflowChains(observations);
+    log(`Detected ${workflowProposals.length} workflow chain(s)`);
 
     // Step 4: Update instinct YAML files
     updateInstincts(observations);
@@ -648,8 +656,13 @@ async function main() {
     // Step 5: Update reflex fire counts
     updateReflexes(observations);
 
-    // Step 6: Write proposals
-    const allProposals = [...errorProposals, ...repetitionProposals];
+    // Step 6: Combine all proposals with session_date for cross-day tracking
+    const allProposals = [
+      ...errorProposals,
+      ...repetitionProposals,
+      ...correctionProposals,
+      ...workflowProposals,
+    ].map((p) => ({ ...p, session_date: TODAY }));
     writeProposals(allProposals);
 
     // Step 7: Write context.md
