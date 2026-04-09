@@ -179,6 +179,30 @@ try {
     instinctFiles.push(...listYamlFiles(projectDir));
   }
 
+  // ── 2b. Domain pre-filter: detect project stack ─────────────────────
+
+  function detectProjectDomains(dir) {
+    const domains = new Set(["general"]);
+    try {
+      const files = fs.readdirSync(dir);
+      if (files.includes("package.json")) {
+        try {
+          const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+          const deps = Object.assign({}, pkg.dependencies, pkg.devDependencies);
+          if (deps.react || deps.next) domains.add("react");
+          if (deps.express || deps.fastify) domains.add("node");
+          if (deps["@supabase/supabase-js"]) domains.add("supabase");
+        } catch {}
+      }
+      if (files.includes("requirements.txt") || files.includes("pyproject.toml")) domains.add("python");
+      if (files.includes("Cargo.toml")) domains.add("rust");
+      if (files.includes("go.mod")) domains.add("go");
+    } catch {}
+    return domains;
+  }
+
+  const projectDomains = detectProjectDomains(cwd);
+
   // ── 3. Parse, filter, match instincts ────────────────────────────────
 
   const candidates = [];
@@ -188,10 +212,12 @@ try {
       const inst = parseInstinctYaml(content);
       if (!inst) continue;
       if (inst.confidence < 0.30) continue;
+      // Domain pre-filter: skip instincts for unrelated domains
+      if (inst.domain && inst.domain !== "general" && !projectDomains.has(inst.domain)) continue;
       // Project-scoped instincts must match this project
       if (inst.scope === "project" && inst.project_id && projectId && inst.project_id !== projectId) continue;
       if (!safeRegexTest(inst.trigger, matchTarget)) continue;
-      candidates.push(inst);
+      candidates.push({ ...inst, _file: file });
     } catch (e) {
       if (process.env.CORTEX_DEBUG) process.stderr.write("[cortex:injector] instinct " + file + ": " + e.message + "\n");
     }
@@ -200,13 +226,47 @@ try {
   // Sort by confidence descending
   candidates.sort((a, b) => b.confidence - a.confidence);
 
-  // Domain dedup: max 1 per domain, max 2 total
+  // Domain dedup: max 1 per domain, max 3 total, max 1500 chars total
+  const MAX_INSTINCTS = 3;
+  const MAX_TOTAL_CHARS = 1500;
+  let totalChars = 0;
   const seenDomains = new Set();
   for (const inst of candidates) {
+    if (matchedInstincts.length >= MAX_INSTINCTS) break;
     if (seenDomains.has(inst.domain)) continue;
+    const safeAction = sanitizeInjection(inst.action, 500);
+    if (totalChars + safeAction.length > MAX_TOTAL_CHARS) continue;
     seenDomains.add(inst.domain);
-    matchedInstincts.push(inst);
-    if (matchedInstincts.length >= 2) break;
+    matchedInstincts.push({ ...inst, action: safeAction });
+    totalChars += safeAction.length;
+  }
+
+  // ── 3b. Occurrence tracking ─────────────────────────────────────────
+
+  if (matchedInstincts.length > 0) {
+    try {
+      const TRACKING_FILE = path.join(process.env._CX_CORTEX_DIR, "instinct-tracking.json");
+      let tracking = {};
+      try { tracking = JSON.parse(fs.readFileSync(TRACKING_FILE, "utf8")); } catch {}
+
+      for (const inst of matchedInstincts) {
+        const key = inst.id;
+        if (!tracking[key]) tracking[key] = { count: 0, sessions: [], first_seen: new Date().toISOString() };
+        tracking[key].count++;
+        if (!tracking[key].sessions.includes(hookData.session_id || "")) {
+          tracking[key].sessions.push(hookData.session_id || "");
+          // Keep only last 20 session IDs
+          if (tracking[key].sessions.length > 20) tracking[key].sessions = tracking[key].sessions.slice(-20);
+        }
+        tracking[key].last_seen = new Date().toISOString();
+      }
+
+      const tmp = TRACKING_FILE + ".tmp." + process.pid;
+      fs.writeFileSync(tmp, JSON.stringify(tracking, null, 2), { mode: 0o600 });
+      fs.renameSync(tmp, TRACKING_FILE);
+    } catch (e) {
+      if (process.env.CORTEX_DEBUG) process.stderr.write("[cortex:injector] tracking: " + e.message + "\n");
+    }
   }
 
   // ── 4. Build output ──────────────────────────────────────────────────
@@ -222,10 +282,9 @@ try {
     lines.push("[reflex:" + r.id + "] " + r.action);
   }
 
-  // Then instincts sorted by confidence (already sorted) — sanitize action field
+  // Then instincts (already sanitized in matching phase)
   for (const inst of matchedInstincts) {
-    const safeAction = sanitizeInjection(inst.action, 500);
-    lines.push("[instinct:" + inst.id + "] " + safeAction + " (conf:" + inst.confidence.toFixed(2) + ")");
+    lines.push("[instinct:" + inst.id + "] " + inst.action + " (conf:" + inst.confidence.toFixed(2) + ")");
   }
 
   const output = {
