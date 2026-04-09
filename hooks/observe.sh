@@ -87,7 +87,13 @@ esac
 
 # -- Dedup: Skip exact duplicates within session --
 SESSION_ID=$(echo "$INPUT_JSON" | "$PYTHON_CMD" -c "import json,sys,re; sid=json.load(sys.stdin).get('session_id','unknown'); print(re.sub(r'[^a-zA-Z0-9_-]','',sid))" 2>/dev/null || echo "unknown")
-DEDUP_FILE="${TMPDIR:-/tmp}/cortex-dedup-${SESSION_ID}"
+
+# Use per-user dedup dir with auto-cleanup
+DEDUP_DIR="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/cortex-${UID:-$(id -u)}"
+mkdir -p "$DEDUP_DIR" && chmod 700 "$DEDUP_DIR"
+# Cleanup old dedup files (>24h)
+find "$DEDUP_DIR" -name "dedup-*" -mmin +1440 -delete 2>/dev/null || true
+DEDUP_FILE="${DEDUP_DIR}/dedup-${SESSION_ID}"
 
 # Compute hash of tool+input for dedup
 _INPUT_HASH=$(echo "$INPUT_JSON" | "$PYTHON_CMD" -c "
