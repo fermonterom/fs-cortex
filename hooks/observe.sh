@@ -337,8 +337,18 @@ _write_observation() {
   if command -v flock >/dev/null 2>&1; then
     (flock -w 10 200 && echo "$obs" >> "$target") 200>"${target}.lock"
   else
-    # Fallback without flock (macOS without coreutils) — OS-level atomic append
-    echo "$obs" >> "$target"
+    # macOS: use perl Fcntl flock (always available on macOS)
+    perl -e '
+        use Fcntl qw(:flock);
+        my ($obs, $target) = @ARGV;
+        open(my $lock, ">>", "$target.lock") or die "Cannot open lock: $!";
+        flock($lock, LOCK_EX) or die "Cannot lock: $!";
+        open(my $fh, ">>", $target) or die "Cannot open $target: $!";
+        print $fh "$obs\n";
+        close($fh);
+        flock($lock, LOCK_UN);
+        close($lock);
+    ' "$obs" "$target"
   fi
 }
 
