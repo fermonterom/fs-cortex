@@ -28,7 +28,7 @@ Observe (hooks)  →  Analyze  →  Validate  →  Distill  →  Evolve  →  Au
 ### Dual Injection
 
 1. **SessionStart**: Laws (max 10) + EOD resume + project context bridge (~550 tokens)
-2. **PreToolUse**: Matched instincts (max 2) + reflexes (max 2) per tool use (~120 tokens max)
+2. **PreToolUse**: Matched instincts (max 3, domain-filtered) + reflexes (max 2) per tool use (~200 tokens max)
 
 ### Confidence Lifecycle
 
@@ -207,11 +207,11 @@ Also fires `session-start.sh` on `/compact` to re-inject laws.
 
 ## Reflexes
 
-Deterministic rules that fire via hooks — not probabilistic instructions.
+Deterministic rules that fire via hooks — not probabilistic instructions. Triggers are regex patterns matched against tool names and inputs.
 
 Default reflexes (8):
 
-| Reflex | Trigger | Action |
+| Reflex | Trigger (regex) | Action |
 |--------|---------|--------|
 | `read-before-edit` | Edit/Write | Verify file was Read first |
 | `env-never-commit` | git add/commit | Check .env in .gitignore |

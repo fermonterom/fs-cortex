@@ -1,7 +1,7 @@
 ---
 name: cortex-observer
-description: Background agent that analyzes observations to detect patterns and create instincts. Uses Haiku for cost efficiency.
-model: haiku
+description: Background agent that analyzes observations to detect patterns and create instincts. Uses Opus 1M for cross-project full-context analysis.
+model: opus
 tools:
   - Read
   - Write
