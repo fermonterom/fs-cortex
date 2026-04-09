@@ -169,7 +169,7 @@ print_ok "Commands installed: $INSTALLED_CMDS"
 # Step 8: Install hooks (v2.0: observe.sh, session-start.sh, injector.sh, session-learner.js)
 print_step "Installing hooks..."
 mkdir -p "$HOOKS_DIR"
-for hook in "$SCRIPT_DIR/hooks/"*.sh "$SCRIPT_DIR/hooks/"*.js; do
+for hook in "$SCRIPT_DIR/hooks/"*.sh "$SCRIPT_DIR/hooks/"*.js "$SCRIPT_DIR/hooks/"*.py; do
     [ -f "$hook" ] && cp "$hook" "$HOOKS_DIR/" && chmod +x "$HOOKS_DIR/$(basename "$hook")"
 done
 print_ok "Hooks installed to ~/.claude/hooks/cortex/"
@@ -360,7 +360,7 @@ with open(section_file) as f:
     new_section = f.read()
 # Remove old section (from ## Cortex to next ## or EOF)
 content = re.sub(
-    r"\n*## Cortex[^\n]*\n.*?(?=\n## (?!Cortex)|\Z)",
+    r"\n*## Cortex \(Learning System\)\n.*?(?=\n## |\Z)",
     "",
     content,
     flags=re.DOTALL
