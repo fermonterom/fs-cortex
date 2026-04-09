@@ -142,7 +142,19 @@ def atomic_write_json(filepath, data):
 # ── Project Detection ────────────────────────────────────────────────
 
 def detect_project(cwd):
-    """Detect project ID and name from git remote or cwd."""
+    """Detect project ID and name from git remote or cwd. Uses file-based cache (5min TTL)."""
+    # Check file-based cache first (avoid git subprocess per tool use)
+    cwd_hash = hashlib.sha256(cwd.encode()).hexdigest()[:12]
+    cache_file = os.path.join(get_dedup_dir(), f"project-{cwd_hash}")
+    try:
+        if os.path.exists(cache_file):
+            with open(cache_file) as f:
+                cached = json.load(f)
+            if time.time() - cached.get("ts", 0) < 300:  # 5min TTL
+                return cached["pid"], cached["pname"], cached["proot"], cached["remote"]
+    except (OSError, json.JSONDecodeError, KeyError):
+        pass
+
     project_id = "global"
     project_name = "global"
     project_root = ""
@@ -172,11 +184,18 @@ def detect_project(cwd):
     hash_input = remote_url or project_root
     project_id = hashlib.sha256(hash_input.encode()).hexdigest()[:12]
 
+    # Write cache
+    try:
+        with open(cache_file, "w") as f:
+            json.dump({"pid": project_id, "pname": project_name, "proot": project_root, "remote": remote_url, "ts": time.time()}, f)
+    except OSError:
+        pass
+
     return project_id, project_name, project_root, remote_url
 
 
 def update_registry(project_id, project_name, project_root, remote_url):
-    """Update projects/registry.json with project metadata."""
+    """Update projects/registry.json only if project is new or metadata changed."""
     registry_path = PROJECTS_DIR / "registry.json"
     os.makedirs(PROJECTS_DIR, exist_ok=True)
 
@@ -187,12 +206,16 @@ def update_registry(project_id, project_name, project_root, remote_url):
     except (FileNotFoundError, json.JSONDecodeError):
         pass
 
-    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    existing = registry.get(project_id, {})
+    if existing.get("root") == project_root and existing.get("remote") == remote_url:
+        return  # No change, skip write
+
+    now_str = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     registry[project_id] = {
         "name": project_name,
         "root": project_root,
         "remote": remote_url,
-        "last_seen": now,
+        "last_seen": now_str,
     }
 
     atomic_write_json(str(registry_path), registry)
