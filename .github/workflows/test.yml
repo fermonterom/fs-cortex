@@ -59,3 +59,9 @@ jobs:
 
       - name: Run YAML utils tests
         run: bash tests/test_yaml_utils.sh
+
+      - name: Run install tests
+        run: bash tests/test_install.sh
+
+      - name: Run hooks e2e tests
+        run: bash tests/test_hooks_e2e.sh

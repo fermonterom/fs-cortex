@@ -20,7 +20,7 @@ $CommandsDir = Join-Path $ClaudeDir "commands"
 $HooksDir = Join-Path $ClaudeDir "hooks" "cortex"
 $SettingsFile = Join-Path $ClaudeDir "settings.json"
 $ClaudeMd = Join-Path $ClaudeDir "CLAUDE.md"
-$NewVersion = "3.5.0"
+$NewVersion = "3.6.0"
 
 # --- Helpers ---
 
@@ -182,10 +182,12 @@ $libSrc = Join-Path $ScriptDir "hooks" "lib"
 if (Test-Path $libSrc) {
     $libDest = Join-Path $HooksDir "lib"
     New-Item -ItemType Directory -Path $libDest -Force | Out-Null
-    Get-ChildItem (Join-Path $libSrc "*.py") -ErrorAction SilentlyContinue | ForEach-Object {
-        Copy-Item $_.FullName $libDest -Force
+    foreach ($libExt in @("*.py", "*.js")) {
+        Get-ChildItem (Join-Path $libSrc $libExt) -ErrorAction SilentlyContinue | ForEach-Object {
+            Copy-Item $_.FullName $libDest -Force
+        }
     }
-    Print-Ok "Python modules installed to ~/.claude/hooks/cortex/lib/"
+    Print-Ok "Lib modules installed to ~/.claude/hooks/cortex/lib/"
 }
 
 # Step 9: Install seed instinct (only if not already present)
