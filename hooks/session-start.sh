@@ -4,6 +4,17 @@
 # Reads laws from ~/.claude/cortex/laws/, EOD from daily-summaries/, context.md from project.
 
 set -e
+umask 077
+
+# Sanitization function — strip instruction overrides from injected text
+_sanitize_injection() {
+    local text="$1"
+    local max_len="${2:-2000}"
+    echo "$text" \
+        | tr -d '\000-\037' \
+        | sed -E 's/\b(ignore|forget|override|disregard|bypass|system:|you are|all previous|new instructions)\b/[BLOCKED]/gi' \
+        | head -c "$max_len"
+}
 
 CORTEX_DIR="$HOME/.claude/cortex"
 LAWS_DIR="$CORTEX_DIR/laws"
@@ -126,7 +137,8 @@ except:
         if [ "$_FILE_AGE_DAYS" -lt "$CONTEXT_TTL_DAYS" ]; then
           _CTX_CONTENT=$(head -10 "$_CONTEXT_FILE" 2>/dev/null | tr '\n' ' ' | sed 's/[[:space:]]*$//')
           if [ -n "$_CTX_CONTENT" ]; then
-            CONTEXT="${CONTEXT}\n\nPROJECT CONTEXT: ${_CTX_CONTENT}"
+            _CTX_SANITIZED=$(_sanitize_injection "$_CTX_CONTENT" 2000)
+            CONTEXT="${CONTEXT}\n\nPROJECT CONTEXT: ${_CTX_SANITIZED}"
           fi
         fi
       fi
@@ -162,7 +174,8 @@ if [ -n "$EOD_FILE" ] && [ "$EOD_LAST_READ" != "$EOD_DATE" ]; then
   QUICK_RESUME=$(sed -n '/^## Quick Resume/,/^## /{ /^## Quick Resume/d; /^## /d; p; }' "$EOD_FILE" 2>/dev/null | head -10 | sed 's/^[[:space:]]*//' | tr -s '\n' ' ' | sed 's/^[> ]*//' | sed 's/[[:space:]]*$//')
 
   if [ -n "$QUICK_RESUME" ]; then
-    CONTEXT="${CONTEXT}\n\nEOD RESUME (${EOD_DATE}): ${QUICK_RESUME}"
+    _EOD_SANITIZED=$(_sanitize_injection "$QUICK_RESUME" 1000)
+    CONTEXT="${CONTEXT}\n\nEOD RESUME (${EOD_DATE}): ${_EOD_SANITIZED}"
   fi
 
   # Also extract "For tomorrow" section if present (only lines starting with -)

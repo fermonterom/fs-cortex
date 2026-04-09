@@ -32,10 +32,21 @@ node -e '
 
 const fs = require("fs");
 const path = require("path");
-const { execSync } = require("child_process");
+const { execFileSync } = require("child_process");
 const crypto = require("crypto");
 
 // ── Helpers ──────────────────────────────────────────────────────────────
+
+/** Sanitize text injected into context — strip instruction overrides, limit length */
+function sanitizeInjection(text, maxLen) {
+  if (typeof text !== "string") return "";
+  const BLOCKED = /\b(ignore|forget|override|disregard|bypass|system\s*:|you\s+are|all\s+previous|new\s+instructions|do\s+not\s+follow)\b/gi;
+  let clean = text
+    .replace(/[\x00-\x1f\x7f]/g, "")   // strip control chars
+    .replace(BLOCKED, "[BLOCKED]")       // neutralize instruction overrides
+    .slice(0, maxLen);
+  return clean;
+}
 
 /** Safe regex test — returns false on invalid pattern */
 function safeRegexTest(pattern, text) {
@@ -85,16 +96,16 @@ function listYamlFiles(dir) {
 
 /** Derive project_id from git remote URL: sha256(url)[0:12] */
 function detectProjectId(cwd) {
+  let url;
   try {
-    const url = execSync("git -C " + JSON.stringify(cwd) + " remote get-url origin 2>/dev/null", {
+    url = execFileSync("git", ["-C", cwd, "remote", "get-url", "origin"], {
       encoding: "utf8",
       timeout: 2000,
+      stdio: ["pipe", "pipe", "pipe"]
     }).trim();
-    if (!url) return null;
-    return crypto.createHash("sha256").update(url).digest("hex").slice(0, 12);
-  } catch {
-    return null;
-  }
+  } catch { url = ""; }
+  if (!url) return null;
+  return crypto.createHash("sha256").update(url).digest("hex").slice(0, 12);
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────
@@ -193,9 +204,10 @@ try {
     lines.push("[reflex:" + r.id + "] " + r.action);
   }
 
-  // Then instincts sorted by confidence (already sorted)
+  // Then instincts sorted by confidence (already sorted) — sanitize action field
   for (const inst of matchedInstincts) {
-    lines.push("[instinct:" + inst.id + "] " + inst.action + " (conf:" + inst.confidence.toFixed(2) + ")");
+    const safeAction = sanitizeInjection(inst.action, 500);
+    lines.push("[instinct:" + inst.id + "] " + safeAction + " (conf:" + inst.confidence.toFixed(2) + ")");
   }
 
   const output = {
