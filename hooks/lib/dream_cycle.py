@@ -36,20 +36,24 @@ def jaccard_similarity(text_a, text_b):
 
 
 def dedup_instincts(instincts, threshold=0.80):
-    """Remove duplicate instincts by Jaccard similarity on action field."""
+    """Remove duplicate instincts by Jaccard similarity on action field.
+    Full pairwise comparison — checks against ALL kept items, not just first match."""
     keep = []
     for inst in instincts:
-        is_dup = False
+        matches = []
         for kept in keep:
             sim = jaccard_similarity(inst.get('action', ''), kept.get('action', ''))
             if sim >= threshold:
-                # Keep the one with higher confidence
-                if inst.get('confidence', 0) > kept.get('confidence', 0):
-                    keep.remove(kept)
-                    keep.append(inst)
-                is_dup = True
-                break
-        if not is_dup:
+                matches.append(kept)
+        if matches:
+            # Keep highest confidence among all similar instincts
+            best = max([inst] + matches, key=lambda x: x.get('confidence', 0))
+            for m in matches:
+                if m in keep:
+                    keep.remove(m)
+            if best not in keep:
+                keep.append(best)
+        else:
             keep.append(inst)
     return keep
 
@@ -131,11 +135,12 @@ def apply_staleness_decay(instincts, archive_threshold=90):
             inst['archive_reason'] = f'staleness_score={score}'
             archived.append(inst)
         else:
-            # Decay confidence proportionally (max 50% decay at score=100)
-            decay_factor = 1.0 - (score / 200.0)
-            inst['confidence'] = round(
-                max(0.10, inst.get('confidence', 0.5) * decay_factor), 2
-            )
+            # Linear decay: -0.05 per 30 days (matches cx-distill and docs)
+            confidence = inst.get('confidence', 0.5)
+            decay_per_30 = 0.05
+            periods = score // 30  # staleness_score is in days
+            new_conf = confidence - (decay_per_30 * periods)
+            inst['confidence'] = round(max(0.10, new_conf), 4)
             active.append(inst)
     return active, archived
 
