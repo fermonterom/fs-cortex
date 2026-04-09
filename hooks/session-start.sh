@@ -123,7 +123,8 @@ fi
 # 3c. Inject context.md bridge from current project (v2.0)
 if [ -n "$PYTHON_CMD" ] && [ -n "$INPUT_JSON" ]; then
   _CWD=$(echo "$INPUT_JSON" | "$PYTHON_CMD" -c 'import json,sys; print(json.load(sys.stdin).get("cwd",""))' 2>/dev/null || echo "")
-  if [ -n "$_CWD" ] && [ -d "$_CWD" ] && command -v git &>/dev/null; then
+  if [ -n "$_CWD" ] && [[ "$_CWD" == /* ]] && [[ "$_CWD" != *..* ]] && [ -d "$_CWD" ] && command -v git &>/dev/null; then
+    _CWD=$(cd "$_CWD" && pwd -P)  # Resolve symlinks
     _PROJECT_ROOT=$(git -C "$_CWD" rev-parse --show-toplevel 2>/dev/null || true)
     if [ -n "$_PROJECT_ROOT" ]; then
       _REMOTE=$(git -C "$_PROJECT_ROOT" remote get-url origin 2>/dev/null || echo "$_PROJECT_ROOT")
