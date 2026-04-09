@@ -266,7 +266,7 @@ Offers portable backup before removal. Preserves learned data by default. Cleans
 
 See [SECURITY.md](SECURITY.md) for the full security policy and vulnerability reporting process.
 
-Key measures in v3.0:
+Key measures:
 - Prompt injection sanitization on all injected text (instinct actions, context.md, EOD)
 - Command injection prevention (`execFileSync` instead of `execSync`)
 - 12-pattern secret scrubbing (AWS, GitHub, Stripe, Slack, Anthropic, OpenAI, Google, JWT, PEM, SSH, connection strings)

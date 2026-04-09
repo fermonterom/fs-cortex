@@ -4,7 +4,7 @@
 
 | Version | Supported          |
 |---------|--------------------|
-| 3.0.x   | :white_check_mark: |
+| 3.x.x   | :white_check_mark: |
 | 2.x.x   | :x:                |
 | 1.x.x   | :x:                |
 
@@ -14,7 +14,7 @@ If you discover a security vulnerability in fs-cortex, **do NOT open a public is
 
 Instead, please report it privately:
 
-1. **Email**: security@fersora.com
+1. **Email**: info@fersora.com
 2. **Subject**: `[fs-cortex] Security: <brief description>`
 3. **Include**:
    - Affected file(s) and line number(s)
@@ -47,7 +47,7 @@ fs-cortex runs as Claude Code hooks with access to:
 - Issues requiring physical access to the machine
 - Social engineering attacks
 
-## Security Measures (v3.0)
+## Security Measures (v3.6)
 
 - Prompt injection sanitization on all injected text (instinct actions, context.md, EOD resume)
 - `execFileSync` instead of `execSync` to prevent command injection
@@ -62,9 +62,16 @@ fs-cortex runs as Claude Code hooks with access to:
 
 ## Security Tests
 
-Run the regression suite:
+Run the full suite (124 tests, 8 suites):
 
 ```bash
-bash tests/test_security.sh    # 7 tests covering all critical vectors
-bash tests/test_dream_cycle.sh # 26 tests including regex validation
+bash tests/run_all.sh             # All 8 suites
+bash tests/test_security.sh       # 7 security regression tests
+bash tests/test_dream_cycle.sh    # 26 dream cycle tests
+bash tests/test_observe.sh        # 7 observer tests (scrubbing, is_error, perf)
+bash tests/test_session_learner.sh # 7 session learner tests
+bash tests/test_injector.sh       # 14 injector tests (sanitization, ReDoS, limits)
+bash tests/test_yaml_utils.sh     # 13 YAML parser tests
+bash tests/test_install.sh        # 37 install tests (fresh, upgrade, security)
+bash tests/test_hooks_e2e.sh      # 13 end-to-end pipeline tests
 ```

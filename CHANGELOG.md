@@ -4,6 +4,11 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.6.1] — 2026-04-09
+
+### Fixed
+- **SECURITY.md**: Supported versions updated to `3.x.x` (was `3.0.x`), contact email corrected to `info@fersora.com`
+
 ## [3.6.0] — 2026-04-09
 
 ### Added
