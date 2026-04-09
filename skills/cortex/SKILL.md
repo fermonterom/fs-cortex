@@ -9,7 +9,7 @@ description: |
 auto_activate: true
 ---
 
-# Cortex v3.0 — Continuous Learning System
+# Cortex v3.1 — Continuous Learning System
 
 > Every session creates a connection. Cortex turns them into instinct.
 
@@ -52,7 +52,7 @@ When the system prompt contains `EOD RESUME`, Claude MUST proactively present it
 4. **Priorities** — List PRIORITIES as numbered list
 5. **Ask** — Ask where to start (user's language from memory.json)
 
-### Commands (11)
+### Commands (12)
 
 | Command | Purpose |
 |---------|---------|

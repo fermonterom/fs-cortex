@@ -1,0 +1,439 @@
+#Requires -Version 5.1
+<#
+.SYNOPSIS
+    fs-cortex installer for Windows
+.DESCRIPTION
+    Installs or upgrades fs-cortex — Continuous Learning for Claude Code.
+    Detects existing installations and preserves all user data.
+.EXAMPLE
+    powershell -ExecutionPolicy Bypass -File install.ps1
+#>
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ClaudeDir = Join-Path $env:USERPROFILE ".claude"
+$CortexDir = Join-Path $ClaudeDir "cortex"
+$SkillsDir = Join-Path $ClaudeDir "skills"
+$CommandsDir = Join-Path $ClaudeDir "commands"
+$HooksDir = Join-Path $ClaudeDir "hooks" "cortex"
+$SettingsFile = Join-Path $ClaudeDir "settings.json"
+$ClaudeMd = Join-Path $ClaudeDir "CLAUDE.md"
+$NewVersion = "3.1.0"
+
+# --- Helpers ---
+
+function Print-Header {
+    Write-Host ""
+    Write-Host "==================================================" -ForegroundColor Cyan
+    Write-Host "  fs-cortex - Continuous Learning for Claude Code" -ForegroundColor White
+    Write-Host "==================================================" -ForegroundColor Cyan
+    Write-Host ""
+}
+
+function Print-Step($msg)  { Write-Host "[$(Get-Date -Format 'HH:mm:ss')] $msg" -ForegroundColor Blue }
+function Print-Ok($msg)    { Write-Host "  + $msg" -ForegroundColor Green }
+function Print-Warn($msg)  { Write-Host "  ! $msg" -ForegroundColor Yellow }
+function Print-Error($msg) { Write-Host "  x $msg" -ForegroundColor Red }
+
+function Ask-YesNo($prompt, $default = "y") {
+    $suffix = if ($default -eq "y") { "[Y/n]" } else { "[y/N]" }
+    $answer = Read-Host "$prompt $suffix"
+    if ([string]::IsNullOrWhiteSpace($answer)) { $answer = $default }
+    return $answer -match "^[Yy]"
+}
+
+# --- Start ---
+Print-Header
+
+# Step 1: Prerequisites
+Print-Step "Checking prerequisites..."
+
+if (-not (Test-Path $ClaudeDir)) {
+    Print-Error "~/.claude/ not found. Is Claude Code installed?"
+    exit 1
+}
+Print-Ok "Claude Code directory found"
+
+# Check Python
+$PythonCmd = $null
+if (Get-Command python3 -ErrorAction SilentlyContinue) { $PythonCmd = "python3" }
+elseif (Get-Command python -ErrorAction SilentlyContinue) { $PythonCmd = "python" }
+if (-not $PythonCmd) {
+    Print-Error "Python 3 not found. Required for observation hooks."
+    exit 1
+}
+Print-Ok "Python found: $PythonCmd"
+
+# Check Node
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+    Print-Warn "Node.js not found. session-learner.js and injector.sh require it."
+}
+else { Print-Ok "Node.js found" }
+
+# Step 2: Check for existing installations
+Print-Step "Checking for existing installations..."
+
+$HasCortex = $false
+$InstalledVersion = "none"
+
+if (Test-Path $CortexDir) {
+    $HasCortex = $true
+    $versionFile = Join-Path $CortexDir "version"
+    if (Test-Path $versionFile) {
+        $InstalledVersion = (Get-Content $versionFile -Raw).Trim()
+    }
+    $lawCount = (Get-ChildItem (Join-Path $CortexDir "laws" "*.txt") -ErrorAction SilentlyContinue | Measure-Object).Count
+    $instinctCount = (Get-ChildItem (Join-Path $CortexDir "instincts") -Filter "*.yaml" -Recurse -ErrorAction SilentlyContinue | Measure-Object).Count
+
+    if ($InstalledVersion -eq "none") {
+        Print-Warn "Legacy cortex installation detected ($lawCount laws, $instinctCount instincts)"
+        Print-Step "Upgrading to v$NewVersion"
+    }
+    else {
+        Print-Step "Detected fs-cortex v$InstalledVersion -> upgrading to v$NewVersion"
+        Print-Ok "$lawCount laws, $instinctCount instincts (preserved)"
+    }
+    Write-Host "  Existing data will be preserved. Only hooks, commands, and skill will be updated." -ForegroundColor Yellow
+    if (-not (Ask-YesNo "Update cortex installation?")) {
+        Write-Host "Installation cancelled."
+        exit 0
+    }
+}
+
+# Step 3: Check for backup to import
+$ImportBackup = ""
+if (-not $HasCortex) {
+    Write-Host ""
+    Write-Host "Do you have a backup from a previous Cortex installation?" -ForegroundColor White
+    Write-Host "  (Created with /cx-backup - a .tar.gz file)"
+    $ImportBackup = Read-Host "  Path to backup (or Enter to skip)"
+    if ($ImportBackup -and -not (Test-Path $ImportBackup)) {
+        Print-Warn "Not a valid file: $ImportBackup - skipping backup import"
+        $ImportBackup = ""
+    }
+}
+
+# Step 4: Create directory structure
+Print-Step "Creating directory structure..."
+$dirs = @(
+    "laws/archive", "instincts/global", "instincts/archive",
+    "projects", "evolved/skills", "evolved/commands", "evolved/rules",
+    "exports", "daily-summaries", "log"
+)
+foreach ($d in $dirs) {
+    New-Item -ItemType Directory -Path (Join-Path $CortexDir $d) -Force | Out-Null
+}
+Print-Ok "Created ~/.claude/cortex/"
+
+# Step 5: Copy core files (preserve existing data on reinstall)
+Print-Step "Installing core files..."
+$memoryDest = Join-Path $CortexDir "memory.json"
+if (-not (Test-Path $memoryDest)) {
+    Copy-Item (Join-Path $ScriptDir "core" "memory.template.json") $memoryDest
+    Print-Ok "Created memory.json"
+}
+else { Print-Warn "memory.json exists, preserving user data" }
+
+$reflexesDest = Join-Path $CortexDir "reflexes.json"
+if (-not (Test-Path $reflexesDest)) {
+    Copy-Item (Join-Path $ScriptDir "core" "reflexes.default.json") $reflexesDest
+    Print-Ok "Created reflexes.json"
+}
+else { Print-Warn "reflexes.json exists, preserving user data" }
+Print-Ok "Core files ready"
+
+# Step 6: Install skill
+Print-Step "Installing cortex skill..."
+$skillDest = Join-Path $SkillsDir "cortex"
+$agentsDest = Join-Path $skillDest "agents"
+New-Item -ItemType Directory -Path $agentsDest -Force | Out-Null
+Copy-Item (Join-Path $ScriptDir "skills" "cortex" "SKILL.md") (Join-Path $skillDest "SKILL.md") -Force
+Get-ChildItem (Join-Path $ScriptDir "agents" "*.md") -ErrorAction SilentlyContinue | ForEach-Object {
+    Copy-Item $_.FullName $agentsDest -Force
+}
+Print-Ok "Skill installed to ~/.claude/skills/cortex/"
+
+# Step 7: Install commands
+Print-Step "Installing commands..."
+New-Item -ItemType Directory -Path $CommandsDir -Force | Out-Null
+$cmdFiles = Get-ChildItem (Join-Path $ScriptDir "commands" "*.md") -ErrorAction SilentlyContinue
+foreach ($cmd in $cmdFiles) {
+    Copy-Item $cmd.FullName $CommandsDir -Force
+}
+$cmdNames = ($cmdFiles | ForEach-Object { $_.BaseName }) -join ", "
+Print-Ok "Commands installed: $cmdNames"
+
+# Step 8: Install hooks
+Print-Step "Installing hooks..."
+New-Item -ItemType Directory -Path $HooksDir -Force | Out-Null
+
+# Shell and JS hooks
+foreach ($ext in @("*.sh", "*.js")) {
+    Get-ChildItem (Join-Path $ScriptDir "hooks" $ext) -ErrorAction SilentlyContinue | ForEach-Object {
+        Copy-Item $_.FullName $HooksDir -Force
+    }
+}
+Print-Ok "Hooks installed to ~/.claude/hooks/cortex/"
+
+# Step 8a: Install Python lib modules
+$libSrc = Join-Path $ScriptDir "hooks" "lib"
+if (Test-Path $libSrc) {
+    $libDest = Join-Path $HooksDir "lib"
+    New-Item -ItemType Directory -Path $libDest -Force | Out-Null
+    Get-ChildItem (Join-Path $libSrc "*.py") -ErrorAction SilentlyContinue | ForEach-Object {
+        Copy-Item $_.FullName $libDest -Force
+    }
+    Print-Ok "Python modules installed to ~/.claude/hooks/cortex/lib/"
+}
+
+# Step 9: Install seed instinct (only if not already present)
+Print-Step "Installing seed instinct..."
+$seedDest = Join-Path $CortexDir "instincts" "global" "read-instructions-before-executing.yaml"
+$seedSrc = Join-Path $ScriptDir "rules" "seed.md"
+if (Test-Path $seedDest) {
+    Print-Warn "Seed instinct already exists, preserving"
+}
+elseif (Test-Path $seedSrc) {
+    Copy-Item $seedSrc $seedDest
+    Print-Ok "Seed instinct installed"
+}
+else { Print-Warn "Seed rule not found, skipping" }
+
+# Step 10: Configure settings.json
+Print-Step "Configuring hooks in settings.json..."
+
+if (Test-Path $SettingsFile) {
+    $backupFile = "$SettingsFile.backup.$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+    Copy-Item $SettingsFile $backupFile
+    Print-Ok "Backup: $backupFile"
+}
+
+# Use Python to safely merge hooks (same logic as install.sh)
+$pyMerge = @'
+import json, os, tempfile
+
+settings_file = os.path.join(os.environ.get("USERPROFILE", ""), ".claude", "settings.json")
+
+settings = {}
+if os.path.exists(settings_file):
+    with open(settings_file) as f:
+        settings = json.load(f)
+
+settings.setdefault("permissions", {})
+settings["permissions"].setdefault("allow", [])
+settings["permissions"].setdefault("additionalDirectories", [])
+
+cortex_perms = ["Read(~/.claude/cortex/**)", "Edit(~/.claude/cortex/**)"]
+for perm in cortex_perms:
+    if perm not in settings["permissions"]["allow"]:
+        settings["permissions"]["allow"].append(perm)
+
+if "~/.claude/cortex" not in settings["permissions"].get("additionalDirectories", []):
+    settings["permissions"]["additionalDirectories"].append("~/.claude/cortex")
+
+cortex_hooks = {
+    "SessionStart": [
+        {"hooks": [{"type": "command", "command": "bash ~/.claude/hooks/cortex/session-start.sh", "timeout": 5000}]},
+        {"matcher": "compact", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/cortex/session-start.sh", "timeout": 5000}]}
+    ],
+    "PreToolUse": [
+        {"matcher": "*", "hooks": [
+            {"type": "command", "command": "bash ~/.claude/hooks/cortex/observe.sh pre", "timeout": 10000, "async": True},
+            {"type": "command", "command": "bash ~/.claude/hooks/cortex/injector.sh", "timeout": 3000}
+        ]}
+    ],
+    "PostToolUse": [
+        {"matcher": "*", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/cortex/observe.sh post", "timeout": 10000, "async": True}]}
+    ],
+    "Stop": [
+        {"hooks": [{"type": "command", "command": "node ~/.claude/hooks/cortex/session-learner.js", "timeout": 15000}]}
+    ]
+}
+
+existing_hooks = settings.get("hooks", {})
+for event, handlers in cortex_hooks.items():
+    existing = existing_hooks.get(event, [])
+    cleaned = [h for h in existing if not any("hooks/cortex/" in str(hook.get("command", "")) for hook in h.get("hooks", []))]
+    existing_hooks[event] = cleaned + handlers
+
+settings["hooks"] = existing_hooks
+
+fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(settings_file), suffix='.tmp')
+try:
+    with os.fdopen(fd, 'w') as f:
+        json.dump(settings, f, indent=2)
+        f.write("\n")
+    os.replace(tmp_path, settings_file)
+except:
+    os.unlink(tmp_path)
+    raise
+'@
+
+try {
+    & $PythonCmd -c $pyMerge
+    Print-Ok "Hooks configured in settings.json"
+}
+catch {
+    Print-Error "Failed to configure hooks. Check that settings.json is valid JSON."
+}
+
+# Step 11: Update CLAUDE.md
+Print-Step "Updating CLAUDE.md..."
+$sectionFile = Join-Path $ScriptDir "core" "claudemd-section.md"
+
+if (Test-Path $ClaudeMd) {
+    # Backup CLAUDE.md before any modification
+    $claudeBackup = "$ClaudeMd.backup.$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+    Copy-Item $ClaudeMd $claudeBackup -ErrorAction SilentlyContinue
+
+    $content = Get-Content $ClaudeMd -Raw
+    if ($content -match "## Cortex") {
+        # UPGRADE: replace existing section
+        $pyReplace = @"
+import re, os, tempfile, sys
+claude_md = os.path.join(os.environ.get('USERPROFILE', ''), '.claude', 'CLAUDE.md')
+section_file = sys.argv[1]
+with open(claude_md) as f:
+    content = f.read()
+with open(section_file) as f:
+    new_section = f.read()
+content = re.sub(r'\n*## Cortex[^\n]*\n.*?(?=\n## (?!Cortex)|\Z)', '', content, flags=re.DOTALL)
+content = content.rstrip() + '\n\n' + new_section + '\n'
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(claude_md), suffix='.tmp')
+with os.fdopen(fd, 'w') as f:
+    f.write(content)
+os.replace(tmp, claude_md)
+"@
+        & $PythonCmd -c $pyReplace $sectionFile
+        Print-Ok "Cortex section updated in CLAUDE.md"
+    }
+    else {
+        # FRESH: append
+        Add-Content $ClaudeMd "`n"
+        Get-Content $sectionFile | Add-Content $ClaudeMd
+        Print-Ok "Cortex section appended to CLAUDE.md"
+    }
+}
+else {
+    Copy-Item $sectionFile $ClaudeMd
+    Print-Ok "Created CLAUDE.md with Cortex section"
+}
+
+# Step 12: Import backup (if provided)
+if ($ImportBackup) {
+    Print-Step "Importing backup..."
+    Print-Warn "Backup import on Windows requires tar (available in Windows 10+)"
+    try {
+        $tempDir = New-TemporaryFile | ForEach-Object { Remove-Item $_; New-Item -ItemType Directory -Path $_ }
+        tar -xzf $ImportBackup -C $tempDir.FullName 2>$null
+        # Copy laws
+        $lawsDir = Join-Path $tempDir.FullName "laws"
+        if (Test-Path $lawsDir) {
+            Get-ChildItem "$lawsDir/*.txt" -ErrorAction SilentlyContinue | ForEach-Object {
+                $dest = Join-Path $CortexDir "laws" $_.Name
+                if (-not (Test-Path $dest)) { Copy-Item $_.FullName $dest }
+            }
+        }
+        # Copy instincts
+        foreach ($instDir in @("instincts/personal", "instincts/global")) {
+            $src = Join-Path $tempDir.FullName $instDir
+            if (Test-Path $src) {
+                Get-ChildItem "$src/*.yaml" -ErrorAction SilentlyContinue | ForEach-Object {
+                    $dest = Join-Path $CortexDir "instincts" "global" $_.Name
+                    if (-not (Test-Path $dest)) { Copy-Item $_.FullName $dest }
+                }
+            }
+        }
+        Print-Ok "Backup imported"
+        Remove-Item $tempDir.FullName -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    catch {
+        Print-Error "Failed to extract backup. Continuing with fresh install."
+    }
+}
+
+# Step 13: Onboarding (only for fresh installs)
+if (-not $HasCortex -and -not $ImportBackup) {
+    Print-Step "Setting up initial configuration..."
+    Write-Host ""
+    Write-Host "Quick setup (press Enter to skip any):" -ForegroundColor White
+    $userName = Read-Host "  Your name"
+    $userRole = Read-Host "  Your role"
+    $userLang = Read-Host "  Language (en/es/...)"
+    if ([string]::IsNullOrWhiteSpace($userLang)) { $userLang = "en" }
+
+    $env:CX_USER_NAME = $userName
+    $env:CX_USER_ROLE = $userRole
+    $env:CX_USER_LANG = $userLang
+
+    & $PythonCmd -c @'
+import json, os, datetime
+mem_path = os.path.join(os.environ.get("USERPROFILE", ""), ".claude", "cortex", "memory.json")
+with open(mem_path) as f:
+    mem = json.load(f)
+mem["identity"]["name"] = os.environ.get("CX_USER_NAME", "")
+mem["identity"]["role"] = os.environ.get("CX_USER_ROLE", "")
+mem["identity"]["language"] = os.environ.get("CX_USER_LANG", "en")
+mem["stats"]["installed"] = datetime.datetime.now().strftime("%Y-%m-%d")
+with open(mem_path, "w") as f:
+    json.dump(mem, f, indent=2)
+'@ 2>$null
+
+    # Copy seed laws
+    $seedLawsDir = Join-Path $ScriptDir "seeds" "laws"
+    if (Test-Path $seedLawsDir) {
+        Get-ChildItem "$seedLawsDir/*.txt" -ErrorAction SilentlyContinue | ForEach-Object {
+            Copy-Item $_.FullName (Join-Path $CortexDir "laws") -Force
+        }
+        $seedLawCount = (Get-ChildItem "$seedLawsDir/*.txt" -ErrorAction SilentlyContinue | Measure-Object).Count
+        Print-Ok "Seed laws installed: $seedLawCount"
+    }
+
+    # Copy seed instincts
+    $seedInstDir = Join-Path $ScriptDir "seeds" "instincts"
+    if (Test-Path $seedInstDir) {
+        Get-ChildItem "$seedInstDir/*.yaml" -ErrorAction SilentlyContinue | ForEach-Object {
+            Copy-Item $_.FullName (Join-Path $CortexDir "instincts" "global") -Force
+        }
+        $seedInstCount = (Get-ChildItem "$seedInstDir/*.yaml" -ErrorAction SilentlyContinue | Measure-Object).Count
+        Print-Ok "Seed instincts installed: $seedInstCount"
+    }
+}
+
+# Step 14: Write version marker
+Set-Content (Join-Path $CortexDir "version") $NewVersion
+
+# Step 15: Summary
+Write-Host ""
+Write-Host "==================================================" -ForegroundColor Cyan
+Write-Host "  fs-cortex v$NewVersion installed!" -ForegroundColor Green
+Write-Host "==================================================" -ForegroundColor Cyan
+Write-Host ""
+if ($HasCortex) {
+    if ($InstalledVersion -eq "none") {
+        Write-Host "  Upgraded:  legacy -> v$NewVersion" -ForegroundColor White
+    }
+    else {
+        Write-Host "  Upgraded:  v$InstalledVersion -> v$NewVersion" -ForegroundColor White
+    }
+}
+else {
+    Write-Host "  Install:   Fresh install" -ForegroundColor White
+}
+Write-Host "  Data:      ~/.claude/cortex/"
+Write-Host "  Skill:     ~/.claude/skills/cortex/SKILL.md"
+$cmdList = (Get-ChildItem (Join-Path $ScriptDir "commands" "*.md") | ForEach-Object { "/$($_.BaseName)" }) -join ", "
+Write-Host "  Commands:  $cmdList"
+Write-Host "  Hooks:     ~/.claude/hooks/cortex/"
+Write-Host ""
+Write-Host "  Next steps:" -ForegroundColor White
+Write-Host "  1. Open Claude Code and work normally"
+Write-Host "  2. Laws inject automatically at session start"
+Write-Host "  3. Run /cx-analyze when suggested to detect patterns"
+Write-Host ""
+if ($ImportBackup) {
+    Write-Host "  Knowledge imported from backup." -ForegroundColor Yellow
+}
+Write-Host ""

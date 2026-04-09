@@ -180,7 +180,7 @@ if [ -n "$EOD_FILE" ] && [ "$EOD_LAST_READ" != "$EOD_DATE" ]; then
 
   # Also extract "For tomorrow" section if present (only lines starting with -)
   # Use -E (extended regex) for portable alternation (works on both macOS BSD sed and GNU sed)
-  FOR_TOMORROW=$(sed -En '/^### For tomorrow/,/^(###|##|---)/{ /^### For tomorrow/d; /^(###|##|---)/d; p; }' "$EOD_FILE" 2>/dev/null | grep '^- ' | head -5 | sed 's/^- //' | paste -sd ';' - | sed 's/;$//')
+  FOR_TOMORROW=$(sed -En '/^### For tomorrow/,/^(###|##|---)/{ /^### For tomorrow/d; /^(###|##|---)/d; p; }' "$EOD_FILE" 2>/dev/null | grep '^- ' | head -5 | sed 's/^- //' | tr '\n' ';' | sed 's/;$//')
 
   if [ -n "$FOR_TOMORROW" ]; then
     CONTEXT="${CONTEXT}\nPRIORITIES: ${FOR_TOMORROW}"

@@ -19,6 +19,14 @@ Examples for this project:
 
 - `CHANGELOG.md` — new entry at top with `## [X.Y.Z] — YYYY-MM-DD`
 - `skills/cortex/SKILL.md` — header version only if major/minor bump
+- `install.sh` — `NEW_VERSION="X.Y.Z"` near top of file
+- `install.ps1` — `$NewVersion = "X.Y.Z"` near top of file
+
+### 2b. Verify installer consistency
+
+- `core/claudemd-section.md` lists ALL current commands
+- `core/memory.template.json` version matches major release
+- `README.md` install instructions are up to date
 
 ### 3. Write CHANGELOG entry
 

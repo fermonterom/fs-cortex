@@ -57,41 +57,50 @@ cd fs-cortex
 
 ### 2. Install
 
+**macOS / Linux:**
 ```bash
 bash install.sh
 ```
 
+**Windows (PowerShell):**
+```powershell
+powershell -ExecutionPolicy Bypass -File install.ps1
+```
+
+> **Windows requirements**: Python 3, Node.js, and Git must be installed and in your PATH. Hooks run via Git Bash automatically.
+
 The installer will:
 - Create `~/.claude/cortex/` data directory
-- Install the cortex skill and 11 commands
+- Install the cortex skill, 12 commands, and Python modules
 - Configure 4 hooks in `settings.json` (with backup)
 - Import knowledge from a previous backup (if provided)
 - Append Cortex section to `CLAUDE.md`
 - Ask your name, role, and language for personalization
+- Write a version marker for future upgrades
 
 ### 3. Update (existing installation)
 
+Just run the installer again — it detects existing installations automatically:
+
+**macOS / Linux:**
 ```bash
 cd fs-cortex
 git pull
-bash install.sh --update
+bash install.sh
 ```
 
-The `--update` flag reinstalls commands, hooks, and skills without touching your learned data (laws, instincts, observations, reflexes). Your knowledge is preserved.
-
-If `--update` is not available, manually copy the updated files:
-```bash
-# Update commands
-cp commands/cx-*.md ~/.claude/commands/
-
-# Update hooks
-cp hooks/*.sh ~/.claude/hooks/cortex/
-cp hooks/*.js ~/.claude/hooks/cortex/
-cp -r hooks/lib ~/.claude/hooks/cortex/
-
-# Update skill
-cp skills/cortex/SKILL.md ~/.claude/skills/cortex/SKILL.md
+**Windows (PowerShell):**
+```powershell
+cd fs-cortex
+git pull
+powershell -ExecutionPolicy Bypass -File install.ps1
 ```
+
+The installer:
+- Detects your installed version and shows the upgrade path
+- Preserves all your data (laws, instincts, observations, reflexes, proposals)
+- Updates only hooks, commands, skill, and Python modules
+- Updates the Cortex section in CLAUDE.md without touching your other sections
 
 ### 3b. Use
 

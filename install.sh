@@ -21,6 +21,7 @@ COMMANDS_DIR="$CLAUDE_DIR/commands"
 HOOKS_DIR="$CLAUDE_DIR/hooks/cortex"
 SETTINGS_FILE="$CLAUDE_DIR/settings.json"
 CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
+NEW_VERSION="3.1.0"
 
 print_header() {
     echo ""
@@ -84,13 +85,24 @@ fi
 print_step "Checking for existing installations..."
 
 HAS_CORTEX=false
+INSTALLED_VERSION="none"
 
 if [ -d "$CORTEX_DIR" ]; then
     HAS_CORTEX=true
+    # Detect installed version
+    if [ -f "$CORTEX_DIR/version" ]; then
+        INSTALLED_VERSION=$(cat "$CORTEX_DIR/version" 2>/dev/null | tr -d '[:space:]')
+    fi
     # Check if there's actual learned data
     LAW_COUNT=$(find "$CORTEX_DIR/laws" -maxdepth 1 -name "*.txt" 2>/dev/null | wc -l | tr -d ' ')
     INSTINCT_COUNT=$(find "$CORTEX_DIR/instincts" -name "*.yaml" 2>/dev/null | wc -l | tr -d ' ')
-    print_warn "Existing cortex installation detected (${LAW_COUNT} laws, ${INSTINCT_COUNT} instincts)"
+    if [ "$INSTALLED_VERSION" = "none" ]; then
+        print_warn "Legacy cortex installation detected (${LAW_COUNT} laws, ${INSTINCT_COUNT} instincts)"
+        print_step "Upgrading to v${NEW_VERSION}"
+    else
+        print_step "Detected fs-cortex v${INSTALLED_VERSION} → upgrading to v${NEW_VERSION}"
+        print_ok "${LAW_COUNT} laws, ${INSTINCT_COUNT} instincts (preserved)"
+    fi
     echo -e "${YELLOW}Existing data will be preserved. Only hooks, commands, and skill will be updated.${NC}"
     if ! ask_yes_no "Update cortex installation?" "y"; then
         echo "Installation cancelled."
@@ -161,6 +173,15 @@ for hook in "$SCRIPT_DIR/hooks/"*.sh "$SCRIPT_DIR/hooks/"*.js; do
     [ -f "$hook" ] && cp "$hook" "$HOOKS_DIR/" && chmod +x "$HOOKS_DIR/$(basename "$hook")"
 done
 print_ok "Hooks installed to ~/.claude/hooks/cortex/"
+
+# Step 8a: Install Python lib modules (dream_cycle, validate_instinct)
+if [ -d "$SCRIPT_DIR/hooks/lib" ]; then
+    mkdir -p "$HOOKS_DIR/lib"
+    for pyfile in "$SCRIPT_DIR/hooks/lib/"*.py; do
+        [ -f "$pyfile" ] && cp "$pyfile" "$HOOKS_DIR/lib/"
+    done
+    print_ok "Python modules installed to ~/.claude/hooks/cortex/lib/"
+fi
 
 # Step 8b: Install git pre-push hook (version+changelog enforcement)
 if [ -d "$SCRIPT_DIR/.git" ] || git -C "$SCRIPT_DIR" rev-parse --git-dir >/dev/null 2>&1; then
@@ -293,7 +314,7 @@ for event, handlers in cortex_hooks.items():
     cleaned = [
         h for h in existing
         if not any(
-            "cortex" in str(hook.get("command", ""))
+            "hooks/cortex/" in str(hook.get("command", ""))
             for hook in h.get("hooks", [])
         )
     ]
@@ -320,15 +341,46 @@ else
     print_error "Failed to configure hooks. Check that settings.json is valid JSON."
 fi
 
-# Step 11: Append to CLAUDE.md
+# Step 11: Update CLAUDE.md (append on fresh, replace on upgrade)
 print_step "Updating CLAUDE.md..."
 if [ -f "$CLAUDE_MD" ]; then
-    if ! grep -q "## Cortex" "$CLAUDE_MD" 2>/dev/null; then
+    # Backup CLAUDE.md before any modification
+    cp "$CLAUDE_MD" "${CLAUDE_MD}.backup.$(date +%Y%m%d-%H%M%S)" 2>/dev/null || true
+
+    if grep -q "## Cortex" "$CLAUDE_MD" 2>/dev/null; then
+        # UPGRADE: replace existing Cortex section with latest
+        if [ -n "$PYTHON_CMD" ]; then
+            "$PYTHON_CMD" -c '
+import re, sys, os, tempfile
+claude_md = os.path.expanduser("~/.claude/CLAUDE.md")
+section_file = sys.argv[1]
+with open(claude_md) as f:
+    content = f.read()
+with open(section_file) as f:
+    new_section = f.read()
+# Remove old section (from ## Cortex to next ## or EOF)
+content = re.sub(
+    r"\n*## Cortex[^\n]*\n.*?(?=\n## (?!Cortex)|\Z)",
+    "",
+    content,
+    flags=re.DOTALL
+)
+# Append new section
+content = content.rstrip() + "\n\n" + new_section + "\n"
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(claude_md), suffix=".tmp")
+with os.fdopen(fd, "w") as f:
+    f.write(content)
+os.replace(tmp, claude_md)
+' "$SCRIPT_DIR/core/claudemd-section.md" 2>/dev/null
+            print_ok "Cortex section updated in CLAUDE.md"
+        else
+            print_warn "Cortex section exists but Python not available to update it"
+        fi
+    else
+        # FRESH: append
         echo "" >> "$CLAUDE_MD"
         cat "$SCRIPT_DIR/core/claudemd-section.md" >> "$CLAUDE_MD"
         print_ok "Cortex section appended to CLAUDE.md"
-    else
-        print_warn "Cortex section already exists in CLAUDE.md"
     fi
 else
     cp "$SCRIPT_DIR/core/claudemd-section.md" "$CLAUDE_MD"
@@ -423,12 +475,24 @@ with open(mem_path, "w") as f:
     fi
 fi
 
-# Step 14: Summary
+# Step 14: Write version marker
+echo "$NEW_VERSION" > "$CORTEX_DIR/version"
+
+# Step 15: Summary
 echo ""
 echo -e "${CYAN}══════════════════════════════════════════════════${NC}"
-echo -e "${GREEN}${BOLD}  Installation complete!${NC}"
+echo -e "${GREEN}${BOLD}  fs-cortex v${NEW_VERSION} installed!${NC}"
 echo -e "${CYAN}══════════════════════════════════════════════════${NC}"
 echo ""
+if $HAS_CORTEX; then
+    if [ "$INSTALLED_VERSION" = "none" ]; then
+        echo -e "  ${BOLD}Upgraded:${NC}  legacy → v${NEW_VERSION}"
+    else
+        echo -e "  ${BOLD}Upgraded:${NC}  v${INSTALLED_VERSION} → v${NEW_VERSION}"
+    fi
+else
+    echo -e "  ${BOLD}Install:${NC}   Fresh install"
+fi
 echo -e "  ${BOLD}Data:${NC}      ~/.claude/cortex/"
 echo -e "  ${BOLD}Skill:${NC}     ~/.claude/skills/cortex/SKILL.md"
 echo -e "  ${BOLD}Commands:${NC}  $(ls "$SCRIPT_DIR/commands/"*.md 2>/dev/null | xargs -I{} basename {} .md | sed 's/^/\//' | tr '\n' ', ' | sed 's/,$//')"
