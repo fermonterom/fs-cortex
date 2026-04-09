@@ -391,6 +391,7 @@ fi
 if [ -n "$IMPORT_BACKUP" ]; then
     print_step "Importing backup..."
     TEMP_DIR=$(mktemp -d)
+    trap "rm -rf '$TEMP_DIR'" EXIT
     if tar -xzf "$IMPORT_BACKUP" -C "$TEMP_DIR" 2>/dev/null; then
         # Copy laws (|| true: macOS cp -n returns 1 if target exists)
         [ -d "$TEMP_DIR/laws" ] && { cp -n "$TEMP_DIR/laws/"*.txt "$CORTEX_DIR/laws/" 2>/dev/null || true; }

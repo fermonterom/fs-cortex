@@ -117,9 +117,20 @@ def write_with_lock(filepath, content):
             finally:
                 fcntl.flock(lock, fcntl.LOCK_UN)
     except ImportError:
-        # Windows fallback — no fcntl available
-        with open(filepath, "a") as f:
-            f.write(content + "\n")
+        # Windows fallback using msvcrt
+        try:
+            import msvcrt
+            with open(filepath, "a") as f:
+                msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
+                try:
+                    f.write(content + "\n")
+                finally:
+                    f.seek(0)
+                    msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+        except (ImportError, OSError):
+            # Ultimate fallback — plain append
+            with open(filepath, "a") as f:
+                f.write(content + "\n")
 
 
 def atomic_write_json(filepath, data):
@@ -202,7 +213,7 @@ def update_registry(project_id, project_name, project_root, remote_url):
 
 def get_dedup_dir():
     """Get per-user dedup directory with auto-cleanup."""
-    uid = os.getuid() if hasattr(os, "getuid") else os.environ.get("UID", "0")
+    uid = os.getuid() if hasattr(os, "getuid") else os.environ.get("USERNAME", os.environ.get("UID", "0"))
     base = os.environ.get("XDG_RUNTIME_DIR", os.environ.get("TMPDIR", tempfile.gettempdir()))
     dedup_dir = os.path.join(base, f"cortex-{uid}")
     os.makedirs(dedup_dir, mode=0o700, exist_ok=True)
