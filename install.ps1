@@ -299,7 +299,7 @@ with open(claude_md) as f:
     content = f.read()
 with open(section_file) as f:
     new_section = f.read()
-content = re.sub(r'\n*## Cortex[^\n]*\n.*?(?=\n## (?!Cortex)|\Z)', '', content, flags=re.DOTALL)
+content = re.sub(r'\n*## Cortex \(Learning System\)\n.*?(?=\n## |\Z)', '', content, flags=re.DOTALL)
 content = content.rstrip() + '\n\n' + new_section + '\n'
 fd, tmp = tempfile.mkstemp(dir=os.path.dirname(claude_md), suffix='.tmp')
 with os.fdopen(fd, 'w') as f:
