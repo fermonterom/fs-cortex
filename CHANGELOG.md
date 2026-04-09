@@ -4,6 +4,37 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.0.0] — 2026-04-09
+
+### Security (CRITICAL)
+- **injector.sh**: Sanitize instinct action field against prompt injection — blocks instruction overrides (`ignore`, `forget`, `override`, `system:`, etc.) and strips control chars
+- **injector.sh**: Replace `execSync` with `execFileSync` to prevent command injection via malicious `cwd`
+- **session-start.sh**: Sanitize `context.md` and EOD resume before injection into context
+- **session-start.sh**: Add `umask 077` for consistent file permissions
+- **observe.sh**: Expand secret scrubbing from 5 to 12 patterns (GitHub tokens, Stripe keys, Slack, Anthropic, OpenAI, Google API keys, connection strings)
+- **observe.sh**: Add perl-based `flock` fallback for macOS (replaces unsafe non-locked append)
+- **restore**: Add `validate_instinct.py` — validates imported instincts against prompt injection patterns and universal wildcard triggers
+
+### Security (Hardening)
+- **injector.sh**: Add ReDoS protection for instinct trigger patterns — bans nested quantifiers, excessive alternations, enforces length limit
+- **observe.sh**: Atomic archive-then-write under single flock guard (fixes race condition)
+- **observe.sh**: Per-user dedup directory with auto-cleanup (fixes predictable `/tmp` paths)
+- **observe.sh**: Atomic obs-count writes via tmp+rename
+- **session-start.sh**: Pass `CORTEX_DIR` via environment variable to avoid path injection in Python heredoc
+- **install.sh**: Atomic write for `settings.json` via `tempfile.mkstemp` + `os.replace`
+- **injector.sh, session-learner.js**: Add error logging to silent catch blocks (enabled via `CORTEX_DEBUG=1`)
+
+### Added
+- **Dream Cycle** (`hooks/lib/dream_cycle.py`): 5-module knowledge maintenance system:
+  - Jaccard dedup with Unicode-safe tokenization (fixes Sinapsis CJK bug)
+  - Contradiction detection with safe word-boundary pairs EN+ES (fixes Sinapsis `do/don't` false positives)
+  - Staleness scoring (0-100) with confidence decay and auto-archive
+  - Regex validation for instinct triggers (ReDoS, length, syntax)
+  - Health score calculation (0-100) with penalties and bonuses
+- **`/cx-dream` command**: Orchestrates all 5 Dream Cycle modules with dry-run support and confirmation gates
+- **`tests/test_security.sh`**: 7 security regression tests covering injection, command injection, secret scrubbing, instinct validation
+- **`tests/test_dream_cycle.sh`**: 26 Dream Cycle tests (ported from Sinapsis) covering Jaccard, contradictions, staleness, regex, health score
+
 ## [2.3.0] — 2026-04-08
 
 ### Changed

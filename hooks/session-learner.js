@@ -45,13 +45,16 @@ function log(msg) {
 function ensureDir(dir) {
   try {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  } catch (_) {}
+  } catch (e) {
+    if (process.env.CORTEX_DEBUG) process.stderr.write('[cortex:learner] ensureDir: ' + e.message + '\n');
+  }
 }
 
 function readJsonFile(filePath) {
   try {
     return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-  } catch (_) {
+  } catch (e) {
+    if (process.env.CORTEX_DEBUG) process.stderr.write('[cortex:learner] readJson ' + filePath + ': ' + e.message + '\n');
     return null;
   }
 }
@@ -78,7 +81,9 @@ function readJsonlFile(filePath) {
       if (!trimmed) continue;
       try {
         lines.push(JSON.parse(trimmed));
-      } catch (_) {}
+      } catch (e) {
+        if (process.env.CORTEX_DEBUG) process.stderr.write('[cortex:learner] bad jsonl line: ' + e.message + '\n');
+      }
     }
   } catch (_) {}
   return lines;
@@ -150,7 +155,9 @@ function findYamlFiles(dir) {
         files.push(path.join(dir, entry));
       }
     }
-  } catch (_) {}
+  } catch (e) {
+    if (process.env.CORTEX_DEBUG) process.stderr.write('[cortex:learner] listYaml ' + dir + ': ' + e.message + '\n');
+  }
   return files;
 }
 
@@ -169,7 +176,9 @@ function resolveProjectAndObservations(stdinData) {
         allProjects.push({ id: entry, obsPath });
       }
     }
-  } catch (_) {}
+  } catch (e) {
+    if (process.env.CORTEX_DEBUG) process.stderr.write('[cortex:learner] readdir projects: ' + e.message + '\n');
+  }
 
   if (allProjects.length === 0) {
     log('No project observation files found');
@@ -339,7 +348,9 @@ function updateInstincts(observations) {
       const instDir = path.join(PROJECTS_DIR, dir, 'instincts');
       yamlPaths.push(...findYamlFiles(instDir));
     }
-  } catch (_) {}
+  } catch (e) {
+    if (process.env.CORTEX_DEBUG) process.stderr.write('[cortex:learner] readdir instincts: ' + e.message + '\n');
+  }
 
   let updated = 0;
   for (const yamlPath of yamlPaths) {

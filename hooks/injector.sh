@@ -32,14 +32,43 @@ node -e '
 
 const fs = require("fs");
 const path = require("path");
-const { execSync } = require("child_process");
+const { execFileSync } = require("child_process");
 const crypto = require("crypto");
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
-/** Safe regex test — returns false on invalid pattern */
+/** Sanitize text injected into context — strip instruction overrides, limit length */
+function sanitizeInjection(text, maxLen) {
+  if (typeof text !== "string") return "";
+  const BLOCKED = /\b(ignore|forget|override|disregard|bypass|system\s*:|you\s+are|all\s+previous|new\s+instructions|do\s+not\s+follow)\b/gi;
+  let clean = text
+    .replace(/[\x00-\x1f\x7f]/g, "")   // strip control chars
+    .replace(BLOCKED, "[BLOCKED]")       // neutralize instruction overrides
+    .slice(0, maxLen);
+  return clean;
+}
+
+/** Check if a regex pattern is safe (no ReDoS risk) */
+function isSafeRegex(pattern) {
+  if (typeof pattern !== "string" || pattern.length > 100) return false;
+  // Ban nested quantifiers: (a+)+ , (a*)* , (a+)*
+  if (/\([^)]*[+*]\)[+*?]/.test(pattern)) return false;
+  // Ban excessive alternations
+  if ((pattern.match(/\|/g) || []).length > 5) return false;
+  // Test with timeout
+  try {
+    const re = new RegExp(pattern);
+    const start = Date.now();
+    re.test("a".repeat(100));
+    if (Date.now() - start > 50) return false;
+  } catch { return false; }
+  return true;
+}
+
+/** Safe regex test — returns false on invalid or unsafe pattern */
 function safeRegexTest(pattern, text) {
   try {
+    if (!isSafeRegex(pattern)) return false;
     return new RegExp(pattern, "i").test(text);
   } catch {
     return false;
@@ -85,16 +114,16 @@ function listYamlFiles(dir) {
 
 /** Derive project_id from git remote URL: sha256(url)[0:12] */
 function detectProjectId(cwd) {
+  let url;
   try {
-    const url = execSync("git -C " + JSON.stringify(cwd) + " remote get-url origin 2>/dev/null", {
+    url = execFileSync("git", ["-C", cwd, "remote", "get-url", "origin"], {
       encoding: "utf8",
       timeout: 2000,
+      stdio: ["pipe", "pipe", "pipe"]
     }).trim();
-    if (!url) return null;
-    return crypto.createHash("sha256").update(url).digest("hex").slice(0, 12);
-  } catch {
-    return null;
-  }
+  } catch { url = ""; }
+  if (!url) return null;
+  return crypto.createHash("sha256").update(url).digest("hex").slice(0, 12);
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────
@@ -128,8 +157,8 @@ try {
         matchedReflexes.push({ id: r.id, action: r.action, severity: r.severity || "medium" });
         if (matchedReflexes.length >= 2) break; // max 2 reflexes
       }
-    } catch {
-      // Invalid reflexes.json — skip
+    } catch (e) {
+      if (process.env.CORTEX_DEBUG) process.stderr.write("[cortex:injector] reflexes: " + e.message + "\n");
     }
   }
 
@@ -163,8 +192,8 @@ try {
       if (inst.scope === "project" && inst.project_id && projectId && inst.project_id !== projectId) continue;
       if (!safeRegexTest(inst.trigger, matchTarget)) continue;
       candidates.push(inst);
-    } catch {
-      // Invalid file — skip
+    } catch (e) {
+      if (process.env.CORTEX_DEBUG) process.stderr.write("[cortex:injector] instinct " + file + ": " + e.message + "\n");
     }
   }
 
@@ -193,9 +222,10 @@ try {
     lines.push("[reflex:" + r.id + "] " + r.action);
   }
 
-  // Then instincts sorted by confidence (already sorted)
+  // Then instincts sorted by confidence (already sorted) — sanitize action field
   for (const inst of matchedInstincts) {
-    lines.push("[instinct:" + inst.id + "] " + inst.action + " (conf:" + inst.confidence.toFixed(2) + ")");
+    const safeAction = sanitizeInjection(inst.action, 500);
+    lines.push("[instinct:" + inst.id + "] " + safeAction + " (conf:" + inst.confidence.toFixed(2) + ")");
   }
 
   const output = {
@@ -207,8 +237,8 @@ try {
 
   process.stdout.write(JSON.stringify(output) + "\n");
 
-} catch {
-  // Graceful failure — never block Claude
+} catch (e) {
+  if (process.env.CORTEX_DEBUG) process.stderr.write("[cortex:injector] fatal: " + e.message + "\n");
   process.exit(0);
 }
 ' 2>/dev/null

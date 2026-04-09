@@ -291,10 +291,18 @@ for event, handlers in cortex_hooks.items():
 
 settings["hooks"] = existing_hooks
 
-# Write
-with open(settings_file, "w") as f:
-    json.dump(settings, f, indent=2)
-    f.write("\n")
+# Atomic write via tmp+rename
+import tempfile
+tmp_fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(settings_file), suffix='.tmp')
+try:
+    with os.fdopen(tmp_fd, 'w') as f:
+        json.dump(settings, f, indent=2)
+        f.write("\n")
+    os.chmod(tmp_path, 0o600)
+    os.replace(tmp_path, settings_file)
+except:
+    os.unlink(tmp_path)
+    raise
 PYEOF
 then
     print_ok "Hooks configured in settings.json"
