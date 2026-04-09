@@ -267,6 +267,8 @@ try:
     with os.fdopen(fd, 'w') as f:
         json.dump(settings, f, indent=2)
         f.write("\n")
+    import stat
+    os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)
     os.replace(tmp_path, settings_file)
 except:
     os.unlink(tmp_path)
@@ -328,6 +330,12 @@ if ($ImportBackup) {
     Print-Step "Importing backup..."
     Print-Warn "Backup import on Windows requires tar (available in Windows 10+)"
     try {
+        # Validate archive: reject entries with path traversal or absolute paths
+        $unsafeEntries = tar -tzf $ImportBackup 2>$null | Where-Object { $_ -match '(^\\/|\\.\\.[\\/])' }
+        if ($unsafeEntries) {
+            Print-Error "Backup archive contains unsafe paths (../ or absolute). Aborting import."
+            return
+        }
         $tempDir = New-Item -ItemType Directory -Path (Join-Path ([System.IO.Path]::GetTempPath()) ([System.IO.Path]::GetRandomFileName()))
         tar -xzf $ImportBackup -C $tempDir.FullName 2>$null
         # Copy laws
