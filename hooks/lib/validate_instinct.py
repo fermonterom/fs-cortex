@@ -23,11 +23,17 @@ def validate_instinct(filepath):
     except (OSError, IOError) as e:
         return False, f"Cannot read file: {e}"
 
-    # Check action field
-    for line in content.split('\n'):
-        stripped = line.strip()
-        if stripped.startswith('action:'):
-            action = stripped.split(':', 1)[1].strip().strip('"').strip("'")
+    # Check action field — handle YAML multiline values (| or >)
+    fm_match = re.search(r'^---\s*\n(.*?)\n---', content, re.DOTALL)
+    if fm_match:
+        block = fm_match.group(1)
+        # Extract action: inline value OR multiline continuation lines
+        action_match = re.search(
+            r'^action:\s*(?:[|>]-?\s*\n((?:[ \t]+.+\n?)*)|(.*?)$)',
+            block, re.MULTILINE
+        )
+        if action_match:
+            action = (action_match.group(1) or action_match.group(2) or '').strip().strip('"').strip("'")
             if len(action) > 500:
                 return False, f"Action too long ({len(action)} chars, max 500)"
             for pat in BLOCKED_PATTERNS:
