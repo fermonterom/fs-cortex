@@ -4,6 +4,38 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.3.0] — 2026-04-09
+
+### Security
+- **session-learner.js**: ReDoS guard on instinct triggers and reflex matchers (matching injector.sh's `isSafeRegex`)
+- **session-learner.js**: Sanitize proposal action text against prompt injection (4 detectors)
+- **session-start.sh**: Normalize whitespace before sanitization (blocks double-spaced bypass)
+- **session-start.sh**: Pass CONTEXT via env var instead of shell argument (prevents backslash corruption)
+- **injector.sh**: Pass hook payload via temp file instead of env var (no longer visible in /proc)
+
+### Fixed
+- **install.sh/ps1**: Include `*.py` in hook copy loop — fixes observe.py not being installed on fresh installs (CRITICAL)
+- **install.sh/ps1**: Narrow CLAUDE.md regex to exact `## Cortex (Learning System)` heading — no longer deletes user sections like `## CortexDB`
+- **session-learner.js**: Fix readStdin Promise double-resolve (clear timeout on end event)
+- **session-learner.js**: Replace static `NOW` with dynamic `now()` for accurate timestamps
+- **session-learner.js**: Preserve user validation status (approved/rejected) on proposal dedup
+- **session-learner.js**: Add missing `status: 'pending'` to repetition proposals
+- **injector.sh**: Fall back to project root hash when no `origin` remote exists
+- **injector.sh**: Use project root (not cwd) for domain detection in subdirectories
+- **observe.py**: Windows file locking via `msvcrt` (was plain append)
+- **observe.py**: Windows UID fallback uses `USERNAME` env var (was shared uid `0`)
+- **install.ps1**: PS 5.1 compatible ternary syntax (was PS 7+ only)
+- **install.ps1**: Direct temp directory creation (fixes TOCTOU race)
+- **install.sh**: Trap cleanup for backup temp directory on script failure
+- **install.sh**: Atomic write for onboarding `memory.json` via tmp+rename
+
+### Changed
+- **observe.py**: File-based project ID cache (5min TTL) — eliminates git subprocess per tool use
+- **observe.py**: Conditional registry.json write — skips when project metadata unchanged
+- **observe.py**: Fixed docstring placement in `archive_if_needed` and `auto_purge`
+- **memory.template.json**: Version updated to 3.2.0
+- **CI**: Added `fail-fast: false`, shellcheck + flake8 linting step, portable `$TMPDIR` in tests
+
 ## [3.2.0] — 2026-04-09
 
 ### Added
