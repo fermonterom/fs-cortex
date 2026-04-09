@@ -5,7 +5,7 @@ description: |
   crystallizes patterns as atomic instincts with confidence scoring,
   distills proven knowledge into laws. Commands: /cx-status, /cx-analyze,
   /cx-distill, /cx-validate, /cx-evolve, /cx-eod, /cx-gotcha, /cx-audit,
-  /cx-export, /cx-backup, /cx-restore, /cx-dream.
+  /cx-export, /cx-backup, /cx-restore, /cx-dream, /cx-router, /cx-promote.
 auto_activate: true
 ---
 
@@ -52,7 +52,7 @@ When the system prompt contains `EOD RESUME`, Claude MUST proactively present it
 4. **Priorities** — List PRIORITIES as numbered list
 5. **Ask** — Ask where to start (user's language from memory.json)
 
-### Commands (12)
+### Commands (14)
 
 | Command | Purpose |
 |---------|---------|
@@ -67,6 +67,8 @@ When the system prompt contains `EOD RESUME`, Claude MUST proactively present it
 | `/cx-export` | Portable skill for Claude.ai or sharing |
 | `/cx-backup` | .tar.gz backup for machine transfer |
 | `/cx-restore` | Import backup with intelligent merge |
+| `/cx-router` | Show command catalog with token costs and next action suggestion |
+| `/cx-promote` | Promote project instincts to global when found in 2+ projects |
 | `/cx-dream` | Dream Cycle: dedup, contradictions, staleness, regex validation, health score |
 
 ### Learning Pipeline
