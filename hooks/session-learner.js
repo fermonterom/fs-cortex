@@ -446,7 +446,18 @@ function updateInstincts(observations) {
       const parsed = parseYamlFrontmatter(content);
       if (!parsed || !parsed.fields.trigger) continue;
 
-      const triggerRegex = new RegExp(parsed.fields.trigger);
+      // ReDoS guard (matching injector.sh's isSafeRegex pattern)
+      const trigger = parsed.fields.trigger;
+      if (typeof trigger !== 'string' || trigger.length > 100) continue;
+      if (/\([^)]*[+*]\)[+*?]/.test(trigger)) continue;
+      let triggerRegex;
+      try {
+        triggerRegex = new RegExp(trigger);
+        const start = Date.now();
+        triggerRegex.test('a'.repeat(100));
+        if (Date.now() - start > 50) continue;
+      } catch { continue; }
+
       let matched = false;
       for (const toolName of toolNames) {
         if (triggerRegex.test(toolName)) {
@@ -489,6 +500,8 @@ function updateReflexes(observations) {
   for (const reflex of reflexData.reflexes) {
     if (!reflex.matcher) continue;
     try {
+      // ReDoS guard
+      if (reflex.matcher.length > 100 || /\([^)]*[+*]\)[+*?]/.test(reflex.matcher)) continue;
       const matcherRe = new RegExp(reflex.matcher);
       let matched = false;
 
@@ -497,6 +510,7 @@ function updateReflexes(observations) {
 
         // Check condition if present
         if (reflex.condition) {
+          if (reflex.condition.length > 100 || /\([^)]*[+*]\)[+*?]/.test(reflex.condition)) continue;
           const condRe = new RegExp(reflex.condition, 'i');
           if (!condRe.test(toolInputs[i] || '')) continue;
         }
