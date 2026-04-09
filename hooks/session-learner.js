@@ -253,26 +253,33 @@ function detectErrorResolutions(observations) {
 
   for (let i = 0; i < observations.length; i++) {
     const obs = observations[i];
-    // Check if this is an error event (output contains error indicators)
+    // Use is_error flag from observe.py OR fallback to output pattern matching
     if (!isError(obs)) continue;
 
     const errorTool = obs.tool;
-    // Look ahead in the window for the same tool succeeding
+    const errorSummary = String(obs.err_msg || obs.output || obs.input || '').slice(0, 200);
+
+    // Look ahead for the fix: Edit/Write after error, or same tool succeeding
     for (let j = i + 1; j < Math.min(i + WINDOW + 1, observations.length); j++) {
       const candidate = observations[j];
-      if (candidate.tool === errorTool && !isError(candidate)) {
+      const isFix = (candidate.tool === 'Edit' || candidate.tool === 'Write' || candidate.tool === errorTool)
+        && !isError(candidate);
+
+      if (isFix) {
+        const fixSummary = String(candidate.input || '').slice(0, 200);
         const hash = shortHash(`${errorTool}-${obs.ts || i}`);
         proposals.push({
-          id: `fix-${errorTool}-${hash}`,
+          id: `gotcha-${errorTool}-${hash}`,
           trigger: errorTool,
-          action: `Error pattern detected: ${errorTool} failed then succeeded`,
-          confidence: 0.35,
-          domain: 'tooling',
-          source: 'session-learner',
+          action: `When ${errorTool} fails with similar pattern, try: ${fixSummary}`,
+          confidence: 0.40,
+          domain: 'error-recovery',
+          source: 'session-learner:error-fix',
+          status: 'pending',
           detected: TODAY,
           session: obs._resolvedSession || obs.sid || 'unknown',
         });
-        break; // Only one proposal per error
+        break;
       }
     }
   }
@@ -325,6 +332,86 @@ function detectRepetitions(observations) {
   }
 
   return proposals;
+}
+
+// -------------------------------------------------------------------
+// Step 3b: Detect user corrections (same file edited 2+ times)
+// -------------------------------------------------------------------
+
+function extractFilePath(input) {
+  if (!input) return null;
+  const s = String(input);
+  const m = s.match(/"file_path"\s*:\s*"([^"]+)"/);
+  return m ? m[1] : null;
+}
+
+function detectUserCorrections(observations) {
+  const corrections = [];
+  const fileEdits = {};
+
+  for (const obs of observations) {
+    if (obs.tool !== 'Edit' && obs.tool !== 'Write') continue;
+    const file = extractFilePath(obs.input);
+    if (!file) continue;
+
+    if (!fileEdits[file]) fileEdits[file] = [];
+    fileEdits[file].push(obs);
+  }
+
+  for (const [file, edits] of Object.entries(fileEdits)) {
+    if (edits.length >= 2) {
+      const hash = shortHash(file);
+      corrections.push({
+        id: `correction-${hash}`,
+        trigger: `Edit.*${path.basename(file).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
+        action: `User corrected edits to ${path.basename(file)} (${edits.length} times). Review pattern.`,
+        confidence: 0.50,
+        domain: 'user-preference',
+        source: 'session-learner:correction',
+        status: 'pending',
+        detected: TODAY,
+        session: edits[0]._resolvedSession || edits[0].sid || 'unknown',
+      });
+    }
+  }
+  return corrections;
+}
+
+// -------------------------------------------------------------------
+// Step 3c: Detect workflow chain trigrams (3-tool sequences)
+// -------------------------------------------------------------------
+
+function detectWorkflowChains(observations, minCount) {
+  minCount = minCount || 3;
+  const trigrams = {};
+
+  for (let i = 0; i < observations.length - 2; i++) {
+    const a = observations[i].tool;
+    const b = observations[i + 1].tool;
+    const c = observations[i + 2].tool;
+    if (!a || !b || !c) continue;
+    const key = a + '->' + b + '->' + c;
+    if (!trigrams[key]) trigrams[key] = 0;
+    trigrams[key]++;
+  }
+
+  return Object.entries(trigrams)
+    .filter(([_, count]) => count >= minCount)
+    .map(([chain, count]) => {
+      const hash = shortHash(chain);
+      return {
+        id: `workflow-${hash}`,
+        trigger: chain.split('->')[0],
+        action: `Common workflow detected: ${chain} (${count} times)`,
+        confidence: Math.min(0.60, 0.30 + count * 0.05),
+        domain: 'workflow',
+        source: 'session-learner:workflow',
+        status: 'pending',
+        detected: TODAY,
+        session: observations[0]._resolvedSession || observations[0].sid || 'unknown',
+      };
+    })
+    .sort((a, b) => b.confidence - a.confidence);
 }
 
 // -------------------------------------------------------------------
@@ -547,13 +634,21 @@ async function main() {
       return;
     }
 
-    // Step 2: Detect error-resolution pairs
+    // Step 2: Detect error-fix pairs
     const errorProposals = detectErrorResolutions(observations);
-    log(`Detected ${errorProposals.length} error-resolution pair(s)`);
+    log(`Detected ${errorProposals.length} error-fix pair(s)`);
 
     // Step 3: Detect repetitions
     const repetitionProposals = detectRepetitions(observations);
     log(`Detected ${repetitionProposals.length} repetition pattern(s)`);
+
+    // Step 3b: Detect user corrections
+    const correctionProposals = detectUserCorrections(observations);
+    log(`Detected ${correctionProposals.length} user correction(s)`);
+
+    // Step 3c: Detect workflow chains
+    const workflowProposals = detectWorkflowChains(observations);
+    log(`Detected ${workflowProposals.length} workflow chain(s)`);
 
     // Step 4: Update instinct YAML files
     updateInstincts(observations);
@@ -561,8 +656,13 @@ async function main() {
     // Step 5: Update reflex fire counts
     updateReflexes(observations);
 
-    // Step 6: Write proposals
-    const allProposals = [...errorProposals, ...repetitionProposals];
+    // Step 6: Combine all proposals with session_date for cross-day tracking
+    const allProposals = [
+      ...errorProposals,
+      ...repetitionProposals,
+      ...correctionProposals,
+      ...workflowProposals,
+    ].map((p) => ({ ...p, session_date: TODAY }));
     writeProposals(allProposals);
 
     // Step 7: Write context.md
