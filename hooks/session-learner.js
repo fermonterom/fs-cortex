@@ -253,26 +253,33 @@ function detectErrorResolutions(observations) {
 
   for (let i = 0; i < observations.length; i++) {
     const obs = observations[i];
-    // Check if this is an error event (output contains error indicators)
+    // Use is_error flag from observe.py OR fallback to output pattern matching
     if (!isError(obs)) continue;
 
     const errorTool = obs.tool;
-    // Look ahead in the window for the same tool succeeding
+    const errorSummary = String(obs.err_msg || obs.output || obs.input || '').slice(0, 200);
+
+    // Look ahead for the fix: Edit/Write after error, or same tool succeeding
     for (let j = i + 1; j < Math.min(i + WINDOW + 1, observations.length); j++) {
       const candidate = observations[j];
-      if (candidate.tool === errorTool && !isError(candidate)) {
+      const isFix = (candidate.tool === 'Edit' || candidate.tool === 'Write' || candidate.tool === errorTool)
+        && !isError(candidate);
+
+      if (isFix) {
+        const fixSummary = String(candidate.input || '').slice(0, 200);
         const hash = shortHash(`${errorTool}-${obs.ts || i}`);
         proposals.push({
-          id: `fix-${errorTool}-${hash}`,
+          id: `gotcha-${errorTool}-${hash}`,
           trigger: errorTool,
-          action: `Error pattern detected: ${errorTool} failed then succeeded`,
-          confidence: 0.35,
-          domain: 'tooling',
-          source: 'session-learner',
+          action: `When ${errorTool} fails with similar pattern, try: ${fixSummary}`,
+          confidence: 0.40,
+          domain: 'error-recovery',
+          source: 'session-learner:error-fix',
+          status: 'pending',
           detected: TODAY,
           session: obs._resolvedSession || obs.sid || 'unknown',
         });
-        break; // Only one proposal per error
+        break;
       }
     }
   }
