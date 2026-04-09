@@ -89,13 +89,13 @@ fi
 # Distill reminder: weekly
 LAST_DISTILL="$CORTEX_DIR/.last-distill"
 if [ ! -f "$LAST_DISTILL" ] || [ "$(find "$LAST_DISTILL" -mtime +7 2>/dev/null)" ]; then
-  CONTEXT="${CONTEXT}\n\n⚙️ Run /cx-distill — 7+ days since last distillation (decay, promotions, law extraction)."
+  CONTEXT="${CONTEXT}\n\n[MAINT] Run /cx-distill — 7+ days since last distillation (decay, promotions, law extraction)."
 fi
 
 # Audit reminder: monthly
 LAST_AUDIT="$CORTEX_DIR/.last-audit"
 if [ ! -f "$LAST_AUDIT" ] || [ "$(find "$LAST_AUDIT" -mtime +30 2>/dev/null)" ]; then
-  CONTEXT="${CONTEXT}\n\n🧹 Run /cx-audit — 30+ days since last audit (duplicates, token overhead, cleanup)."
+  CONTEXT="${CONTEXT}\n\n[MAINT] Run /cx-audit — 30+ days since last audit (duplicates, token overhead, cleanup)."
 fi
 
 # Validate reminder: if there are pending proposals
@@ -111,7 +111,7 @@ except:
     print(0)
 ' 2>/dev/null || echo "0")
   if [ "$_PENDING" -gt 0 ]; then
-    CONTEXT="${CONTEXT}\n\n📋 ${_PENDING} pending proposals. Run /cx-validate to review."
+    CONTEXT="${CONTEXT}\n\n[ACTION] ${_PENDING} pending proposals. Run /cx-validate to review."
   fi
 fi
 

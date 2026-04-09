@@ -19,7 +19,7 @@ auto_activate: true
 
 ```
 Observations (JSONL, async hooks, 0 tokens)
-    ↓ /cx-analyze (cortex-observer agent, Haiku)
+    ↓ /cx-analyze (cortex-observer agent, Opus 1M)
 Instincts (YAML, confidence 0.0-0.95, injected via PreToolUse)
     ↓ confidence >= 0.90 via /cx-distill
 Laws (TXT one-liners ≤120 chars, injected every SessionStart)
@@ -122,7 +122,7 @@ deployment | automation | documentation | testing | security
 
 | Agent | Model | Purpose |
 |-------|-------|---------|
-| cortex-observer | Haiku | Detect patterns in observations |
+| cortex-observer | Opus 1M | Detect patterns in observations (cross-project, full context) |
 | cortex-reviewer | Sonnet x3 | Parallel code review (security + quality + correctness) |
 | cortex-planner | Sonnet | Task decomposition |
 
