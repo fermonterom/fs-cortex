@@ -163,7 +163,7 @@ Claude provides a verdict with reasoning per item before you decide. All command
 | Hook | Event | Purpose | Blocking? |
 |------|-------|---------|-----------|
 | `session-start.sh` | SessionStart | Inject Laws + EOD resume (once) + context.md bridge | Sync (5s) |
-| `observe.sh` | PreToolUse / PostToolUse | Capture tool start/complete | Async (0 tokens) |
+| `observe.py` | PreToolUse / PostToolUse | Capture tool start/complete (single-process, ~70ms) | Async (0 tokens) |
 | `injector.sh` | PreToolUse | Inject matched reflexes + instincts | Sync (3s) |
 | `session-learner.js` | Stop | Analyze session, proposals, context.md | Sync (15s) |
 
@@ -275,11 +275,14 @@ Key measures in v3.0:
 ## Tests
 
 ```bash
-bash tests/test_security.sh      # 7 security regression tests
-bash tests/test_dream_cycle.sh   # 26 dream cycle tests
+bash tests/run_all.sh             # Run all 4 suites (47 tests)
+bash tests/test_security.sh       # 7 security regression tests
+bash tests/test_dream_cycle.sh    # 26 dream cycle tests
+bash tests/test_observe.sh        # 7 observer tests (scrubbing, is_error, dedup, perf)
+bash tests/test_session_learner.sh # 7 session learner tests (detectors, proposals)
 ```
 
-Both suites run automatically on `git push` to main via the pre-push hook.
+All suites run automatically on `git push` to main (pre-push hook) and on every PR via GitHub Actions CI (macOS + Linux, Python 3.9/3.12, Node 18/22).
 
 ## Credits
 

@@ -4,6 +4,34 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.2.0] — 2026-04-09
+
+### Added
+- **`hooks/observe.py`**: Complete Python rewrite of observe.sh — single process replaces 11 Python spawns, ~70ms avg (was ~800ms). Adds `is_error` detection with 9 patterns, session_id[:24] (was [:16]), configurable via memory.json
+- **Session learner detectors**: 3 new pattern detectors in `session-learner.js`:
+  - Error-to-fix pair detection using `is_error` flag (confidence 0.40)
+  - User correction detection — same file edited 2+ times (confidence 0.50)
+  - Workflow chain trigrams — repeated 3-tool sequences (confidence 0.30-0.60)
+- **Auto-proposal generation**: All 4 detectors (error-fix, repetitions, corrections, workflows) generate proposals automatically at session end with `session_date` field for cross-day tracking
+- **Injector domain pre-filter**: Detects project stack (React, Node, Supabase, Python, Rust, Go) from `package.json`/config files, skips irrelevant instincts
+- **Injector occurrence tracking**: Tracks instinct activation count and sessions in `instinct-tracking.json`
+- **GitHub Actions CI**: `.github/workflows/test.yml` — runs all 4 test suites on push/PR across macOS + Linux, Python 3.9/3.12, Node 18/22
+- **`tests/run_all.sh`**: Unified test runner for all suites
+- **`tests/test_observe.sh`**: 7 tests — scrubbing, is_error, dedup, atomic write, e2e, performance
+- **`tests/test_session_learner.sh`**: 7 tests — error-fix pairs, corrections, workflow chains, proposal structure
+
+### Changed
+- **`hooks/observe.sh`**: Reduced to thin wrapper that delegates to `observe.py`
+- **`hooks/injector.sh`**: Max instincts increased from 2 to 3, with 500 char/instinct and 1500 char total limit
+- **`hooks/observe.py`**: Config values (`max_observations_mb`, `archive_days`, `learn_threshold`) now read from `memory.json` instead of hardcoded
+- **`hooks/session-start.sh`**: Replaced emojis with `[MAINT]`/`[ACTION]` text prefixes
+
+### Fixed
+- **`agents/cortex-observer.md`**: Model reference corrected from `haiku` to `opus`
+- **`skills/cortex/SKILL.md`**: Model references corrected from `Haiku` to `Opus 1M`
+- **`README.md`**: Updated max instincts (2→3), clarified regex triggers in reflexes table
+- **`hooks/observe.py`**: OpenAI token pattern now matches `sk-proj-*` format
+
 ## [3.1.0] — 2026-04-09
 
 ### Added

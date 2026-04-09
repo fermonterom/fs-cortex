@@ -9,7 +9,7 @@ description: |
 auto_activate: true
 ---
 
-# Cortex v3.1 — Continuous Learning System
+# Cortex v3.2 — Continuous Learning System
 
 > Every session creates a connection. Cortex turns them into instinct.
 
