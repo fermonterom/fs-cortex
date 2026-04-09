@@ -12,7 +12,8 @@ _sanitize_injection() {
     local max_len="${2:-2000}"
     echo "$text" \
         | tr -d '\000-\037' \
-        | sed -E 's/\b(ignore|forget|override|disregard|bypass|system:|you are|all previous|new instructions)\b/[BLOCKED]/gi' \
+        | tr -s ' ' \
+        | sed -E 's/\b(ignore|forget|override|disregard|bypass|system *:|you +are|all +previous|new +instructions|do +not +follow)\b/[BLOCKED]/gi' \
         | head -c "$max_len"
 }
 
@@ -196,15 +197,15 @@ fi
 # -- Output JSON via python3 --
 [ -z "$PYTHON_CMD" ] && exit 0
 
-"$PYTHON_CMD" -c "
-import json, sys
-ctx = sys.argv[1].replace('\\\\n', '\n')
+CORTEX_CTX="$CONTEXT" "$PYTHON_CMD" -c '
+import json, os
+ctx = os.environ["CORTEX_CTX"].replace("\\n", "\n")
 print(json.dumps({
-    'hookSpecificOutput': {
-        'hookEventName': 'SessionStart',
-        'additionalContext': ctx
+    "hookSpecificOutput": {
+        "hookEventName": "SessionStart",
+        "additionalContext": ctx
     }
 }))
-" "$CONTEXT"
+'
 
 exit 0
