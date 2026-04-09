@@ -23,7 +23,18 @@ from datetime import datetime, timezone
 HOME = os.environ.get("HOME", os.environ.get("USERPROFILE", "/tmp"))
 CORTEX_DIR = Path(HOME) / ".claude" / "cortex"
 PROJECTS_DIR = CORTEX_DIR / "projects"
-LEARN_THRESHOLD = 50
+
+# Load config from memory.json (dead code no more — Bug INC-9)
+_config = {}
+try:
+    with open(CORTEX_DIR / "memory.json") as _f:
+        _config = json.load(_f).get("config", {})
+except (FileNotFoundError, json.JSONDecodeError, OSError):
+    pass
+
+MAX_FILE_SIZE_MB = _config.get("max_observations_mb", 10)
+ARCHIVE_DAYS = _config.get("archive_days", 30)
+LEARN_THRESHOLD = _config.get("learn_threshold", 50)
 
 # ── Secret Scrubbing (12 patterns) ───────────────────────────────────
 
@@ -242,7 +253,9 @@ def update_dedup(dedup_file, input_hash):
 
 # ── Archive ──────────────────────────────────────────────────────────
 
-def archive_if_needed(obs_file, max_mb=10):
+def archive_if_needed(obs_file, max_mb=None):
+    if max_mb is None:
+        max_mb = MAX_FILE_SIZE_MB
     """Archive observations file if it exceeds max_mb."""
     try:
         size = os.path.getsize(obs_file)
@@ -259,7 +272,9 @@ def archive_if_needed(obs_file, max_mb=10):
             pass
 
 
-def auto_purge(project_dir, days=30):
+def auto_purge(project_dir, days=None):
+    if days is None:
+        days = ARCHIVE_DAYS
     """Purge archived observations older than N days."""
     purge_marker = os.path.join(project_dir, ".last-purge")
     try:
