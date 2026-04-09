@@ -38,7 +38,7 @@ function Print-Warn($msg)  { Write-Host "  ! $msg" -ForegroundColor Yellow }
 function Print-Error($msg) { Write-Host "  x $msg" -ForegroundColor Red }
 
 function Ask-YesNo($prompt, $default = "y") {
-    $suffix = if ($default -eq "y") { "[Y/n]" } else { "[y/N]" }
+    $suffix = @{ $true = "[Y/n]"; $false = "[y/N]" }[$default -eq "y"]
     $answer = Read-Host "$prompt $suffix"
     if ([string]::IsNullOrWhiteSpace($answer)) { $answer = $default }
     return $answer -match "^[Yy]"
@@ -326,7 +326,7 @@ if ($ImportBackup) {
     Print-Step "Importing backup..."
     Print-Warn "Backup import on Windows requires tar (available in Windows 10+)"
     try {
-        $tempDir = New-TemporaryFile | ForEach-Object { Remove-Item $_; New-Item -ItemType Directory -Path $_ }
+        $tempDir = New-Item -ItemType Directory -Path (Join-Path ([System.IO.Path]::GetTempPath()) ([System.IO.Path]::GetRandomFileName()))
         tar -xzf $ImportBackup -C $tempDir.FullName 2>$null
         # Copy laws
         $lawsDir = Join-Path $tempDir.FullName "laws"
