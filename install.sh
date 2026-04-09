@@ -21,7 +21,7 @@ COMMANDS_DIR="$CLAUDE_DIR/commands"
 HOOKS_DIR="$CLAUDE_DIR/hooks/cortex"
 SETTINGS_FILE="$CLAUDE_DIR/settings.json"
 CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
-NEW_VERSION="3.5.0"
+NEW_VERSION="3.6.0"
 
 print_header() {
     echo ""
@@ -174,13 +174,13 @@ for hook in "$SCRIPT_DIR/hooks/"*.sh "$SCRIPT_DIR/hooks/"*.js "$SCRIPT_DIR/hooks
 done
 print_ok "Hooks installed to ~/.claude/hooks/cortex/"
 
-# Step 8a: Install Python lib modules (dream_cycle, validate_instinct)
+# Step 8a: Install lib modules (Python + JS)
 if [ -d "$SCRIPT_DIR/hooks/lib" ]; then
     mkdir -p "$HOOKS_DIR/lib"
-    for pyfile in "$SCRIPT_DIR/hooks/lib/"*.py; do
-        [ -f "$pyfile" ] && cp "$pyfile" "$HOOKS_DIR/lib/"
+    for libfile in "$SCRIPT_DIR/hooks/lib/"*.py "$SCRIPT_DIR/hooks/lib/"*.js; do
+        [ -f "$libfile" ] && cp "$libfile" "$HOOKS_DIR/lib/"
     done
-    print_ok "Python modules installed to ~/.claude/hooks/cortex/lib/"
+    print_ok "Lib modules installed to ~/.claude/hooks/cortex/lib/"
 fi
 
 # Step 8b: Install git pre-push hook (version+changelog enforcement)

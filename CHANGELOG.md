@@ -4,6 +4,16 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.6.0] — 2026-04-09
+
+### Added
+- **`tests/test_install.sh`**: 37 tests — fresh install (20 checks: version, hooks, lib, commands, SKILL, CLAUDE.md, settings.json, core files, seeds, dirs), upgrade (15 checks: version, laws, instincts, memory, reflexes, observations, proposals, CLAUDE.md sections, settings hooks, new files), idempotency (3 runs), path traversal protection
+- **`tests/test_hooks_e2e.sh`**: 13 end-to-end tests — observe.py (JSONL format, is_error, secret scrubbing), session-start.sh (JSON output, laws, skills hint), injector.sh (instinct injection, prompt injection blocked), session-learner.js (proposals, context.md), dream_cycle.py (5 modules), validate_instinct.py (accept/reject), yaml-utils.js (integration)
+
+### Fixed
+- **`install.sh`**: lib copy now includes `*.js` files (yaml-utils.js was not installed)
+- **`install.ps1`**: Same fix — lib copy includes `*.js` alongside `*.py`
+
 ## [3.5.0] — 2026-04-09
 
 ### Added
