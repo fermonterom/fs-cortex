@@ -4,6 +4,16 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.5.0] — 2026-04-09
+
+### Added
+- **Draft auto-promote**: Injector now tracks ALL instinct matches including drafts (confidence < 0.30). Drafts auto-promote to 0.35 after 5+ activations across 3+ sessions
+- **Token budget cap**: Per-session token budget (8000 tokens). Instinct injection skipped when budget exceeded; reflexes always pass (safety exempt)
+- **`tests/test_yaml_utils.sh`**: 13 tests for shared YAML parser — float/int parsing, quoted/bare strings, colon in values, field updates, file listing, edge cases
+
+### Fixed
+- **`install.sh`**: Backup archive validated against path traversal (`../` and absolute paths) before extraction
+
 ## [3.4.0] — 2026-04-09
 
 ### Added
