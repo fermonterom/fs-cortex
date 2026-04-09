@@ -32,7 +32,7 @@ node -e '
 
 const fs = require("fs");
 const path = require("path");
-const { execSync } = require("child_process");
+const { execFileSync } = require("child_process");
 const crypto = require("crypto");
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -96,16 +96,16 @@ function listYamlFiles(dir) {
 
 /** Derive project_id from git remote URL: sha256(url)[0:12] */
 function detectProjectId(cwd) {
+  let url;
   try {
-    const url = execSync("git -C " + JSON.stringify(cwd) + " remote get-url origin 2>/dev/null", {
+    url = execFileSync("git", ["-C", cwd, "remote", "get-url", "origin"], {
       encoding: "utf8",
       timeout: 2000,
+      stdio: ["pipe", "pipe", "pipe"]
     }).trim();
-    if (!url) return null;
-    return crypto.createHash("sha256").update(url).digest("hex").slice(0, 12);
-  } catch {
-    return null;
-  }
+  } catch { url = ""; }
+  if (!url) return null;
+  return crypto.createHash("sha256").update(url).digest("hex").slice(0, 12);
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────
