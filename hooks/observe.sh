@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# CORTEX-MANAGED — do not edit manually, updated by install.sh
 # Cortex Observer — thin wrapper that delegates to observe.py
 # Kept as .sh for backward compatibility with settings.json hook commands
 set -euo pipefail

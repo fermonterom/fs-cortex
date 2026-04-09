@@ -1,4 +1,5 @@
 #!/bin/bash
+# CORTEX-MANAGED — do not edit manually, updated by install.sh
 # Cortex Session Start v2.2 — SessionStart hook
 # Injects Laws + EOD Quick Resume + context.md bridge + maintenance reminders at session start AND after /compact.
 # Reads laws from ~/.claude/cortex/laws/, EOD from daily-summaries/, context.md from project.
@@ -54,6 +55,9 @@ fi
 
 # If no laws found, still provide a header
 [ -z "$CONTEXT" ] && CONTEXT="CORTEX: No laws configured yet. Add .txt files to ~/.claude/cortex/laws/"
+
+# 1b. Lightweight skills hint (~50 tokens)
+CONTEXT="${CONTEXT}\nCortex commands: /cx-status /cx-analyze /cx-dream /cx-distill /cx-validate /cx-evolve /cx-eod /cx-gotcha /cx-audit. Use /cx-status for system state."
 
 # 2. Check for new day
 LAST_DATE=""

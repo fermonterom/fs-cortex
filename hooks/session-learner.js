@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// CORTEX-MANAGED — do not edit manually, updated by install.sh
 // Cortex Session Learner — Stop hook (runs when session ends)
 // Analyzes observations, detects patterns, updates instincts/reflexes, writes proposals + context.
 // Pure Node.js, zero dependencies, no LLM calls.
@@ -8,6 +9,9 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { parseYamlFrontmatter, updateYamlField, listYamlFiles: findYamlFiles } = require(
+  path.join(__dirname, 'lib', 'yaml-utils')
+);
 
 const HOME = process.env.HOME || process.env.USERPROFILE || '/tmp';
 const CORTEX_DIR = path.join(HOME, '.claude', 'cortex');
@@ -106,60 +110,7 @@ function readStdin() {
   });
 }
 
-// -------------------------------------------------------------------
-// YAML helpers (simple frontmatter between --- markers)
-// -------------------------------------------------------------------
-
-function parseYamlFrontmatter(content) {
-  const match = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!match) return null;
-  const fields = {};
-  const body = content.slice(match[0].length);
-  for (const line of match[1].split('\n')) {
-    const m = line.match(/^(\w[\w_-]*)\s*:\s*(.*)/);
-    if (m) {
-      let val = m[2].trim();
-      // Strip surrounding quotes
-      if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-        val = val.slice(1, -1);
-      }
-      // Parse numbers
-      if (/^\d+$/.test(val)) val = parseInt(val, 10);
-      fields[m[1]] = val;
-    }
-  }
-  return { fields, raw: match[1], body, fullMatch: match[0] };
-}
-
-function updateYamlField(content, fieldName, newValue) {
-  const match = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!match) return content;
-  const frontmatter = match[1];
-  const valueStr = typeof newValue === 'number' ? String(newValue) : `"${newValue}"`;
-  const fieldRegex = new RegExp(`^(${fieldName}\\s*:\\s*)(.*)$`, 'm');
-  let updated;
-  if (fieldRegex.test(frontmatter)) {
-    updated = frontmatter.replace(fieldRegex, `$1${valueStr}`);
-  } else {
-    updated = frontmatter + `\n${fieldName}: ${valueStr}`;
-  }
-  return content.replace(match[0], `---\n${updated}\n---`);
-}
-
-function findYamlFiles(dir) {
-  const files = [];
-  try {
-    const entries = fs.readdirSync(dir);
-    for (const entry of entries) {
-      if (entry.endsWith('.yaml') || entry.endsWith('.yml')) {
-        files.push(path.join(dir, entry));
-      }
-    }
-  } catch (e) {
-    if (process.env.CORTEX_DEBUG) process.stderr.write('[cortex:learner] listYaml ' + dir + ': ' + e.message + '\n');
-  }
-  return files;
-}
+// YAML helpers imported from hooks/lib/yaml-utils.js (shared with injector.sh)
 
 // -------------------------------------------------------------------
 // Step 1: Resolve session ID and filter observations
@@ -703,11 +654,20 @@ async function main() {
   }
 }
 
-main().then(() => {
-  clearTimeout(TIMEOUT);
-  process.exit(0);
-}).catch((e) => {
-  log(`Fatal: ${e.message}`);
-  clearTimeout(TIMEOUT);
-  process.exit(0);
-});
+// Export functions for testing when loaded as module
+if (require.main === module) {
+  main().then(() => {
+    clearTimeout(TIMEOUT);
+    process.exit(0);
+  }).catch((e) => {
+    log(`Fatal: ${e.message}`);
+    clearTimeout(TIMEOUT);
+    process.exit(0);
+  });
+} else {
+  module.exports = {
+    isError, extractFilePath, sanitizeProposalAction,
+    detectErrorResolutions, detectRepetitions,
+    detectUserCorrections, detectWorkflowChains,
+  };
+}

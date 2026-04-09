@@ -53,3 +53,6 @@ jobs:
 
       - name: Run session learner tests
         run: bash tests/test_session_learner.sh
+
+      - name: Run injector tests
+        run: bash tests/test_injector.sh

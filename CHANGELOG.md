@@ -4,6 +4,22 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.4.0] — 2026-04-09
+
+### Added
+- **`hooks/lib/yaml-utils.js`**: Shared YAML frontmatter parser — unified `parseFloat` for confidence, eliminates duplicated logic between injector.sh and session-learner.js
+- **`/cx-router`**: Command catalog with token costs per command, session budget estimate, and next-action suggestion
+- **`/cx-promote`**: Cross-project instinct promotion — finds instincts in 2+ projects via Jaccard similarity (>=0.70) and promotes to global scope
+- **`/cx-status` tracking section**: Shows top 10 most activated instincts from `instinct-tracking.json` with count, sessions, first/last seen
+- **`tests/test_injector.sh`**: 14 tests — sanitization, ReDoS, injection limits, CORTEX-MANAGED markers, yaml-utils module
+- **CORTEX-MANAGED marker**: All 5 hook files now have `# CORTEX-MANAGED` on line 2 for reliable detection during upgrades
+- **Skills hint**: Lightweight ~50-token hint injected at SessionStart listing all available `/cx-*` commands
+
+### Changed
+- **session-learner.js**: Imports YAML parsing from shared `hooks/lib/yaml-utils.js` instead of inline implementation; exports functions for testability via `require.main` guard
+- **SKILL.md**: Updated to 14 commands (was 12)
+- **claudemd-section.md**: Added `/cx-router` and `/cx-promote` to command list
+
 ## [3.3.0] — 2026-04-09
 
 ### Security
