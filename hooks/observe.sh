@@ -382,6 +382,15 @@ if [ "$HOOK_PHASE" = "post" ]; then
   fi
 fi
 
+# Atomic obs-count update via tmp+rename
+_update_obs_count() {
+  local count_file="$1"
+  local new_count="$2"
+  local tmp="${count_file}.tmp.$$"
+  echo "$new_count" > "$tmp"
+  mv "$tmp" "$count_file"
+}
+
 # -- Analyze trigger: marker every 50 observations --
 OBS_COUNT_FILE="${CORTEX_DIR}/.obs-count"
 LEARN_THRESHOLD=50
@@ -391,10 +400,10 @@ else
   COUNT=0
 fi
 COUNT=$((COUNT + 1))
-echo "$COUNT" > "$OBS_COUNT_FILE" 2>/dev/null || true
+_update_obs_count "$OBS_COUNT_FILE" "$COUNT" 2>/dev/null || true
 if [ "$COUNT" -ge "$LEARN_THRESHOLD" ]; then
   touch "${CORTEX_DIR}/.learn-pending" 2>/dev/null || true
-  echo "0" > "$OBS_COUNT_FILE" 2>/dev/null || true
+  _update_obs_count "$OBS_COUNT_FILE" "0" 2>/dev/null || true
 fi
 
 exit 0
