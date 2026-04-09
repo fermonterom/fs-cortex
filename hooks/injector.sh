@@ -1,4 +1,5 @@
 #!/bin/bash
+# CORTEX-MANAGED — do not edit manually, updated by install.sh
 # Cortex Injector v2.0 — Unified PreToolUse hook
 # Merges reflex-engine, instinct-activator, and git-guard into a single hook.
 # Reads stdin ONCE, loads all config ONCE, outputs combined context.

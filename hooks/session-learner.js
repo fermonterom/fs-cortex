@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// CORTEX-MANAGED — do not edit manually, updated by install.sh
 // Cortex Session Learner — Stop hook (runs when session ends)
 // Analyzes observations, detects patterns, updates instincts/reflexes, writes proposals + context.
 // Pure Node.js, zero dependencies, no LLM calls.

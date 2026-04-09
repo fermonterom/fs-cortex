@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# CORTEX-MANAGED — do not edit manually, updated by install.sh
 """Cortex observer v3.0 — single-process replacement for observe.sh.
 
 Reads tool use from stdin JSON, applies guards/dedup/scrubbing, writes JSONL.

@@ -1,4 +1,5 @@
 #!/bin/bash
+# CORTEX-MANAGED — do not edit manually, updated by install.sh
 # Cortex Session Start v2.2 — SessionStart hook
 # Injects Laws + EOD Quick Resume + context.md bridge + maintenance reminders at session start AND after /compact.
 # Reads laws from ~/.claude/cortex/laws/, EOD from daily-summaries/, context.md from project.
