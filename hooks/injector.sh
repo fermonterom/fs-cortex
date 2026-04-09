@@ -216,19 +216,23 @@ try {
 
   // ── 3. Parse, filter, match instincts ────────────────────────────────
 
-  const candidates = [];
+  const candidates = [];    // confidence >= 0.30 — will be injected
+  const draftMatches = [];  // confidence < 0.30 — tracked but not injected
   for (const file of instinctFiles) {
     try {
       const content = fs.readFileSync(file, "utf8");
       const inst = parseInstinctYaml(content);
       if (!inst) continue;
-      if (inst.confidence < 0.30) continue;
       // Domain pre-filter: skip instincts for unrelated domains
       if (inst.domain && inst.domain !== "general" && !projectDomains.has(inst.domain)) continue;
       // Project-scoped instincts must match this project
       if (inst.scope === "project" && inst.project_id && projectId && inst.project_id !== projectId) continue;
       if (!safeRegexTest(inst.trigger, matchTarget)) continue;
-      candidates.push({ ...inst, _file: file });
+      if (inst.confidence < 0.30) {
+        draftMatches.push({ ...inst, _file: file });
+      } else {
+        candidates.push({ ...inst, _file: file });
+      }
     } catch (e) {
       if (process.env.CORTEX_DEBUG) process.stderr.write("[cortex:injector] instinct " + file + ": " + e.message + "\n");
     }
@@ -252,24 +256,39 @@ try {
     totalChars += safeAction.length;
   }
 
-  // ── 3b. Occurrence tracking ─────────────────────────────────────────
+  // ── 3b. Occurrence tracking (ALL matches including drafts) ──────────
 
-  if (matchedInstincts.length > 0) {
+  const allMatched = [...matchedInstincts, ...draftMatches];
+  if (allMatched.length > 0) {
     try {
       const TRACKING_FILE = path.join(process.env._CX_CORTEX_DIR, "instinct-tracking.json");
       let tracking = {};
       try { tracking = JSON.parse(fs.readFileSync(TRACKING_FILE, "utf8")); } catch {}
 
-      for (const inst of matchedInstincts) {
+      for (const inst of allMatched) {
         const key = inst.id;
         if (!tracking[key]) tracking[key] = { count: 0, sessions: [], first_seen: new Date().toISOString() };
         tracking[key].count++;
         if (!tracking[key].sessions.includes(hookData.session_id || "")) {
           tracking[key].sessions.push(hookData.session_id || "");
-          // Keep only last 20 session IDs
           if (tracking[key].sessions.length > 20) tracking[key].sessions = tracking[key].sessions.slice(-20);
         }
         tracking[key].last_seen = new Date().toISOString();
+
+        // Auto-promote drafts: 5+ activations across 3+ sessions → confidence 0.35
+        if (inst.confidence < 0.30 && inst._file &&
+            tracking[key].count >= 5 && tracking[key].sessions.length >= 3) {
+          try {
+            let content = fs.readFileSync(inst._file, "utf8");
+            const confMatch = content.match(/^confidence:\s*["']?([^"'\n]+)/m);
+            if (confMatch && parseFloat(confMatch[1]) < 0.30) {
+              content = content.replace(/^(confidence:\s*).*$/m, "$10.35");
+              const tmp2 = inst._file + ".tmp." + process.pid;
+              fs.writeFileSync(tmp2, content, { mode: 0o600 });
+              fs.renameSync(tmp2, inst._file);
+            }
+          } catch {}
+        }
       }
 
       const tmp = TRACKING_FILE + ".tmp." + process.pid;
