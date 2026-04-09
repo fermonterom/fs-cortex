@@ -99,7 +99,23 @@ SYSTEM HEALTH:
   memory.json:           [populated/empty/missing]
 ```
 
-### Step 6: Evolved Content
+### Step 6: Instinct Tracking (activation stats)
+
+Read `~/.claude/cortex/instinct-tracking.json` if it exists.
+
+Display the top 10 most activated instincts:
+
+```
+INSTINCT TRACKING (top 10 by activations):
+  ID                          COUNT   SESSIONS   FIRST SEEN     LAST SEEN
+  gotcha-rls-silent-fail      47      12         2026-03-15     2026-04-09
+  pattern-test-after-change   38      15         2026-03-20     2026-04-09
+  pref-touch-visible-buttons  22      8          2026-03-25     2026-04-08
+```
+
+If no tracking file exists, display: "No tracking data yet. Instinct tracking starts automatically on next tool use."
+
+### Step 7: Evolved Content
 
 Count files in each evolved directory:
 
@@ -125,7 +141,8 @@ Use clean ASCII box format:
   [Section 3: Projects]
   [Section 4: Reflexes]
   [Section 5: System Health]
-  [Section 6: Evolved]
+  [Section 6: Instinct Tracking]
+  [Section 7: Evolved]
 
 ================================================================
   Total: N laws | N instincts (N project + N global) | N projects
