@@ -100,16 +100,16 @@ fi
 
 # Validate reminder: if there are pending proposals
 if [ -f "$CORTEX_DIR/proposals.json" ] && [ -n "$PYTHON_CMD" ]; then
-  _PENDING=$("$PYTHON_CMD" -c "
-import json
+  _PENDING=$(CORTEX_DIR="$CORTEX_DIR" "$PYTHON_CMD" -c '
+import json, os
 try:
-    with open('$CORTEX_DIR/proposals.json') as f:
+    with open(os.path.join(os.environ["CORTEX_DIR"], "proposals.json")) as f:
         p = json.load(f)
-    pending = [x for x in p if x.get('status','pending') == 'pending']
+    pending = [x for x in p if x.get("status","pending") == "pending"]
     print(len(pending))
 except:
     print(0)
-" 2>/dev/null || echo "0")
+' 2>/dev/null || echo "0")
   if [ "$_PENDING" -gt 0 ]; then
     CONTEXT="${CONTEXT}\n\n📋 ${_PENDING} pending proposals. Run /cx-validate to review."
   fi

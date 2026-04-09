@@ -87,7 +87,13 @@ esac
 
 # -- Dedup: Skip exact duplicates within session --
 SESSION_ID=$(echo "$INPUT_JSON" | "$PYTHON_CMD" -c "import json,sys,re; sid=json.load(sys.stdin).get('session_id','unknown'); print(re.sub(r'[^a-zA-Z0-9_-]','',sid))" 2>/dev/null || echo "unknown")
-DEDUP_FILE="${TMPDIR:-/tmp}/cortex-dedup-${SESSION_ID}"
+
+# Use per-user dedup dir with auto-cleanup
+DEDUP_DIR="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/cortex-${UID:-$(id -u)}"
+mkdir -p "$DEDUP_DIR" && chmod 700 "$DEDUP_DIR"
+# Cleanup old dedup files (>24h)
+find "$DEDUP_DIR" -name "dedup-*" -mmin +1440 -delete 2>/dev/null || true
+DEDUP_FILE="${DEDUP_DIR}/dedup-${SESSION_ID}"
 
 # Compute hash of tool+input for dedup
 _INPUT_HASH=$(echo "$INPUT_JSON" | "$PYTHON_CMD" -c "
@@ -249,15 +255,7 @@ if [ "$PARSED_OK" != "True" ]; then
   exit 0
 fi
 
-# -- Archive if file too large --
-if [ -f "$OBSERVATIONS_FILE" ]; then
-  file_size_mb=$(du -m "$OBSERVATIONS_FILE" 2>/dev/null | cut -f1)
-  if [ "${file_size_mb:-0}" -ge "$MAX_FILE_SIZE_MB" ]; then
-    archive_dir="${PROJECT_DIR}/observations.archive"
-    mkdir -p "$archive_dir"
-    mv "$OBSERVATIONS_FILE" "$archive_dir/observations-$(date +%Y%m%d-%H%M%S)-$$.jsonl" 2>/dev/null || true
-  fi
-fi
+# -- Archive check moved into _archive_and_write (atomic under lock) --
 
 # -- Write observation (with secret scrubbing) --
 timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -330,29 +328,51 @@ if parsed.get("output") is not None:
 print(json.dumps(observation))
 ' 2>/dev/null || echo "")
 
-# Write with file locking for concurrent safety
-_write_observation() {
+# Atomic archive-check + write under a single lock
+_archive_and_write() {
   local obs="$1"
   local target="$2"
+  local max_mb="$3"
+  local lockfile="${target}.lock"
+
   if command -v flock >/dev/null 2>&1; then
-    (flock -w 10 200 && echo "$obs" >> "$target") 200>"${target}.lock"
+    (
+      flock -w 10 200 || exit 1
+      # Check size inside lock
+      local size_mb
+      size_mb=$(( $(stat -f%z "$target" 2>/dev/null || stat -c%s "$target" 2>/dev/null || echo 0) / 1048576 ))
+      if [ "$size_mb" -ge "$max_mb" ]; then
+        local archive_dir="${target%/*}/observations.archive"
+        mkdir -p "$archive_dir"
+        mv "$target" "$archive_dir/observations-$(date +%Y%m%d-%H%M%S)-$$.jsonl" 2>/dev/null || true
+      fi
+      echo "$obs" >> "$target"
+    ) 200>"$lockfile"
   else
-    # macOS: use perl Fcntl flock (always available on macOS)
+    # macOS: perl fallback with same archive+write logic
     perl -e '
         use Fcntl qw(:flock);
-        my ($obs, $target) = @ARGV;
+        my ($obs, $target, $max_mb) = @ARGV;
         open(my $lock, ">>", "$target.lock") or die "Cannot open lock: $!";
         flock($lock, LOCK_EX) or die "Cannot lock: $!";
+        my $size = -s $target || 0;
+        if ($size / 1048576 >= $max_mb) {
+            my $archive_dir = $target;
+            $archive_dir =~ s|/[^/]+$||;
+            $archive_dir .= "/observations.archive";
+            mkdir $archive_dir unless -d $archive_dir;
+            rename($target, "$archive_dir/observations-" . time() . "-$$.jsonl");
+        }
         open(my $fh, ">>", $target) or die "Cannot open $target: $!";
         print $fh "$obs\n";
         close($fh);
         flock($lock, LOCK_UN);
         close($lock);
-    ' "$obs" "$target"
+    ' "$obs" "$target" "$max_mb"
   fi
 }
 
-[ -n "$OBS_LINE" ] && _write_observation "$OBS_LINE" "$OBSERVATIONS_FILE"
+[ -n "$OBS_LINE" ] && _archive_and_write "$OBS_LINE" "$OBSERVATIONS_FILE" "$MAX_FILE_SIZE_MB"
 
 # -- Watchdog: proactive alerts on critical errors --
 if [ "$HOOK_PHASE" = "post" ]; then
@@ -361,6 +381,15 @@ if [ "$HOOK_PHASE" = "post" ]; then
     echo "[cortex-watchdog] Critical error detected in output. Consider capturing it." >&2
   fi
 fi
+
+# Atomic obs-count update via tmp+rename
+_update_obs_count() {
+  local count_file="$1"
+  local new_count="$2"
+  local tmp="${count_file}.tmp.$$"
+  echo "$new_count" > "$tmp"
+  mv "$tmp" "$count_file"
+}
 
 # -- Analyze trigger: marker every 50 observations --
 OBS_COUNT_FILE="${CORTEX_DIR}/.obs-count"
@@ -371,10 +400,10 @@ else
   COUNT=0
 fi
 COUNT=$((COUNT + 1))
-echo "$COUNT" > "$OBS_COUNT_FILE" 2>/dev/null || true
+_update_obs_count "$OBS_COUNT_FILE" "$COUNT" 2>/dev/null || true
 if [ "$COUNT" -ge "$LEARN_THRESHOLD" ]; then
   touch "${CORTEX_DIR}/.learn-pending" 2>/dev/null || true
-  echo "0" > "$OBS_COUNT_FILE" 2>/dev/null || true
+  _update_obs_count "$OBS_COUNT_FILE" "0" 2>/dev/null || true
 fi
 
 exit 0
