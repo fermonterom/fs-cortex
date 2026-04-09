@@ -254,9 +254,9 @@ def update_dedup(dedup_file, input_hash):
 # ── Archive ──────────────────────────────────────────────────────────
 
 def archive_if_needed(obs_file, max_mb=None):
+    """Archive observations file if it exceeds max_mb."""
     if max_mb is None:
         max_mb = MAX_FILE_SIZE_MB
-    """Archive observations file if it exceeds max_mb."""
     try:
         size = os.path.getsize(obs_file)
     except OSError:
@@ -273,9 +273,9 @@ def archive_if_needed(obs_file, max_mb=None):
 
 
 def auto_purge(project_dir, days=None):
+    """Purge archived observations older than N days."""
     if days is None:
         days = ARCHIVE_DAYS
-    """Purge archived observations older than N days."""
     purge_marker = os.path.join(project_dir, ".last-purge")
     try:
         if os.path.exists(purge_marker):
