@@ -25,9 +25,14 @@ command -v node >/dev/null 2>&1 || exit 0
 _CX_INPUT_FILE=$(mktemp "${TMPDIR:-/tmp}/cx-input-XXXXXX")
 chmod 600 "$_CX_INPUT_FILE"
 echo "$INPUT_JSON" > "$_CX_INPUT_FILE"
-trap "rm -f '$_CX_INPUT_FILE'" EXIT
+trap 'rm -f "'"$_CX_INPUT_FILE"'"' EXIT
 
 export _CX_INPUT_FILE
+# Validate CORTEX_DIR is under real home directory
+_REAL_HOME=$(eval echo ~"$(whoami)" 2>/dev/null || echo "$HOME")
+if [[ "$CORTEX_DIR" != "$_REAL_HOME/.claude/cortex" ]]; then
+  exit 0  # Refuse to run with non-standard CORTEX_DIR
+fi
 export _CX_CORTEX_DIR="$CORTEX_DIR"
 export _CX_REFLEXES_FILE="$REFLEXES_FILE"
 export _CX_GLOBAL_INSTINCTS_DIR="$GLOBAL_INSTINCTS_DIR"
