@@ -48,9 +48,27 @@ function sanitizeInjection(text, maxLen) {
   return clean;
 }
 
-/** Safe regex test — returns false on invalid pattern */
+/** Check if a regex pattern is safe (no ReDoS risk) */
+function isSafeRegex(pattern) {
+  if (typeof pattern !== "string" || pattern.length > 100) return false;
+  // Ban nested quantifiers: (a+)+ , (a*)* , (a+)*
+  if (/\([^)]*[+*]\)[+*?]/.test(pattern)) return false;
+  // Ban excessive alternations
+  if ((pattern.match(/\|/g) || []).length > 5) return false;
+  // Test with timeout
+  try {
+    const re = new RegExp(pattern);
+    const start = Date.now();
+    re.test("a".repeat(100));
+    if (Date.now() - start > 50) return false;
+  } catch { return false; }
+  return true;
+}
+
+/** Safe regex test — returns false on invalid or unsafe pattern */
 function safeRegexTest(pattern, text) {
   try {
+    if (!isSafeRegex(pattern)) return false;
     return new RegExp(pattern, "i").test(text);
   } catch {
     return false;
