@@ -157,8 +157,8 @@ try {
         matchedReflexes.push({ id: r.id, action: r.action, severity: r.severity || "medium" });
         if (matchedReflexes.length >= 2) break; // max 2 reflexes
       }
-    } catch {
-      // Invalid reflexes.json — skip
+    } catch (e) {
+      if (process.env.CORTEX_DEBUG) process.stderr.write("[cortex:injector] reflexes: " + e.message + "\n");
     }
   }
 
@@ -192,8 +192,8 @@ try {
       if (inst.scope === "project" && inst.project_id && projectId && inst.project_id !== projectId) continue;
       if (!safeRegexTest(inst.trigger, matchTarget)) continue;
       candidates.push(inst);
-    } catch {
-      // Invalid file — skip
+    } catch (e) {
+      if (process.env.CORTEX_DEBUG) process.stderr.write("[cortex:injector] instinct " + file + ": " + e.message + "\n");
     }
   }
 
@@ -237,8 +237,8 @@ try {
 
   process.stdout.write(JSON.stringify(output) + "\n");
 
-} catch {
-  // Graceful failure — never block Claude
+} catch (e) {
+  if (process.env.CORTEX_DEBUG) process.stderr.write("[cortex:injector] fatal: " + e.message + "\n");
   process.exit(0);
 }
 ' 2>/dev/null
