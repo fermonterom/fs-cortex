@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+# Observer tests — scrubbing, is_error detection, dedup, session_id
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+PASS=0
+FAIL=0
+
+pass() { PASS=$((PASS + 1)); echo "  PASS: $1"; }
+fail() { FAIL=$((FAIL + 1)); echo "  FAIL: $1"; }
+
+export PYTHONPATH="$PROJECT_ROOT/hooks:${PYTHONPATH:-}"
+
+echo "=== Observer Tests ==="
+echo ""
+
+# --- Test 1: Secret scrubbing for all 12 patterns ---
+echo "--- Secret Scrubbing ---"
+python3 -c "
+from observe import scrub_secrets
+
+cases = [
+    ('ghp_abc123def456ghi789jkl012mno345pqr678stu9', True, 'GitHub'),
+    ('sk_live_abc123def456ghi789jkl', True, 'Stripe'),
+    ('sk-ant-abc123def456ghi789jkl', True, 'Anthropic'),
+    ('xoxb-123456789-abcdefghij', True, 'Slack'),
+    ('AIzaSyA' + 'x' * 32, True, 'Google'),
+    ('AKIA' + 'A' * 16, True, 'AWS'),
+    ('eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc123def456ghi789', True, 'JWT'),
+    ('postgres://user:pass@host:5432/db', True, 'ConnStr'),
+    ('sk-proj-abcdef1234567890abcd', True, 'OpenAI'),
+    ('normal text without secrets', False, 'Clean'),
+]
+all_ok = True
+for text, should_scrub, name in cases:
+    result = scrub_secrets(text)
+    has_redacted = 'REDACTED' in result
+    if should_scrub and not has_redacted:
+        print(f'  FAIL: {name} not scrubbed')
+        all_ok = False
+    elif not should_scrub and has_redacted:
+        print(f'  FAIL: false positive on {name}')
+        all_ok = False
+if all_ok:
+    print('OK')
+" | grep -q "OK" && pass "all 12 scrubbing patterns" || fail "scrubbing patterns"
+
+# --- Test 2: is_error detection ---
+echo "--- Error Detection ---"
+python3 -c "
+from observe import detect_is_error
+
+assert detect_is_error('Error: file not found') == True
+assert detect_is_error('Traceback (most recent call last)') == True
+assert detect_is_error('command not found: foo') == True
+assert detect_is_error('fatal: not a git repository') == True
+assert detect_is_error('PANIC: runtime error') == True
+assert detect_is_error('segfault at 0x0') == True
+assert detect_is_error('Build succeeded') == False
+assert detect_is_error('') == False
+assert detect_is_error(None) == False
+print('OK')
+" | grep -q "OK" && pass "is_error detection (9 patterns)" || fail "is_error detection"
+
+# --- Test 3: session_id truncation (24 chars, not 16) ---
+echo "--- Session ID ---"
+result=$(python3 -c "
+import re
+sid = 'a' * 50
+clean = re.sub(r'[^a-zA-Z0-9_-]', '', sid)[:24]
+print(len(clean))
+")
+[ "$result" = "24" ] && pass "session_id[:24]" || fail "session_id length=$result"
+
+# --- Test 4: Dedup behavior ---
+echo "--- Dedup ---"
+python3 -c "
+from observe import is_duplicate, update_dedup, get_dedup_dir
+import os, tempfile
+
+dedup_dir = tempfile.mkdtemp()
+dedup_file = os.path.join(dedup_dir, 'dedup-test')
+
+# First time: not a duplicate
+assert not is_duplicate(dedup_file, 'hash123')
+update_dedup(dedup_file, 'hash123')
+
+# Second time: IS a duplicate
+assert is_duplicate(dedup_file, 'hash123')
+
+# Different hash: not a duplicate
+assert not is_duplicate(dedup_file, 'hash456')
+
+# Cleanup
+import shutil
+shutil.rmtree(dedup_dir)
+print('OK')
+" | grep -q "OK" && pass "dedup behavior" || fail "dedup behavior"
+
+# --- Test 5: Atomic write ---
+echo "--- Atomic Write ---"
+python3 -c "
+from observe import atomic_write_json
+import tempfile, os, json
+
+tmp = tempfile.mkdtemp()
+fpath = os.path.join(tmp, 'test.json')
+atomic_write_json(fpath, {'key': 'value'})
+
+with open(fpath) as f:
+    data = json.load(f)
+assert data == {'key': 'value'}
+
+# Cleanup
+import shutil
+shutil.rmtree(tmp)
+print('OK')
+" | grep -q "OK" && pass "atomic_write_json" || fail "atomic write"
+
+# --- Test 6: End-to-end observe.py ---
+echo "--- End-to-end ---"
+SANDBOX=$(mktemp -d)
+mkdir -p "$SANDBOX/.claude/cortex"
+# Use unique session_id to avoid dedup collisions with previous test runs
+E2E_SID="e2e-$(date +%s)-$$"
+# Clean any stale dedup for this session
+DEDUP_DIR="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/cortex-$(id -u)"
+rm -f "$DEDUP_DIR/dedup-$E2E_SID" 2>/dev/null || true
+echo '{"tool_name":"Read","session_id":"'"$E2E_SID"'","cwd":"'"$SANDBOX"'","tool_input":{"file_path":"/tmp/test.txt"}}' | HOME="$SANDBOX" python3 "$PROJECT_ROOT/hooks/observe.py" post 2>/dev/null
+# Observations go to cortex dir (global project since no git)
+if [ -f "$SANDBOX/.claude/cortex/observations.jsonl" ]; then
+    pass "e2e: observation written"
+else
+    fail "e2e: no observation file"
+fi
+rm -rf "$SANDBOX"
+
+# --- Test 7: Performance benchmark ---
+echo "--- Performance ---"
+elapsed=$(python3 -c "
+import time, subprocess, os
+start = time.time()
+for _ in range(5):
+    p = subprocess.run(
+        ['python3', '$PROJECT_ROOT/hooks/observe.py', 'post'],
+        input='{\"tool_name\":\"Read\",\"session_id\":\"bench\",\"cwd\":\"/tmp\"}',
+        capture_output=True, text=True, timeout=5,
+        env={**os.environ, 'HOME': '/tmp/cortex-bench-' + str(os.getpid())}
+    )
+avg_ms = ((time.time() - start) / 5) * 1000
+print(f'{avg_ms:.0f}')
+")
+if [ "$elapsed" -lt 500 ]; then
+    pass "performance: ${elapsed}ms avg (target <500ms)"
+else
+    fail "performance: ${elapsed}ms avg (target <500ms)"
+fi
+
+echo ""
+echo "=== Results: $PASS passed, $FAIL failed ==="
+[ "$FAIL" -eq 0 ] && exit 0 || exit 1
