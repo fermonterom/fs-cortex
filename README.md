@@ -250,7 +250,7 @@ Backups include: laws, instincts, memory, reflexes, evolved content, proposals, 
 | Laws (max 10) | ~300 | SessionStart (1x) |
 | EOD resume | ~150 | SessionStart (1x per EOD, not repeated) |
 | Context bridge | ~100 | SessionStart (1x) |
-| Instincts (max 2) | ~80 | PreToolUse (if match) |
+| Instincts (max 3) | ~120 | PreToolUse (if match) |
 | Reflexes (max 2) | ~40 | PreToolUse (if match) |
 | **Session total** | **~1,750** | **Estimated** |
 

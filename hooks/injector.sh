@@ -5,7 +5,7 @@
 # Reads stdin ONCE, loads all config ONCE, outputs combined context.
 #
 # Pipeline: stdin JSON -> node inline script -> matched reflexes + instincts -> JSON output
-# Limits: max 2 reflexes + max 2 instincts per injection, domain dedup on instincts
+# Limits: max 2 reflexes + max 3 instincts per injection, domain dedup on instincts
 # Safety: exits 0 silently on any error (never blocks Claude)
 
 set -e
