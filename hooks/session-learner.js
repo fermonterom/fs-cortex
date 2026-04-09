@@ -36,9 +36,17 @@ const TIMEOUT = setTimeout(() => {
 // Utilities
 // -------------------------------------------------------------------
 
+const MAX_LOG_BYTES = 512 * 1024; // 512KB
+
 function log(msg) {
   try {
     ensureDir(LOG_DIR);
+    // Rotate if oversized
+    try {
+      if (fs.existsSync(LOG_PATH) && fs.statSync(LOG_PATH).size > MAX_LOG_BYTES) {
+        fs.renameSync(LOG_PATH, LOG_PATH + '.1');
+      }
+    } catch (_) {}
     const line = `[${now()}] ${msg}\n`;
     fs.appendFileSync(LOG_PATH, line);
   } catch (_) {
@@ -249,12 +257,12 @@ function detectErrorResolutions(observations) {
 }
 
 function isError(obs) {
-  // Check explicit err field
+  // Check explicit err field (set by observe.py)
   if (obs.err === true) return true;
-  // Check output for common error patterns
+  // Check output — patterns aligned with observe.py ERROR_PATTERNS
   const output = String(obs.output || '');
   if (!output) return false;
-  return /\b(error|Error|ERROR|ENOENT|EACCES|EPERM|failed|Failed|FAILED|exception|Exception|denied|not found|No such file)\b/.test(output);
+  return /(?:^|\s)error[:\s]|(?:^|\s)failed(?!\s*:\s*0)|\bexception\b|\btraceback\b|\bfatal\b|(?:^|\s)panic[:(]|\bsegfault\b|\bOOM\b|\bcommand not found\b|\bENOENT\b|\bEACCES\b|\bEPERM\b/im.test(output);
 }
 
 // -------------------------------------------------------------------
