@@ -113,16 +113,18 @@ Open Claude Code and work normally. Cortex works automatically:
 5. **Session learner runs at close** — detects patterns, writes proposals
 6. Every ~50 tool calls, you'll see: *"Run `/cx-analyze` to detect patterns"*
 
-## Commands (12)
+## Commands (14)
 
 | Command | What it does |
 |---------|-------------|
-| `/cx-status` | Dashboard: laws, instincts, projects, reflexes, health |
+| `/cx-status` | Dashboard: laws, instincts, projects, reflexes, tracking, health |
 | `/cx-analyze` | Detect patterns in observations → proposals (with descriptions) |
 | `/cx-distill` | Distill laws (universality gate), decay, Jaccard promotions |
 | `/cx-validate` | Review proposals with Claude verdicts + shorthand input |
 | `/cx-evolve` | Cluster instincts → skills/commands/rules (checks existing skills) |
 | `/cx-dream` | Dream Cycle: dedup, contradictions, staleness, regex validation, health score |
+| `/cx-router` | Command catalog with token costs and next action suggestion |
+| `/cx-promote` | Promote project instincts to global (cross-project, Jaccard ≥0.70) |
 | `/cx-audit` | Token overhead, duplicates, conflicts, cleanup |
 | `/cx-eod` | End-of-day summary, saves context for next session |
 | `/cx-gotcha` | Capture error→fix as high-priority instinct |
@@ -275,11 +277,12 @@ Key measures in v3.0:
 ## Tests
 
 ```bash
-bash tests/run_all.sh             # Run all 4 suites (47 tests)
+bash tests/run_all.sh             # Run all 5 suites (61 tests)
 bash tests/test_security.sh       # 7 security regression tests
 bash tests/test_dream_cycle.sh    # 26 dream cycle tests
 bash tests/test_observe.sh        # 7 observer tests (scrubbing, is_error, dedup, perf)
 bash tests/test_session_learner.sh # 7 session learner tests (detectors, proposals)
+bash tests/test_injector.sh       # 14 injector tests (sanitization, ReDoS, limits, markers)
 ```
 
 All suites run automatically on `git push` to main (pre-push hook) and on every PR via GitHub Actions CI (macOS + Linux, Python 3.9/3.12, Node 18/22).
