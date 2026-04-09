@@ -4,6 +4,7 @@
 # Reads laws from ~/.claude/cortex/laws/, EOD from daily-summaries/, context.md from project.
 
 set -e
+umask 077
 
 # Sanitization function — strip instruction overrides from injected text
 _sanitize_injection() {
