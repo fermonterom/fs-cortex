@@ -244,6 +244,16 @@ function resolveProjectAndObservations(stdinData) {
 }
 
 // -------------------------------------------------------------------
+// Sanitize text used in proposal actions against prompt injection
+function sanitizeProposalAction(text) {
+  const BLOCKED = /\b(ignore|forget|override|disregard|bypass|system\s*:|you\s+are|all\s+previous|new\s+instructions|do\s+not\s+follow)\b/gi;
+  return String(text)
+    .replace(/[\x00-\x1f\x7f]/g, '')
+    .replace(BLOCKED, '[BLOCKED]')
+    .slice(0, 300);
+}
+
+// -------------------------------------------------------------------
 // Step 2: Detect error-resolution pairs
 // -------------------------------------------------------------------
 
@@ -271,7 +281,7 @@ function detectErrorResolutions(observations) {
         proposals.push({
           id: `gotcha-${errorTool}-${hash}`,
           trigger: errorTool,
-          action: `When ${errorTool} fails with similar pattern, try: ${fixSummary}`,
+          action: `When ${sanitizeProposalAction(errorTool)} fails with similar pattern, try: ${sanitizeProposalAction(fixSummary)}`,
           confidence: 0.40,
           domain: 'error-recovery',
           source: 'session-learner:error-fix',
@@ -321,7 +331,7 @@ function detectRepetitions(observations) {
       proposals.push({
         id: `repeat-${data.tool}-${hash}`,
         trigger: data.tool,
-        action: `Repetition detected: ${data.tool} called ${data.count}x with similar input`,
+        action: `Repetition detected: ${sanitizeProposalAction(data.tool)} called ${data.count}x with similar input`,
         confidence: 0.3,
         domain: 'workflow',
         source: 'session-learner',
@@ -364,7 +374,7 @@ function detectUserCorrections(observations) {
       corrections.push({
         id: `correction-${hash}`,
         trigger: `Edit.*${path.basename(file).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
-        action: `User corrected edits to ${path.basename(file)} (${edits.length} times). Review pattern.`,
+        action: `User corrected edits to ${sanitizeProposalAction(path.basename(file))} (${edits.length} times). Review pattern.`,
         confidence: 0.50,
         domain: 'user-preference',
         source: 'session-learner:correction',
@@ -402,7 +412,7 @@ function detectWorkflowChains(observations, minCount) {
       return {
         id: `workflow-${hash}`,
         trigger: chain.split('->')[0],
-        action: `Common workflow detected: ${chain} (${count} times)`,
+        action: `Common workflow detected: ${sanitizeProposalAction(chain)} (${count} times)`,
         confidence: Math.min(0.60, 0.30 + count * 0.05),
         domain: 'workflow',
         source: 'session-learner:workflow',
@@ -446,7 +456,18 @@ function updateInstincts(observations) {
       const parsed = parseYamlFrontmatter(content);
       if (!parsed || !parsed.fields.trigger) continue;
 
-      const triggerRegex = new RegExp(parsed.fields.trigger);
+      // ReDoS guard (matching injector.sh's isSafeRegex pattern)
+      const trigger = parsed.fields.trigger;
+      if (typeof trigger !== 'string' || trigger.length > 100) continue;
+      if (/\([^)]*[+*]\)[+*?]/.test(trigger)) continue;
+      let triggerRegex;
+      try {
+        triggerRegex = new RegExp(trigger);
+        const start = Date.now();
+        triggerRegex.test('a'.repeat(100));
+        if (Date.now() - start > 50) continue;
+      } catch { continue; }
+
       let matched = false;
       for (const toolName of toolNames) {
         if (triggerRegex.test(toolName)) {
@@ -489,6 +510,8 @@ function updateReflexes(observations) {
   for (const reflex of reflexData.reflexes) {
     if (!reflex.matcher) continue;
     try {
+      // ReDoS guard
+      if (reflex.matcher.length > 100 || /\([^)]*[+*]\)[+*?]/.test(reflex.matcher)) continue;
       const matcherRe = new RegExp(reflex.matcher);
       let matched = false;
 
@@ -497,6 +520,7 @@ function updateReflexes(observations) {
 
         // Check condition if present
         if (reflex.condition) {
+          if (reflex.condition.length > 100 || /\([^)]*[+*]\)[+*?]/.test(reflex.condition)) continue;
           const condRe = new RegExp(reflex.condition, 'i');
           if (!condRe.test(toolInputs[i] || '')) continue;
         }

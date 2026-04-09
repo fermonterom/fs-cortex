@@ -20,8 +20,13 @@ INPUT_JSON=$(cat)
 # Require node — exit silently if unavailable
 command -v node >/dev/null 2>&1 || exit 0
 
-# Export config paths and stdin data as env vars (read once, used by node)
-export _CX_INPUT="$INPUT_JSON"
+# Write hook payload to temp file (avoids exposing full payload in env/proc)
+_CX_INPUT_FILE=$(mktemp "${TMPDIR:-/tmp}/cx-input-XXXXXX")
+chmod 600 "$_CX_INPUT_FILE"
+echo "$INPUT_JSON" > "$_CX_INPUT_FILE"
+trap "rm -f '$_CX_INPUT_FILE'" EXIT
+
+export _CX_INPUT_FILE
 export _CX_CORTEX_DIR="$CORTEX_DIR"
 export _CX_REFLEXES_FILE="$REFLEXES_FILE"
 export _CX_GLOBAL_INSTINCTS_DIR="$GLOBAL_INSTINCTS_DIR"
@@ -129,7 +134,7 @@ function detectProjectId(cwd) {
 // ── Main ─────────────────────────────────────────────────────────────────
 
 try {
-  const hookData = JSON.parse(process.env._CX_INPUT);
+  const hookData = JSON.parse(fs.readFileSync(process.env._CX_INPUT_FILE, "utf8"));
   const toolName = hookData.tool_name || "";
   const toolInput = hookData.tool_input || {};
   const toolInputStr = typeof toolInput === "object" ? JSON.stringify(toolInput) : String(toolInput);
