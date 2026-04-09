@@ -43,7 +43,7 @@ CONNSTR_RE = re.compile(r"(postgres|mysql|mongodb|redis)://[^\s]{10,}")
 GOOGLE_RE = re.compile(r"AIza[A-Za-z0-9_-]{35}")
 SLACK_RE = re.compile(r"xox[bpsa]-[A-Za-z0-9-]{10,}")
 ANTHROPIC_RE = re.compile(r"sk-ant-[A-Za-z0-9_-]{20,}")
-OPENAI_RE = re.compile(r"sk-[A-Za-z0-9]{20,}")
+OPENAI_RE = re.compile(r"sk-[A-Za-z0-9_-]{20,}")
 
 
 def scrub_secrets(val):
