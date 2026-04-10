@@ -1,6 +1,9 @@
 # fs-cortex — Continuous Learning for Claude Code
 
-[![Latest Release](https://img.shields.io/github/v/tag/fermonterom/fs-cortex?label=version&sort=semver)](https://github.com/fermonterom/fs-cortex/releases)
+[![version](https://img.shields.io/github/v/tag/fermonterom/fs-cortex?label=version&sort=semver&color=44cc11)](https://github.com/fermonterom/fs-cortex/releases)
+[![tests](https://img.shields.io/badge/tests-159%20passing-44cc11)](https://github.com/fermonterom/fs-cortex/actions)
+[![CI](https://img.shields.io/github/actions/workflow/status/fermonterom/fs-cortex/test.yml?label=CI&logo=github)](https://github.com/fermonterom/fs-cortex/actions)
+[![license](https://img.shields.io/github/license/fermonterom/fs-cortex?color=blue)](LICENSE)
 
 > Your AI assistant learns from every session. Automatically.
 
