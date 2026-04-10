@@ -78,7 +78,7 @@ def scrub_secrets(val):
     return s
 
 
-# ── Error Detection (9 patterns from Sinapsis) ──────────────────────
+# ── Error Detection (9 patterns — keep aligned with session-learner.js isError()) ──
 
 ERROR_PATTERNS = [
     re.compile(r"(?:^|\s)error[:\s]", re.I | re.M),          # "error:" not "ErrorBoundary"

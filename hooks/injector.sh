@@ -86,42 +86,27 @@ function safeRegexTest(pattern, text) {
   }
 }
 
-/** Parse YAML frontmatter from instinct file (no npm deps).
- *  Extracts: id, trigger, action, confidence, domain, scope, project_id */
+// Import shared YAML utilities (used by session-learner.js too)
+const yamlUtils = require(path.join(__dirname, 'lib', 'yaml-utils'));
+
+/** Parse instinct YAML using shared yaml-utils module */
 function parseInstinctYaml(content) {
-  const match = content.match(/^---\s*\n([\s\S]*?)\n---/);
-  if (!match) return null;
-  const block = match[1];
-  const get = (key) => {
-    const m = block.match(new RegExp("^" + key + ":\\s*\"?([^\"\\n]+)\"?", "m"));
-    return m ? m[1].trim() : null;
-  };
-  const id = get("id");
-  const trigger = get("trigger");
-  const action = get("action");
-  if (!id || !trigger || !action) return null;
-  const conf = parseFloat(get("confidence") || "0");
+  const r = yamlUtils.parseYamlFrontmatter(content);
+  if (!r || !r.fields.id || !r.fields.trigger || !r.fields.action) return null;
+  const conf = typeof r.fields.confidence === 'number' ? r.fields.confidence : parseFloat(r.fields.confidence || '0');
   return {
-    id,
-    trigger,
-    action,
+    id: r.fields.id,
+    trigger: String(r.fields.trigger),
+    action: String(r.fields.action),
     confidence: isNaN(conf) ? 0 : conf,
-    domain: get("domain") || "general",
-    scope: get("scope") || "global",
-    project_id: get("project_id") || null,
+    domain: r.fields.domain || 'general',
+    scope: r.fields.scope || 'global',
+    project_id: r.fields.project_id || null,
   };
 }
 
 /** Collect .yaml files from a directory (non-recursive) */
-function listYamlFiles(dir) {
-  try {
-    return fs.readdirSync(dir)
-      .filter((f) => f.endsWith(".yaml") || f.endsWith(".yml"))
-      .map((f) => path.join(dir, f));
-  } catch {
-    return [];
-  }
-}
+const listYamlFiles = yamlUtils.listYamlFiles;
 
 /** Derive project_id + root from git remote URL: sha256(url)[0:12] */
 function detectProject(cwd) {
