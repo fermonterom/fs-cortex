@@ -7,6 +7,11 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 PASS=0
 FAIL=0
 
+# Track sandboxes for cleanup on failure
+SANDBOXES=()
+cleanup() { for s in "${SANDBOXES[@]}"; do rm -rf "$s" 2>/dev/null; done; }
+trap cleanup EXIT
+
 pass() { PASS=$((PASS + 1)); echo "  PASS: $1"; }
 fail() { FAIL=$((FAIL + 1)); echo "  FAIL: $1"; }
 
@@ -17,6 +22,7 @@ echo ""
 
 echo "--- Fresh Install ---"
 SANDBOX=$(mktemp -d)
+SANDBOXES+=("$SANDBOX")
 mkdir -p "$SANDBOX/.claude"
 
 # Run installer (auto-answer prompts with empty input)

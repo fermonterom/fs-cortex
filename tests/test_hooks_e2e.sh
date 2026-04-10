@@ -12,7 +12,7 @@ fail() { FAIL=$((FAIL + 1)); echo "  FAIL: $1"; }
 
 # Create a complete sandbox Cortex installation
 SANDBOX=$(mktemp -d)
-trap "rm -rf $SANDBOX" EXIT
+trap "rm -rf '$SANDBOX'" EXIT
 
 mkdir -p "$SANDBOX/.claude/cortex/laws" \
          "$SANDBOX/.claude/cortex/instincts/global" \
@@ -308,6 +308,23 @@ if (files.length < 1) throw new Error('No yaml files found');
 
 console.log('OK');
 " 2>/dev/null | grep -q OK && pass "yaml-utils.js: parse + update + list work" || fail "yaml-utils.js: integration broken"
+
+echo ""
+
+# ── TEST 8: Token budget reset at session start ────────────────────
+
+echo "--- Token budget reset ---"
+# Write a stale budget file
+echo "9999" > "$SANDBOX/.claude/cortex/.session-token-budget"
+
+# Run session-start — should delete the budget file
+echo '{}' | HOME="$SANDBOX" bash "$SANDBOX/.claude/hooks/cortex/session-start.sh" > /dev/null 2>&1 || true
+
+if [ ! -f "$SANDBOX/.claude/cortex/.session-token-budget" ]; then
+    pass "session-start resets .session-token-budget"
+else
+    fail "session-start did NOT reset .session-token-budget"
+fi
 
 echo ""
 
