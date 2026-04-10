@@ -284,7 +284,7 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 | Suite | Tests | Coverage |
 |---|---|---|
 | `test_security.sh` | 7 | Injection, command injection, scrubbing, validation |
-| `test_dream_cycle.sh` | 29 | Jaccard, contradictions, staleness, regex, health, **decay formula consistency** |
+| `test_dream_cycle.sh` | 26 | Jaccard, contradictions, staleness, regex, health, **decay formula consistency** |
 | `test_observe.sh` | 7 | Scrubbing, is_error, dedup, atomic write, e2e, perf |
 | `test_session_learner.sh` | 7 | Error-fix pairs, corrections, chains, proposals |
 | `test_injector.sh` | 14 | Sanitization, ReDoS, limits, markers, yaml-utils |
