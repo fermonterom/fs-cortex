@@ -91,19 +91,27 @@ jobs:
       - name: Count tests
         id: count
         run: |
-          # Run tests ONCE and capture output
-          OUTPUT=$(bash tests/run_all.sh 2>&1 || true)
-          echo "$OUTPUT" | tail -5
-          PASSED=$(echo "$OUTPUT" | grep 'Results:' | sed 's/.*: //' | sed 's/ passed.*//' | paste -sd+ - | bc)
-          FAILED=$(echo "$OUTPUT" | grep 'Results:' | sed 's/.*, //' | sed 's/ failed.*//' | paste -sd+ - | bc)
-          # Add PowerShell tests (can't run on Linux, known count)
-          TOTAL=$((PASSED + FAILED + 9))
-          if [ "$FAILED" -eq 0 ]; then
+          # Run each suite individually and sum results
+          TOTAL_PASS=0
+          TOTAL_FAIL=0
+          for test_file in tests/test_*.sh; do
+            RESULT=$(bash "$test_file" 2>&1 || true)
+            P=$(echo "$RESULT" | grep 'Results:' | sed 's/.*: //' | sed 's/ passed.*//')
+            F=$(echo "$RESULT" | grep 'Results:' | sed 's/.*, //' | sed 's/ failed.*//')
+            TOTAL_PASS=$((TOTAL_PASS + ${P:-0}))
+            TOTAL_FAIL=$((TOTAL_FAIL + ${F:-0}))
+            echo "  $(basename $test_file): ${P:-0} passed, ${F:-0} failed"
+          done
+          # Add PowerShell tests (can't run on Linux)
+          TOTAL_PASS=$((TOTAL_PASS + 9))
+          TOTAL=$((TOTAL_PASS + TOTAL_FAIL))
+          echo "Total: $TOTAL_PASS passed, $TOTAL_FAIL failed (of $TOTAL)"
+          if [ "$TOTAL_FAIL" -eq 0 ]; then
             echo "color=44cc11" >> "$GITHUB_OUTPUT"
             echo "status=${TOTAL} passing" >> "$GITHUB_OUTPUT"
           else
             echo "color=e05d44" >> "$GITHUB_OUTPUT"
-            echo "status=$((PASSED + 9)) of ${TOTAL} passing" >> "$GITHUB_OUTPUT"
+            echo "status=$TOTAL_PASS of ${TOTAL} passing" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Update badge gist
