@@ -87,11 +87,17 @@ git tag -a vX.Y.Z -m "vX.Y.Z — description"
 
 # 4. Push code + tags
 git push && git push --tags
+
+# 5. GitHub Release — ONLY when user explicitly requests it
+# Do NOT create releases automatically. Tags are enough.
+# gh release create vX.Y.Z --title "vX.Y.Z — description" --notes "..."
 ```
 
 ## What NOT to do
 
 - NEVER push with only code changes and no version/changelog update
+- NEVER create a GitHub Release without explicit user request (tags are automatic, releases are manual)
+- NEVER forget to push tags (`git push --tags`) after creating them
 - NEVER use "chore: misc fixes" without itemizing in CHANGELOG
 - NEVER skip tests before push
 - NEVER bump version without a CHANGELOG entry explaining why

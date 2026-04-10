@@ -83,6 +83,17 @@ fi
 echo ""
 read -rp "$(echo -e "${BOLD}Also delete learned data (laws, instincts, observations)? [y/N]:${NC} ")" delete_data
 if [[ "$delete_data" =~ ^[Yy] ]]; then
+    # Safety: warn if no backup was created
+    if [ -z "$BACKUP_FILE" ] || [ ! -f "$BACKUP_FILE" ]; then
+        echo -e "${RED}  WARNING: No backup exists! This will permanently delete all learned data.${NC}"
+        read -rp "$(echo -e "${BOLD}  Are you REALLY sure? Type 'DELETE' to confirm:${NC} ")" confirm_delete
+        if [ "$confirm_delete" != "DELETE" ]; then
+            echo -e "  ${YELLOW}Cancelled. Data preserved.${NC}"
+            delete_data="n"
+        fi
+    fi
+fi
+if [[ "$delete_data" =~ ^[Yy] ]]; then
     [ -d "$CORTEX_DIR" ] && rm -rf "$CORTEX_DIR" && echo "  Removed ~/.claude/cortex/"
 else
     echo -e "  ${YELLOW}Keeping ~/.claude/cortex/ (data preserved)${NC}"
@@ -146,9 +157,14 @@ claude_md = os.environ["_CX_CLAUDE_MD"]
 with open(claude_md) as f:
     content = f.read()
 content = re.sub(r'\n*## Cortex[^\n]*\n.*?(?=\n## (?!Cortex)|\Z)', '', content, flags=re.DOTALL)
-content = content.rstrip() + '\n'
-with open(claude_md, 'w') as f:
-    f.write(content)
+content = content.strip()
+if content:
+    content += '\n'
+    with open(claude_md, 'w') as f:
+        f.write(content)
+else:
+    # CLAUDE.md was only Cortex section — remove empty file
+    os.remove(claude_md)
 PYEOF
             [ $? -eq 0 ] && echo "  Removed Cortex section from CLAUDE.md"
         fi

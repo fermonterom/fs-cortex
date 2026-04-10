@@ -277,7 +277,7 @@ Key measures:
 ## Tests
 
 ```bash
-bash tests/run_all.sh             # Run all 8 suites (124 tests)
+bash tests/run_all.sh             # Run all 10 suites (150 tests)
 bash tests/test_security.sh       # 7 security regression tests
 bash tests/test_dream_cycle.sh    # 26 dream cycle tests
 bash tests/test_observe.sh        # 7 observer tests (scrubbing, is_error, dedup, perf)

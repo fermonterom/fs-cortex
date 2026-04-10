@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: ShellCheck
-        run: shellcheck --severity=error hooks/*.sh tests/*.sh install.sh
+        run: shellcheck --severity=error hooks/*.sh tests/*.sh install.sh uninstall.sh
       - name: Setup Python
         uses: actions/setup-python@v5
         with:

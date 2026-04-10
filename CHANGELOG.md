@@ -4,6 +4,24 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.6.3] — 2026-04-10
+
+### Added
+- **`tests/test_uninstall.sh`**: 11 tests — uninstall cleanup (hooks, skill, commands removed), data preservation, settings.json cleanup, CLAUDE.md section removal, backup creation with laws, data deletion with backup, safety guard (requires typing DELETE to delete without backup), user CLAUDE.md content preserved after uninstall
+- **`tests/test_integrity.sh`**: 14 tests — observe.sh wrapper delegation, all 14 commands exist, command file references valid, claudemd-section lists all commands, memory.template.json schema validation, reflexes.default.json schema validation, version consistency (install.sh = install.ps1 = CHANGELOG), core files exist, CI includes uninstall.sh
+
+### Security
+- **uninstall.sh**: Safety guard requires typing 'DELETE' to confirm data deletion when no backup exists (prevents accidental data loss)
+
+### Fixed
+- **hooks/session-start.sh**: Fix `ls *.md` glob failure under `set -eo pipefail` when no EOD files exist (added `|| true`)
+- **uninstall.sh**: Remove empty CLAUDE.md when only Cortex section existed (was leaving 1-byte file)
+- **uninstall.sh**: Preserve user CLAUDE.md content — only remove ## Cortex section, not entire file
+- **.github/workflows/test.yml**: Added `uninstall.sh` to ShellCheck coverage
+
+### Changed
+- Test coverage: **125 → 150 tests** across **8 → 10 suites** (added uninstall + integrity)
+
 ## [3.6.2] — 2026-04-10
 
 ### Security
