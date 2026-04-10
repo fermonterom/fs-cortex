@@ -4,6 +4,42 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.6.2] — 2026-04-10
+
+### Security
+- **install.ps1**: Path traversal validation on backup import (tar -tzf pre-check, matching install.sh)
+- **install.ps1**: chmod 600 on settings.json before os.replace
+- **hooks/injector.sh**: Trap quoting fix for TMPDIR with spaces
+- **hooks/injector.sh**: Validate CORTEX_DIR against real home (prevents $HOME spoofing)
+- **hooks/session-start.sh**: CWD validation — absolute path check, path traversal guard, symlink resolution via pwd -P
+- **hooks/lib/validate_instinct.py**: Handle YAML multiline action values (| and >) to prevent validation bypass
+- **uninstall.sh**: Atomic write for settings.json via tempfile + os.replace + chmod 600
+
+### Fixed
+- **hooks/session-start.sh**: Reset .session-token-budget at session start (prevents silent instinct suppression after 40-100 sessions)
+- **hooks/lib/dream_cycle.py**: Unified decay formula to linear -0.05/30d (was multiplicative, diverged from cx-distill docs by up to 0.14)
+- **hooks/lib/dream_cycle.py**: Full pairwise dedup comparison (was break-on-first-match, missed transitive duplicates)
+- **hooks/session-learner.js**: Require 3+ overlapping edits for correction detection (was 2+, caused false positives on normal editing)
+- **hooks/observe.py**: Error pattern context anchors to avoid false positives on filenames (ErrorBoundary) and zero-failure test output (failed: 0)
+- **docs, SKILL.md, README.md, memory.template.json, injector.sh**: MAX_INSTINCTS updated from 2 to 3 in all 6 locations
+- **install.ps1**: Backup import now copies all 8 data categories (was 2: laws + instincts only)
+- **install.ps1**: Atomic write for memory.json onboarding via tempfile + os.replace
+
+### Changed
+- **hooks/injector.sh**: Import yaml-utils.js instead of 35-line inline parseInstinctYaml (eliminates drift risk)
+- **hooks/session-learner.js**: 512KB log rotation (was unbounded growth)
+- **hooks/observe.py + session-learner.js**: Error patterns aligned between observer (9 patterns) and learner (now 9+3)
+- **hooks/session-start.sh**: Upgraded to `set -euo pipefail` (was `set -e` only)
+- **.github/workflows/test.yml**: Lint steps now blocking (`|| true` removed); shellcheck --severity=error, flake8 --select critical
+- **.github/workflows/test.yml**: Added run_all.sh summary step
+
+### Added
+- **tests/test_hooks_e2e.sh**: Token budget reset test (validates FIX-001)
+- **tests/test_dream_cycle.sh**: Decay formula consistency tests — decay(0.80, 60d)=0.70, decay(0.80, 30d)=0.75, decay(0.80, 0d)=0.80
+- **tests/test_install.sh**: Trap cleanup via SANDBOXES array + EXIT handler
+- **docs/AUDIT.md**: Checklist updated — 25/26 items completed, ARCH-002 deferred to v3.7
+- **docs/fs-cortex-v2-verificacion.html**: Post-correction verification report (96% resolved, score 69→81)
+
 ## [3.6.1] — 2026-04-09
 
 ### Fixed
