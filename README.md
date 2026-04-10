@@ -4,8 +4,8 @@
 [![tests](https://img.shields.io/endpoint?url=https%3A%2F%2Fgist.githubusercontent.com%2Ffermonterom%2Fc8919c03d35cd7e2b1a25fd483d64409%2Fraw%2Ffs-cortex-tests.json&style=flat-square)](https://github.com/fermonterom/fs-cortex/actions)
 [![CI](https://img.shields.io/github/actions/workflow/status/fermonterom/fs-cortex/test.yml?label=CI&logo=github&style=flat-square)](https://github.com/fermonterom/fs-cortex/actions)
 [![license](https://img.shields.io/github/license/fermonterom/fs-cortex?style=flat-square)](LICENSE)
-[![python](https://img.shields.io/badge/python-3.9%2B-3776ab?style=flat-square&logo=python&logoColor=white)](https://python.org)
-[![node](https://img.shields.io/badge/node-18%2B-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org)
+[![python](https://img.shields.io/badge/python-3.11%2B-3776ab?style=flat-square&logo=python&logoColor=white)](https://python.org)
+[![node](https://img.shields.io/badge/node-22%2B-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org)
 
 > Your AI assistant learns from every session. Automatically.
 
@@ -358,7 +358,7 @@ bash tests/test_integrity.sh       # 14 integrity tests (commands, core files, v
 pwsh tests/test_install_ps1.ps1    # 9 PowerShell installer tests (CI windows-latest)
 ```
 
-All suites run on `git push` to main (pre-push hook) and on every PR via GitHub Actions CI (macOS + Linux + Windows, Python 3.9/3.12, Node 18/22).
+All suites run on `git push` to main (pre-push hook) and on every PR via GitHub Actions CI (macOS + Linux + Windows, Python 3.11/3.13, Node 22/24).
 
 ## Credits
 

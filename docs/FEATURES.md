@@ -296,7 +296,7 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 | `test_install_ps1.ps1` | 9 | PowerShell syntax, version consistency, security features, backup categories, hook config, **CI on windows-latest** |
 
 ### CI
-- GitHub Actions: macOS + Linux × Python 3.9/3.12 × Node 18/22
+- GitHub Actions: macOS + Linux × Python 3.11/3.13 × Node 22/24
 - ShellCheck (--severity=error, includes uninstall.sh) + flake8 (critical errors only)
 - `fail-fast: false` for full matrix coverage
 - Test summary step via `run_all.sh`
