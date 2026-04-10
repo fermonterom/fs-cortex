@@ -4,6 +4,16 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.7.1] — 2026-04-10
+
+### Fixed
+- **session-learner.js**: Proposals now include `project_id` and `project_name` (were missing, breaking cx-distill universality filter)
+- **session-learner.js**: Fix `projectId is not defined` error — moved project resolution to main scope before proposal generation
+
+### Changed
+- **injector.sh**: Instinct tracking now records `projects_seen` array — tracks which projects each instinct activates in (zero token impact, disk-only)
+- **cx-distill.md**: Rewritten universality filter with explicit decision table (projects × stack matrix). New cost/benefit test: if instinct already has a good trigger, keep as instinct instead of promoting to law (saves ~40 tok/session). Clear guidance on when to reject candidates.
+
 ## [3.7.0] — 2026-04-10
 
 ### Added

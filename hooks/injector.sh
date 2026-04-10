@@ -257,11 +257,16 @@ try {
 
       for (const inst of allMatched) {
         const key = inst.id;
-        if (!tracking[key]) tracking[key] = { count: 0, sessions: [], first_seen: new Date().toISOString() };
+        if (!tracking[key]) tracking[key] = { count: 0, sessions: [], projects_seen: [], first_seen: new Date().toISOString() };
         tracking[key].count++;
         if (!tracking[key].sessions.includes(hookData.session_id || "")) {
           tracking[key].sessions.push(hookData.session_id || "");
           if (tracking[key].sessions.length > 20) tracking[key].sessions = tracking[key].sessions.slice(-20);
+        }
+        // Track which projects this instinct has been activated in
+        if (!tracking[key].projects_seen) tracking[key].projects_seen = [];
+        if (projectId && !tracking[key].projects_seen.includes(projectId)) {
+          tracking[key].projects_seen.push(projectId);
         }
         tracking[key].last_seen = new Date().toISOString();
 

@@ -693,6 +693,14 @@ async function main() {
       return;
     }
 
+    // Resolve project for all proposals
+    const projectId = observations[0]._projectId || 'global';
+    let projectName = projectId;
+    const registry = readJsonFile(REGISTRY_PATH);
+    if (registry && registry[projectId]) {
+      projectName = registry[projectId].name || projectId;
+    }
+
     // Step 2: Detect error-fix pairs
     const errorProposals = detectErrorResolutions(observations);
     log(`Detected ${errorProposals.length} error-fix pair(s)`);
@@ -726,7 +734,12 @@ async function main() {
       ...correctionProposals,
       ...workflowProposals,
       ...agentProposals,
-    ].map((p) => ({ ...p, session_date: TODAY }));
+    ].map((p) => ({
+      ...p,
+      session_date: TODAY,
+      project_id: p.project_id || projectId,
+      project_name: p.project_name || projectName,
+    }));
     writeProposals(allProposals);
 
     // Step 7: Write context.md

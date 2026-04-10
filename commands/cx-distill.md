@@ -59,17 +59,37 @@ Scan instincts with confidence >= 0.90 that don't have a corresponding law.
 Para cada candidato, evaluar ANTES de proponer:
 
 ```
-FILTRO DE UNIVERSALIDAD:
-- Revisar en cuántos proyectos distintos se ha observado el patrón
-- Si solo aparece en 1 proyecto y es tecnología nicho: NO promover a law
-- Si aparece en 1 proyecto pero es práctica universal (ej: "test before deploy"): SÍ candidato
-- Las laws deben ser el común denominador de TODOS los proyectos
+FILTRO DE UNIVERSALIDAD — Laws cuestan ~40 tokens CADA sesion.
+Solo promover si el patron aplica a la MAYORIA de sesiones de trabajo.
+Un instinto global con buen trigger ya se inyecta cuando hace falta.
+La pregunta NO es "es util?" sino "lo necesito en TODAS las sesiones?"
 ```
 
-Criterios concretos:
-1. **Multi-proyecto (3+)**: Promover automaticamente si confidence >= 0.90
-2. **Mono-proyecto, stack principal** (Next.js, React, Supabase, TypeScript, Tailwind): Candidato si la practica es generalizable mas alla del proyecto especifico
-3. **Mono-proyecto, tecnologia nicho** (SSH, VPS provisioning, herramientas one-off): NO promover a law — mantener como instinct global como maximo
+**Proceso de evaluacion (en este orden — si falla un paso, RECHAZAR):**
+
+1. **Duplicado check**: ¿Ya existe una law que cubra esto? → RECHAZAR
+2. **Conteo de proyectos**: ¿En cuantos proyectos DISTINTOS se ha observado?
+   - Leer el campo `project_id` y cruzar con `projects_seen` si existe
+   - Buscar instintos similares (Jaccard >= 0.50) en OTROS proyectos
+3. **Test de universalidad**:
+
+| Proyectos | Stack | Veredicto | Razon |
+|-----------|-------|-----------|-------|
+| 5+ proyectos | cualquier | ✅ PROMOVER | Patron universal demostrado |
+| 3-4 proyectos | stack principal | ✅ CANDIDATO | Probable universal |
+| 3-4 proyectos | nicho | ⚠️ EVALUAR | Puede ser coincidencia |
+| 1-2 proyectos | stack principal | ❌ RECHAZAR | Mejor como instinto global — ya se inyecta por trigger |
+| 1-2 proyectos | nicho | ❌ RECHAZAR | Definitivamente instinto, no law |
+| 1 proyecto | cualquier | ❌ RECHAZAR | Un proyecto no justifica 40 tok/sesion permanentes |
+
+**Stack principal** = Next.js, React, TypeScript, Supabase, Tailwind, git, testing
+**Stack nicho** = SSH, VPS, Docker provisioning, n8n, PostgreSQL restore, herramientas one-off
+
+4. **Test del coste/beneficio**: Si el instinto ya tiene un trigger especifico que
+   matchea bien (ej: `Bash|ssh|heredoc`), NO promover a law — como instinto global
+   ya se inyecta solo cuando hace falta, sin gastar tokens en sesiones donde no aplica.
+   Solo promover a law si el patron no tiene un trigger natural y necesita estar
+   siempre presente (ej: "use conventional commits" — no hay trigger especifico).
 
 #### 3b. Comparar con laws existentes
 
@@ -83,17 +103,27 @@ Antes de crear una law nueva:
 
 #### 3c. Presentar candidatos con shorthand
 
-Mostrar al usuario en formato rapido:
+Mostrar al usuario con datos de decision claros:
 
 ```
-CORTEX DISTILL — Candidatos a law (N encontrados)
+CORTEX DISTILL — Candidatos a law (N encontrados, M recomendados)
 
 Candidatos:
-1. {instinct-id} → "{one-liner condensado}"
-   Proyectos: {N} | Confidence: {value} | Stack: {principal|nicho}
-   ✅ RECOMIENDO — {razon}
+1. {instinct-id} (conf: {value})
+   → "{one-liner condensado}"
+   Proyectos: {N} de {total} ({lista de nombres})
+   Trigger actual: {trigger} — {"ya se inyecta por trigger" | "sin trigger natural"}
+   Stack: {principal|nicho}
+   Coste: +40 tok/sesion permanente vs inyeccion por trigger actual
+   ✅ PROMOVER A LAW — {razon: visto en 5+ proyectos, sin trigger natural}
    — o —
-   ❌ NO RECOMIENDO — {razon: ej "Solo aplica a VPS/PostgreSQL, no al stack principal"}
+   ❌ MANTENER COMO INSTINTO — {razon: "solo 1 proyecto", "trigger SSH ya funciona", etc}
+
+RESUMEN RAPIDO:
+  Recomendados: {ids}
+  No recomendados: {ids} (quedan como instintos, siguen funcionando por trigger)
+  Duplicados de laws existentes: {ids} (ya cubiertos)
+```
 
 Duplicados detectados:
 N. {instinct-a} ↔ {instinct-b}
