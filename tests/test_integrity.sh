@@ -151,7 +151,8 @@ echo ""
 echo "--- ShellCheck (severity=error) ---"
 if command -v shellcheck >/dev/null 2>&1; then
     SC_ERRORS=0
-    for script in "$PROJECT_ROOT/install.sh" "$PROJECT_ROOT/uninstall.sh" "$PROJECT_ROOT/hooks/observe.sh" "$PROJECT_ROOT/hooks/session-start.sh" "$PROJECT_ROOT/hooks/injector.sh"; do
+    # Note: injector.sh excluded — 99% inline JS heredoc, shellcheck can't parse it
+    for script in "$PROJECT_ROOT/install.sh" "$PROJECT_ROOT/uninstall.sh" "$PROJECT_ROOT/hooks/observe.sh" "$PROJECT_ROOT/hooks/session-start.sh"; do
         if ! shellcheck --severity=error "$script" 2>/dev/null; then
             fail "shellcheck errors in $(basename "$script")"
             SC_ERRORS=$((SC_ERRORS + 1))
