@@ -1,4 +1,4 @@
-# fs-cortex v3.6.4 — Feature Reference
+# fs-cortex v3.6.5 — Feature Reference
 
 > Complete inventory of all features, commands, hooks, modules, and capabilities.
 > Last updated: 2026-04-10
@@ -283,6 +283,7 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 | `test_hooks_e2e.sh` | 14 | Full pipeline: observe→inject→learn, **token budget reset** |
 | `test_uninstall.sh` | 11 | Cleanup, backup creation, data preservation, **safety guard**, CLAUDE.md preservation |
 | `test_integrity.sh` | 14 | observe.sh wrapper, 14 commands validated, core file schemas, **version consistency** |
+| `test_install_ps1.ps1` | 9 | PowerShell syntax, version consistency, security features, backup categories, hook config, **CI on windows-latest** |
 
 ### CI
 - GitHub Actions: macOS + Linux × Python 3.9/3.12 × Node 18/22
@@ -364,3 +365,5 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 | v3.6.1 | 2026-04-09 | SECURITY.md update |
 | v3.6.2 | 2026-04-10 | 25 audit fixes: security hardening, logic bugs, Windows parity, architecture sync |
 | v3.6.3 | 2026-04-10 | 150 tests (10 suites), uninstall safety guard, integrity tests |
+| v3.6.4 | 2026-04-10 | FEATURES.md public in git, internal docs untracked |
+| v3.6.5 | 2026-04-10 | PowerShell test suite (9 tests), CI windows-latest job |

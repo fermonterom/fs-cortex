@@ -209,9 +209,15 @@ JSONL
 # Create registry so session-learner can find the project
 echo '{"testproj":{"name":"testproj","root":"'"$SANDBOX"'","remote":""}}' > "$SANDBOX/.claude/cortex/projects/registry.json"
 
-# Run session-learner
+# Run session-learner (portable timeout: background + wait + kill)
 echo '{"session_id":"learner-test"}' | HOME="$SANDBOX" \
-    timeout 10 node "$SANDBOX/.claude/hooks/cortex/session-learner.js" 2>/dev/null || true
+    node "$SANDBOX/.claude/hooks/cortex/session-learner.js" 2>/dev/null &
+_LEARNER_PID=$!
+( sleep 10 && kill "$_LEARNER_PID" 2>/dev/null ) &
+_TIMER_PID=$!
+wait "$_LEARNER_PID" 2>/dev/null || true
+kill "$_TIMER_PID" 2>/dev/null || true
+wait "$_TIMER_PID" 2>/dev/null || true
 
 # Check proposals were generated
 if [ -f "$SANDBOX/.claude/cortex/proposals.json" ]; then
