@@ -91,18 +91,19 @@ jobs:
       - name: Count tests
         id: count
         run: |
-          RESULT=$(bash tests/run_all.sh 2>&1 | grep 'Results:' | sed 's/.*: //' | sed 's/ passed.*//' | paste -sd+ - | bc)
-          # Add PowerShell tests (can't run on Linux, use known count)
-          TOTAL=$((RESULT + 9))
-          echo "total=$TOTAL" >> "$GITHUB_OUTPUT"
-          # Determine color
-          FAILED=$(bash tests/run_all.sh 2>&1 | grep 'Results:' | sed 's/.*, //' | sed 's/ failed.*//' | paste -sd+ - | bc)
+          # Run tests ONCE and capture output
+          OUTPUT=$(bash tests/run_all.sh 2>&1 || true)
+          echo "$OUTPUT" | tail -5
+          PASSED=$(echo "$OUTPUT" | grep 'Results:' | sed 's/.*: //' | sed 's/ passed.*//' | paste -sd+ - | bc)
+          FAILED=$(echo "$OUTPUT" | grep 'Results:' | sed 's/.*, //' | sed 's/ failed.*//' | paste -sd+ - | bc)
+          # Add PowerShell tests (can't run on Linux, known count)
+          TOTAL=$((PASSED + FAILED + 9))
           if [ "$FAILED" -eq 0 ]; then
             echo "color=44cc11" >> "$GITHUB_OUTPUT"
             echo "status=${TOTAL} passing" >> "$GITHUB_OUTPUT"
           else
             echo "color=e05d44" >> "$GITHUB_OUTPUT"
-            echo "status=${TOTAL} (${FAILED} failing)" >> "$GITHUB_OUTPUT"
+            echo "status=$((PASSED + 9)) of ${TOTAL} passing" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Update badge gist
