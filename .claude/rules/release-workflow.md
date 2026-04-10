@@ -52,6 +52,33 @@ Check if any of your changes affect:
 
 If yes to any, update the corresponding README section. The README is the public face of the project.
 
+### 4b. Update docs/FEATURES.md (MANDATORY for any feature/fix)
+
+`docs/FEATURES.md` is the complete feature inventory of the project. It is the ONLY
+file from docs/ tracked in git (the rest is local/internal).
+
+**ALWAYS update FEATURES.md when:**
+- New feature, command, hook, or module added → add to the relevant section
+- Existing feature behavior changed → update the description
+- Test coverage changed → update test counts and suite table
+- Version bumped → update header version, last-updated date, and version history table
+- Security feature added → update security section
+
+**Structure to maintain:**
+- Header with version and date
+- Architecture overview (hooks, injection points)
+- Hooks section (5 files with bullet-point feature lists)
+- Library modules (3 files)
+- Commands table (14 commands with token costs)
+- Confidence lifecycle
+- Reflexes table
+- Security features list
+- Installer/Uninstaller details
+- Tests table (suites × test counts)
+- Data directory structure
+- Token budget table
+- Version history table
+
 ### 5. Create git tag
 
 After committing the version bump, create an annotated tag:

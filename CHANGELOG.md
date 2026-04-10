@@ -4,6 +4,17 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.6.4] — 2026-04-10
+
+### Added
+- **docs/FEATURES.md**: Now tracked in git as the public feature inventory (only docs/ file in repo)
+- **release-workflow**: Mandatory step 4b — update FEATURES.md on every feature/fix
+
+### Changed
+- **docs/FEATURES.md**: Updated to v3.6.3 with all recent changes (150 tests, uninstall safety, decay formula, error patterns, YAML multiline, etc.)
+- **.gitignore**: `docs/` still ignored but `!docs/FEATURES.md` exception added
+- Internal docs (AUDIT.md, audit HTMLs, reports) removed from git tracking (kept local)
+
 ## [3.6.3] — 2026-04-10
 
 ### Added

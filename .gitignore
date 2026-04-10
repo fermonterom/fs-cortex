@@ -27,5 +27,6 @@ node_modules/
 # OS
 Thumbs.db
 
-# Docs
+# Docs — only FEATURES.md is public, rest stays local
 docs/
+!docs/FEATURES.md
