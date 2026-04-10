@@ -4,7 +4,7 @@
 # Injects Laws + EOD Quick Resume + context.md bridge + maintenance reminders at session start AND after /compact.
 # Reads laws from ~/.claude/cortex/laws/, EOD from daily-summaries/, context.md from project.
 
-set -e
+set -euo pipefail
 umask 077
 
 # Sanitization function — strip instruction overrides from injected text
@@ -30,7 +30,7 @@ CONTEXT_TTL_DAYS=14
 
 # Cross-platform date handling (macOS + Linux)
 TODAY=$(date +%Y-%m-%d)
-YESTERDAY=$(date -v-1d +%Y-%m-%d 2>/dev/null || date -d "yesterday" +%Y-%m-%d 2>/dev/null)
+YESTERDAY=$(date -v-1d +%Y-%m-%d 2>/dev/null || date -d "yesterday" +%Y-%m-%d 2>/dev/null || echo "")
 
 # Read stdin for cwd (project detection)
 INPUT_JSON=$(cat 2>/dev/null || echo "{}")
