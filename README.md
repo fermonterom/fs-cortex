@@ -25,6 +25,8 @@ Observe (hooks)  →  Analyze  →  Validate  →  Distill  →  Evolve  →  Au
    (JSONL, 0 tok)                  (YAML)       (TXT)     (evolved/)
 ```
 
+Parallel systems: **Reflexes** (8 deterministic rules, always fire) and **Agents** (3 specialized: pattern analysis, code review, task planning).
+
 ### Dual Injection
 
 1. **SessionStart**: Laws (max 10) + EOD resume + project context bridge (~550 tokens)
@@ -104,14 +106,73 @@ The installer:
 
 ### 3b. Use
 
-Open Claude Code and work normally. Cortex works automatically:
+Open Claude Code and work normally. Cortex works automatically.
 
-1. **Laws inject at session start** — your crystallized knowledge, always present
-2. **Context bridge injects** — yesterday's session context, auto-resumed (shown once, not repeated)
-3. **Instincts inject per tool use** — matched patterns, confidence-gated
-4. **Observations capture in background** — silent, zero overhead
-5. **Session learner runs at close** — detects patterns, writes proposals
-6. Every ~50 tool calls, you'll see: *"Run `/cx-analyze` to detect patterns"*
+## Usage Guide
+
+### What happens automatically (no action needed)
+
+| Hook | When it runs | What it does |
+|------|-------------|-------------|
+| `observe.py` | Every tool use | Records observations silently (async, 0 tokens, ~70ms) |
+| `session-start.sh` | Session open / `/compact` | Injects your laws + context bridge + EOD resume |
+| `injector.sh` | Every tool use | Injects matching instincts (max 3) + reflexes (max 2) |
+| `session-learner.js` | Session close | Detects error→fix pairs, corrections, workflows → proposals |
+
+You don't configure or run anything. Just work — Cortex learns in the background.
+
+### What you run periodically
+
+Cortex reminds you when action is needed:
+
+**Every 1-2 days** — when you see `[ACTION] N pending proposals`:
+
+```
+/cx-analyze    ← Detect patterns in observations → generate proposals
+/cx-validate   ← Review proposals: A=accept, X=reject, S=skip
+```
+
+**Weekly** — when you see `[MAINT]`:
+
+```
+/cx-distill    ← Promote mature instincts (0.90+) to laws, apply decay
+/cx-dream      ← Dedup, contradictions, staleness cleanup, health score
+/cx-audit      ← Token overhead, duplicates, conflicts, cleanup
+```
+
+**When needed:**
+
+```
+/cx-status     ← Dashboard: laws, instincts, projects, system health
+/cx-gotcha     ← Capture an error→fix as a high-priority instinct
+/cx-eod        ← End-of-day summary (auto-injected tomorrow morning)
+/cx-backup     ← Portable .tar.gz backup for another machine
+```
+
+### Daily workflow
+
+```
+1. Open Claude Code     → laws inject automatically
+2. Work normally        → observe.py records, injector.sh injects
+3. [ACTION] N proposals → /cx-validate (1 min)
+4. [MAINT] reminder     → /cx-distill or /cx-dream (30 sec each)
+5. End of day           → /cx-eod (optional but useful)
+```
+
+### Weekly maintenance
+
+```
+/cx-dream  →  /cx-distill  →  /cx-audit
+ cleanup       promotions      token check
+```
+
+### How knowledge evolves
+
+```
+You work → Cortex observes → /cx-analyze detects patterns → /cx-validate you confirm
+→ instinct confidence grows with use → /cx-distill promotes to law → law injects every session
+→ unused knowledge decays (-0.05/month) → /cx-dream cleans up stale instincts
+```
 
 ## Commands (14)
 
@@ -277,7 +338,7 @@ Key measures:
 ## Tests
 
 ```bash
-bash tests/run_all.sh             # Run all 10 suites (150 tests)
+bash tests/run_all.sh             # Run all 11 suites (159 tests)
 bash tests/test_security.sh       # 7 security regression tests
 bash tests/test_dream_cycle.sh    # 26 dream cycle tests
 bash tests/test_observe.sh        # 7 observer tests (scrubbing, is_error, dedup, perf)

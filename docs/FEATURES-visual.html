@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>fs-cortex — Tu IA recuerda</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Merriweather:wght@400;700;800;900&family=Open+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #E8EDF6; --surface: #FAFCFF; --recessed: #F0F4FA;
+  --fersora: #B2CE38; --fersora-dark: #7A9B1A; --lavender: #98B4E0;
+  --orange: #E8842A; --red: #DC3545; --green: #1E9B50;
+  --dark: #1A202C; --heading: #212121; --body: #444649; --muted: #718096;
+  --border: rgba(0,0,0,0.08);
+}
+*,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Open Sans', sans-serif; color: var(--body); background: var(--bg);
+  background-image: radial-gradient(ellipse at 20% 10%, rgba(178,206,56,0.06) 0%, transparent 60%),
+    radial-gradient(ellipse at 80% 90%, rgba(152,180,224,0.08) 0%, transparent 60%);
+  line-height: 1.7; font-size: 16px; -webkit-font-smoothing: antialiased; }
+h1,h2,h3,h4 { font-family: 'Merriweather', serif; color: var(--heading); }
+code { font-family: 'JetBrains Mono', monospace; background: rgba(0,0,0,0.06); padding: 2px 6px; border-radius: 4px; font-size: 14px; }
+.container { max-width: 900px; margin: 0 auto; padding: 0 24px 60px; }
+@media (min-width: 769px) { .container { padding: 0 40px 80px; } }
+
+/* NAV */
+.nav { position: sticky; top: 0; z-index: 100; background: var(--dark); overflow-x: auto; scrollbar-width: none; }
+.nav::-webkit-scrollbar { display: none; }
+.nav-inner { max-width: 900px; margin: 0 auto; display: flex; align-items: center; gap: 0; min-width: max-content; padding: 0 24px; }
+.nav-logo { height: 28px; margin-right: 24px; flex-shrink: 0; }
+.nav a { font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.55); text-decoration: none; padding: 14px 10px; white-space: nowrap; border-bottom: 2px solid transparent; transition: color 0.2s, border-color 0.2s; }
+.nav a:hover, .nav a.active { color: var(--fersora); border-bottom-color: var(--fersora); }
+
+/* HERO */
+.hero { background: var(--surface); border: 2px solid var(--fersora); border-radius: 16px; padding: 60px 36px; margin: 40px 0 48px; text-align: center; box-shadow: 0 4px 24px rgba(0,0,0,0.06); }
+.hero-tag { display: inline-block; background: var(--fersora); color: var(--dark); font-size: 11px; font-weight: 700; letter-spacing: 2px; padding: 4px 14px; border-radius: 4px; margin-bottom: 16px; }
+.hero h1 { font-size: 32px; margin-bottom: 16px; font-weight: 900; }
+@media (min-width: 769px) { .hero h1 { font-size: 42px; } }
+.hero .lead { color: var(--muted); font-size: 17px; max-width: 650px; margin: 0 auto; line-height: 1.8; }
+
+/* SECTIONS */
+.section { margin: 56px 0; }
+.section h2 { font-size: 24px; font-weight: 800; margin-bottom: 20px; }
+.section p { margin-bottom: 14px; }
+
+/* CARDS */
+.card { background: var(--surface); border-radius: 14px; padding: 28px 32px; margin-bottom: 16px; box-shadow: 0 2px 12px rgba(0,0,0,0.04); border: 1px solid var(--border); }
+.card h3 { font-size: 18px; margin-bottom: 10px; }
+.card p { font-size: 15px; }
+
+/* PIPELINE */
+.pipeline { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 32px 0; flex-wrap: wrap; }
+.pipe-step { background: var(--surface); border: 2px solid var(--fersora); border-radius: 12px; padding: 16px 20px; text-align: center; min-width: 130px; }
+.pipe-step .num { font-family: 'Merriweather', serif; font-size: 28px; font-weight: 900; color: var(--fersora-dark); display: block; }
+.pipe-step .label { font-size: 13px; font-weight: 600; color: var(--heading); margin-top: 4px; }
+.pipe-step .desc { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.pipe-arrow { font-size: 24px; color: var(--fersora); font-weight: 900; }
+
+/* COMPARISON */
+.compare { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 24px 0; }
+@media (max-width: 600px) { .compare { grid-template-columns: 1fr; } }
+.compare-card { border-radius: 14px; padding: 24px 28px; }
+.compare-card.before { background: #FEF2F2; border: 2px solid var(--red); }
+.compare-card.after { background: #F0FFF4; border: 2px solid var(--green); }
+.compare-card h4 { font-size: 14px; margin-bottom: 12px; }
+.compare-card ul { padding-left: 18px; font-size: 14px; }
+.compare-card li { margin-bottom: 6px; }
+
+/* LIFECYCLE */
+.lifecycle { display: flex; flex-direction: column; gap: 12px; margin: 24px 0; }
+.life-step { display: flex; align-items: center; gap: 16px; padding: 16px 20px; background: var(--surface); border-radius: 12px; border: 1px solid var(--border); }
+.life-badge { width: 50px; height: 50px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-family: 'Merriweather', serif; font-weight: 900; font-size: 18px; color: #fff; flex-shrink: 0; }
+.life-info h4 { font-size: 15px; margin-bottom: 2px; }
+.life-info p { font-size: 13px; color: var(--muted); margin: 0; }
+
+/* HOOKS TABLE */
+table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 14px; }
+th { background: var(--recessed); font-weight: 600; text-align: left; padding: 12px 14px; border-bottom: 2px solid var(--border); }
+td { padding: 12px 14px; border-bottom: 1px solid var(--border); }
+tr:last-child td { border-bottom: none; }
+
+/* COMMAND GROUPS */
+.cmd-group { margin: 20px 0; }
+.cmd-group h4 { font-size: 13px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+.cmd-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+.cmd-card { background: var(--recessed); border-radius: 10px; padding: 12px 16px; }
+.cmd-card code { font-size: 13px; font-weight: 600; color: var(--fersora-dark); background: rgba(178,206,56,0.15); }
+.cmd-card p { font-size: 12px; color: var(--muted); margin: 4px 0 0; }
+
+/* CALLOUT */
+.callout { background: var(--recessed); border-left: 4px solid var(--fersora); border-radius: 0 10px 10px 0; padding: 20px 24px; margin: 24px 0; font-size: 15px; line-height: 1.7; }
+
+/* INSTALL */
+pre { background: var(--dark); color: #E2E8F0; border-radius: 10px; padding: 20px 24px; overflow-x: auto; font-size: 14px; line-height: 1.6; margin: 16px 0; font-family: 'JetBrains Mono', monospace; }
+pre code { background: none; padding: 0; color: inherit; }
+
+/* FOOTER */
+.footer { border-top: 1px solid var(--border); margin-top: 60px; padding-top: 40px; text-align: center; }
+.footer-logo { height: 36px; margin-bottom: 16px; filter: brightness(0.3); }
+.footer-name { font-family: 'Merriweather', serif; font-weight: 700; font-size: 16px; color: var(--heading); }
+.footer-company { color: var(--fersora-dark); font-size: 14px; font-weight: 600; }
+.footer-links { margin-top: 8px; font-size: 13px; color: var(--muted); }
+.footer-links a { color: var(--fersora-dark); text-decoration: none; }
+.footer-meta { margin-top: 16px; font-size: 12px; color: var(--muted); }
+
+/* ANIMATIONS */
+@keyframes fadeUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+.anim { animation: fadeUp 0.4s ease-out both; animation-delay: calc(var(--i, 0) * 0.06s); }
+@media (prefers-reduced-motion: reduce) { .anim { animation: none; opacity: 1; } }
+
+/* RESPONSIVE */
+@media (max-width: 600px) {
+  .hero { padding: 36px 20px; } .hero h1 { font-size: 26px; }
+  .section h2 { font-size: 20px; }
+  .pipe-step { min-width: 100px; padding: 12px 14px; } .pipe-step .num { font-size: 22px; }
+  .life-step { flex-wrap: wrap; } .life-badge { width: 40px; height: 40px; font-size: 14px; }
+  table { font-size: 13px; } th, td { padding: 8px 10px; }
+}
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <img src="https://fersora.com/wp-content/uploads/2023/12/Logo-Fersora-Blanco-con-color-y-transparente-300x80.png" alt="Fersora" class="nav-logo">
+    <a href="#problema">El problema</a>
+    <a href="#solucion">Como funciona</a>
+    <a href="#comparacion">Antes y despues</a>
+    <a href="#conocimiento">Conocimiento</a>
+    <a href="#tu-dia">Tu dia a dia</a>
+    <a href="#comandos">Comandos</a>
+    <a href="#instalar">Instalar</a>
+  </div>
+</nav>
+
+<div class="container">
+
+<!-- HERO -->
+<div class="hero anim" style="--i:0">
+  <div class="hero-tag">fs-cortex</div>
+  <h1>Tu IA recuerda.<br>Automaticamente.</h1>
+  <p class="lead">Un sistema de aprendizaje continuo para Claude Code. Observa como trabajas, detecta patrones y los cristaliza en conocimiento reutilizable &mdash; sin que tengas que hacer nada.</p>
+</div>
+
+<!-- SECTION 1: THE PROBLEM -->
+<section id="problema" class="section">
+<h2 class="anim" style="--i:1">El problema</h2>
+
+<div class="card anim" style="--i:2">
+  <h3>Claude empieza de cero cada sesion</h3>
+  <p>Imagina un empleado brillante que cada manana olvida TODO lo que aprendio ayer. Le explicas que en tu proyecto siempre se usan conventional commits, que nunca se hardcodean secretos, que el componente de autenticacion tiene un bug especifico... y manana te lo vuelve a preguntar.</p>
+  <p><strong>Eso es Claude Code sin Cortex.</strong> Cada sesion es una pizarra en blanco. Tus preferencias, los errores que ya resolviste, los patrones de tu proyecto &mdash; todo se pierde.</p>
+</div>
+
+<div class="card anim" style="--i:3">
+  <h3>El coste de repetir</h3>
+  <p>Cada vez que re-explicas algo a Claude, pierdes tiempo y tokens. Cada error que ya resolviste pero se vuelve a cometer es frustracion acumulada. Los mejores equipos documentan su conocimiento &mdash; tu IA deberia hacer lo mismo.</p>
+</div>
+</section>
+
+<!-- SECTION 2: HOW IT WORKS -->
+<section id="solucion" class="section">
+<h2 class="anim" style="--i:4">Como lo resuelve Cortex</h2>
+
+<p class="anim" style="--i:5">Cortex observa cada sesion de trabajo y convierte los patrones que detecta en conocimiento persistente. Todo sucede con 4 pasos:</p>
+
+<div class="pipeline anim" style="--i:6">
+  <div class="pipe-step">
+    <span class="num">1</span>
+    <span class="label">Observar</span>
+    <span class="desc">Graba cada accion</span>
+  </div>
+  <span class="pipe-arrow">&rarr;</span>
+  <div class="pipe-step">
+    <span class="num">2</span>
+    <span class="label">Analizar</span>
+    <span class="desc">Detecta patrones</span>
+  </div>
+  <span class="pipe-arrow">&rarr;</span>
+  <div class="pipe-step">
+    <span class="num">3</span>
+    <span class="label">Validar</span>
+    <span class="desc">Tu confirmas</span>
+  </div>
+  <span class="pipe-arrow">&rarr;</span>
+  <div class="pipe-step">
+    <span class="num">4</span>
+    <span class="label">Inyectar</span>
+    <span class="desc">Claude recuerda</span>
+  </div>
+</div>
+
+<div class="card anim" style="--i:7">
+  <h3>Paso 1: Observar (automatico)</h3>
+  <p>Cada vez que usas una herramienta en Claude Code (editar un archivo, ejecutar un comando, buscar codigo), Cortex lo anota silenciosamente. No consume tokens, no ralentiza nada. Solo observa.</p>
+</div>
+
+<div class="card anim" style="--i:8">
+  <h3>Paso 2: Analizar (tu lo ejecutas)</h3>
+  <p>Cuando Cortex ha observado suficientes acciones (~50), te sugiere ejecutar <code>/cx-analyze</code>. Este comando revisa tus observaciones y propone "instintos" &mdash; reglas que ha detectado en tu forma de trabajar.</p>
+  <p>Ejemplo: <em>"Cuando editas un archivo de API, siempre ejecutas los tests despues"</em> &rarr; Cortex propone un instinto que lo recuerde.</p>
+</div>
+
+<div class="card anim" style="--i:9">
+  <h3>Paso 3: Validar (tu decides)</h3>
+  <p>Cortex nunca aprende sin tu permiso. Con <code>/cx-validate</code> revisas cada propuesta: aceptar, rechazar o saltar. Solo lo que tu confirmas se convierte en conocimiento activo.</p>
+</div>
+
+<div class="card anim" style="--i:10">
+  <h3>Paso 4: Inyectar (automatico)</h3>
+  <p>A partir de ese momento, cada vez que uses una herramienta que coincida con el patron, Cortex le recuerda a Claude la regla. Sin que tu hagas nada. Sin repetirte.</p>
+</div>
+
+<div class="callout anim" style="--i:11">
+  <strong>Y mas alla:</strong> Los instintos que usas mucho se <em>destilan</em> en leyes universales (<code>/cx-distill</code>). Los clusters de instintos maduros se <em>evolucionan</em> en skills y comandos reutilizables (<code>/cx-evolve</code>). Y un sistema de limpieza automatica (<code>/cx-dream</code>) elimina duplicados y contradicciones.
+</div>
+</section>
+
+<!-- SECTION 3: BEFORE / AFTER -->
+<section id="comparacion" class="section">
+<h2 class="anim" style="--i:11">Antes y despues</h2>
+
+<div class="compare anim" style="--i:12">
+  <div class="compare-card before">
+    <h4 style="color:var(--red);">Sin Cortex</h4>
+    <ul>
+      <li>Claude olvida tus preferencias cada sesion</li>
+      <li>Repites las mismas instrucciones una y otra vez</li>
+      <li>Los mismos errores se cometen multiples veces</li>
+      <li>No hay historial de lo que funciono y lo que no</li>
+      <li>Cada proyecto empieza de cero</li>
+    </ul>
+  </div>
+  <div class="compare-card after">
+    <h4 style="color:var(--green);">Con Cortex</h4>
+    <ul>
+      <li>Claude recuerda tus reglas y preferencias siempre</li>
+      <li>Los patrones se detectan y aplican automaticamente</li>
+      <li>Los errores resueltos se capturan como "gotchas"</li>
+      <li>El conocimiento crece con cada sesion de trabajo</li>
+      <li>Los patrones de un proyecto se promueven a otros</li>
+    </ul>
+  </div>
+</div>
+</section>
+
+<!-- SECTION 4: KNOWLEDGE LIFECYCLE -->
+<section id="conocimiento" class="section">
+<h2 class="anim" style="--i:13">Como evoluciona el conocimiento</h2>
+
+<p class="anim" style="--i:14">Cada pieza de conocimiento tiene una puntuacion de confianza que crece con el uso y decae con el tiempo. Lo que usas mucho se fortalece. Lo que no usas se desvanece.</p>
+
+<div class="lifecycle anim" style="--i:15">
+  <div class="life-step">
+    <div class="life-badge" style="background:var(--muted);">0.2</div>
+    <div class="life-info">
+      <h4>Borrador</h4>
+      <p>Patron detectado pero aun no inyectado. Cortex lo observa en silencio.</p>
+    </div>
+  </div>
+  <div class="life-step">
+    <div class="life-badge" style="background:var(--orange);">0.4</div>
+    <div class="life-info">
+      <h4>Hipotesis</h4>
+      <p>Tu lo validaste. Se inyecta cuando el trigger coincide con la herramienta.</p>
+    </div>
+  </div>
+  <div class="life-step">
+    <div class="life-badge" style="background:var(--lavender); color:var(--dark);">0.6</div>
+    <div class="life-info">
+      <h4>Patron</h4>
+      <p>Se ha activado varias veces. Claude lo aplica con regularidad.</p>
+    </div>
+  </div>
+  <div class="life-step">
+    <div class="life-badge" style="background:var(--fersora); color:var(--dark);">0.8</div>
+    <div class="life-info">
+      <h4>Instinto</h4>
+      <p>Conocimiento consolidado. Candidato a promocion como ley universal.</p>
+    </div>
+  </div>
+  <div class="life-step">
+    <div class="life-badge" style="background:var(--green);">0.9</div>
+    <div class="life-info">
+      <h4>Ley</h4>
+      <p>Conocimiento cristalizado. Se inyecta en CADA sesion, siempre presente.</p>
+    </div>
+  </div>
+</div>
+
+<div class="callout anim" style="--i:16">
+  <strong>Decay natural:</strong> Si no usas un patron durante 30 dias, su confianza baja -0.05. Despues de 90 dias sin uso, se archiva automaticamente. Tu conocimiento activo siempre esta fresco y relevante.
+</div>
+</section>
+
+<!-- SECTION 5: YOUR DAY -->
+<section id="tu-dia" class="section">
+<h2 class="anim" style="--i:17">Tu dia a dia con Cortex</h2>
+
+<div class="card anim" style="--i:18">
+  <h3>Lo que pasa solo (no haces nada)</h3>
+  <table>
+    <tr><th>Hook</th><th>Cuando</th><th>Que hace</th></tr>
+    <tr><td><code>observe.py</code></td><td>Cada herramienta</td><td>Graba observaciones (~70ms, 0 tokens)</td></tr>
+    <tr><td><code>session-start.sh</code></td><td>Al abrir sesion</td><td>Inyecta leyes + contexto + resumen</td></tr>
+    <tr><td><code>injector.sh</code></td><td>Cada herramienta</td><td>Inyecta instintos y reflexes relevantes</td></tr>
+    <tr><td><code>session-learner.js</code></td><td>Al cerrar sesion</td><td>Detecta patrones y genera propuestas</td></tr>
+  </table>
+</div>
+
+<div class="card anim" style="--i:19">
+  <h3>Lo que haces tu (2-3 minutos a la semana)</h3>
+  <table>
+    <tr><th>Frecuencia</th><th>Comando</th><th>Que hace</th></tr>
+    <tr><td>Cada 1-2 dias</td><td><code>/cx-analyze</code></td><td>Detecta patrones &rarr; genera propuestas</td></tr>
+    <tr><td>Cada 1-2 dias</td><td><code>/cx-validate</code></td><td>Revisas propuestas: A=aceptar, X=rechazar</td></tr>
+    <tr><td>Semanal</td><td><code>/cx-distill</code></td><td>Promueve instintos maduros a leyes</td></tr>
+    <tr><td>Semanal</td><td><code>/cx-dream</code></td><td>Limpieza: duplicados, contradicciones</td></tr>
+    <tr><td>Cuando quieras</td><td><code>/cx-status</code></td><td>Dashboard del sistema completo</td></tr>
+  </table>
+</div>
+</section>
+
+<!-- SECTION 6: COMMANDS -->
+<section id="comandos" class="section">
+<h2 class="anim" style="--i:20">14 comandos a tu disposicion</h2>
+
+<div class="cmd-group anim" style="--i:21">
+  <h4>Aprendizaje (lo esencial)</h4>
+  <div class="cmd-grid">
+    <div class="cmd-card"><code>/cx-analyze</code><p>Detecta patrones en observaciones</p></div>
+    <div class="cmd-card"><code>/cx-validate</code><p>Revisa y confirma propuestas</p></div>
+    <div class="cmd-card"><code>/cx-distill</code><p>Promueve instintos a leyes</p></div>
+    <div class="cmd-card"><code>/cx-gotcha</code><p>Captura un error como instinto</p></div>
+  </div>
+</div>
+
+<div class="cmd-group anim" style="--i:22">
+  <h4>Mantenimiento</h4>
+  <div class="cmd-grid">
+    <div class="cmd-card"><code>/cx-dream</code><p>Limpieza y salud del sistema</p></div>
+    <div class="cmd-card"><code>/cx-audit</code><p>Revisa tokens y duplicados</p></div>
+    <div class="cmd-card"><code>/cx-promote</code><p>Promueve instintos entre proyectos</p></div>
+    <div class="cmd-card"><code>/cx-evolve</code><p>Cristaliza instintos en skills</p></div>
+  </div>
+</div>
+
+<div class="cmd-group anim" style="--i:23">
+  <h4>Utilidades</h4>
+  <div class="cmd-grid">
+    <div class="cmd-card"><code>/cx-status</code><p>Dashboard completo</p></div>
+    <div class="cmd-card"><code>/cx-eod</code><p>Resumen de fin de dia</p></div>
+    <div class="cmd-card"><code>/cx-backup</code><p>Backup portable (.tar.gz)</p></div>
+    <div class="cmd-card"><code>/cx-restore</code><p>Restaurar desde backup</p></div>
+    <div class="cmd-card"><code>/cx-export</code><p>Exportar como skill</p></div>
+    <div class="cmd-card"><code>/cx-router</code><p>Catalogo de comandos</p></div>
+  </div>
+</div>
+</section>
+
+<!-- SECTION 7: INSTALL -->
+<section id="instalar" class="section">
+<h2 class="anim" style="--i:24">Empezar en 3 pasos</h2>
+
+<div class="card anim" style="--i:25">
+  <h3>1. Clonar</h3>
+<pre><code>git clone https://github.com/fermonterom/fs-cortex.git
+cd fs-cortex</code></pre>
+</div>
+
+<div class="card anim" style="--i:26">
+  <h3>2. Instalar</h3>
+<pre><code>bash install.sh</code></pre>
+  <p>El instalador configura todo: hooks, comandos, permisos y datos iniciales. Tus datos existentes se preservan en actualizaciones.</p>
+</div>
+
+<div class="card anim" style="--i:27">
+  <h3>3. Trabajar</h3>
+  <p>Abre Claude Code y trabaja normal. Cortex aprende solo. Cuando veas un recordatorio, ejecuta el comando que te sugiere. Nada mas.</p>
+</div>
+
+<div class="callout anim" style="--i:28">
+  <strong>Requisitos:</strong> Python 3, Node.js, Claude Code instalado. Compatible con macOS, Linux y Windows (PowerShell).
+</div>
+</section>
+
+</div>
+
+<footer class="footer">
+  <div class="container">
+    <img src="https://fersora.com/wp-content/uploads/2023/12/Logo-Fersora-Blanco-con-color-y-transparente-300x80.png" alt="Fersora" class="footer-logo">
+    <div class="footer-name">Fernando Montero</div>
+    <div class="footer-company">Fersora Solutions</div>
+    <div class="footer-links">
+      <a href="https://github.com/fermonterom/fs-cortex" target="_blank">GitHub</a> &nbsp;&middot;&nbsp;
+      <a href="mailto:info@fersora.com">info@fersora.com</a> &nbsp;&middot;&nbsp;
+      <a href="https://fersora.com" target="_blank">fersora.com</a>
+    </div>
+    <div class="footer-meta">fs-cortex v3.6.5 &middot; Open source (MIT)</div>
+  </div>
+</footer>
+
+<script>
+(function() {
+  const sections = document.querySelectorAll('section[id]');
+  const navLinks = document.querySelectorAll('.nav a');
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        const id = entry.target.getAttribute('id');
+        navLinks.forEach(link => { link.classList.toggle('active', link.getAttribute('href') === '#' + id); });
+      }
+    });
+  }, { rootMargin: '-20% 0px -70% 0px', threshold: 0 });
+  sections.forEach(section => observer.observe(section));
+  navLinks.forEach(link => {
+    link.addEventListener('click', e => {
+      e.preventDefault();
+      const target = document.querySelector(link.getAttribute('href'));
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
+})();
+</script>
+
+</body>
+</html>

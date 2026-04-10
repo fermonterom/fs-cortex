@@ -4,6 +4,16 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.6.6] — 2026-04-10
+
+### Added
+- **README.md**: Usage Guide section — hooks table, periodic commands, daily workflow, weekly maintenance, knowledge evolution diagram
+- **docs/FEATURES-visual.html**: Standalone visual explainer page (fs-brand styled) — the problem, 4-step pipeline, before/after comparison, confidence lifecycle, daily workflow, 14 command cards, install guide. Designed for non-technical readers.
+
+### Changed
+- **docs/FEATURES.md**: Updated test counts to 159 (11 suites), version to 3.6.6
+- **.gitignore**: Added `!docs/FEATURES-visual.html` exception (public doc tracked in git)
+
 ## [3.6.5] — 2026-04-10
 
 ### Added

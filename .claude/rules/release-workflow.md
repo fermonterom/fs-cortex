@@ -57,6 +57,9 @@ If yes to any, update the corresponding README section. The README is the public
 `docs/FEATURES.md` is the complete feature inventory of the project. It is the ONLY
 file from docs/ tracked in git (the rest is local/internal).
 
+`docs/FEATURES-visual.html` is the public visual explainer — update version in
+footer when bumping version.
+
 **ALWAYS update FEATURES.md when:**
 - New feature, command, hook, or module added → add to the relevant section
 - Existing feature behavior changed → update the description

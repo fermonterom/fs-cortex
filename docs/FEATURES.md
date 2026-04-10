@@ -1,4 +1,4 @@
-# fs-cortex v3.6.5 — Feature Reference
+# fs-cortex v3.6.6 — Feature Reference
 
 > Complete inventory of all features, commands, hooks, modules, and capabilities.
 > Last updated: 2026-04-10
@@ -9,12 +9,21 @@
 
 fs-cortex is a continuous learning system for Claude Code that observes sessions, detects patterns, and crystallizes them into reusable knowledge — automatically.
 
-### 3-Level Knowledge Distillation
+### Knowledge Pipeline
 
 ```
-OBSERVATIONS (JSONL, 0 tokens)  →  INSTINCTS (YAML, confidence-gated)  →  LAWS (TXT, always injected)
-      async capture                    0.30-0.89 on trigger match            0.90+ one-liners
+OBSERVATIONS  →  PROPOSALS  →  INSTINCTS  →  LAWS
+(JSONL, async)   (pending)     (YAML, 0.30+)  (TXT, 0.90+)
+  observe.py      cx-analyze    cx-validate     cx-distill
+                                      ↓
+                               SKILLS / COMMANDS / RULES
+                                    (evolved/)
+                                     cx-evolve
 ```
+
+Parallel systems (not part of the confidence pipeline):
+- **Reflexes** (8 default) — deterministic rules, always fire on matcher
+- **Agents** (3) — specialized for pattern analysis, code review, and task planning
 
 ### Dual Injection Architecture
 
@@ -269,7 +278,7 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 
 ---
 
-## Tests (10 suites, 150 tests)
+## Tests (11 suites, 159 tests)
 
 | Suite | Tests | Coverage |
 |---|---|---|
@@ -367,3 +376,4 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 | v3.6.3 | 2026-04-10 | 150 tests (10 suites), uninstall safety guard, integrity tests |
 | v3.6.4 | 2026-04-10 | FEATURES.md public in git, internal docs untracked |
 | v3.6.5 | 2026-04-10 | PowerShell test suite (9 tests), CI windows-latest job |
+| v3.6.6 | 2026-04-10 | Usage Guide in README, visual HTML explainer, docs cleanup |

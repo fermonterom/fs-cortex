@@ -30,3 +30,4 @@ Thumbs.db
 # Docs — only FEATURES.md is public, rest stays local
 docs/
 !docs/FEATURES.md
+!docs/FEATURES-visual.html
