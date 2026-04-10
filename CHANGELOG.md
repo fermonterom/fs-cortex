@@ -4,6 +4,12 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.6.5] — 2026-04-10
+
+### Added
+- **`tests/test_install_ps1.ps1`**: 9 PowerShell tests — syntax validation, version consistency, security features (path traversal, chmod 600, atomic writes), backup categories, hook events, hook files, settings.json merge simulation
+- **CI `test-windows` job**: Runs on `windows-latest` with `pwsh` — first Windows coverage for install.ps1
+
 ## [3.6.4] — 2026-04-10
 
 ### Added
