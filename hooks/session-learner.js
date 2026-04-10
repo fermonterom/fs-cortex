@@ -367,7 +367,7 @@ function detectUserCorrections(observations) {
 // -------------------------------------------------------------------
 
 function detectWorkflowChains(observations, minCount) {
-  minCount = minCount || 3;
+  minCount = minCount || 5;
   const trigrams = {};
 
   for (let i = 0; i < observations.length - 2; i++) {
@@ -375,6 +375,8 @@ function detectWorkflowChains(observations, minCount) {
     const b = observations[i + 1].tool;
     const c = observations[i + 2].tool;
     if (!a || !b || !c) continue;
+    // Skip trivial same-tool chains (Bash->Bash->Bash is not a workflow)
+    if (a === b && b === c) continue;
     const key = a + '->' + b + '->' + c;
     if (!trigrams[key]) trigrams[key] = 0;
     trigrams[key]++;
@@ -605,6 +607,68 @@ function writeProposals(newProposals) {
 }
 
 // -------------------------------------------------------------------
+// Step 7b: Update memory.json stats (observation/instinct/law counts)
+// -------------------------------------------------------------------
+
+function updateMemoryStats() {
+  try {
+    const memPath = path.join(CORTEX_DIR, 'memory.json');
+    const mem = readJsonFile(memPath);
+    if (!mem || !mem.stats) return;
+
+    // Count observations across all projects
+    let obsCount = 0;
+    const projDir = PROJECTS_DIR;
+    try {
+      for (const pid of fs.readdirSync(projDir)) {
+        const obsFile = path.join(projDir, pid, 'observations.jsonl');
+        if (fs.existsSync(obsFile)) {
+          const content = fs.readFileSync(obsFile, 'utf8');
+          obsCount += content.split('\n').filter(l => l.trim()).length;
+        }
+      }
+    } catch (_) {}
+
+    // Count instincts
+    let globalInst = 0;
+    let projInst = 0;
+    try {
+      const globalDir = path.join(CORTEX_DIR, 'instincts', 'global');
+      if (fs.existsSync(globalDir)) {
+        globalInst = fs.readdirSync(globalDir).filter(f => f.endsWith('.yaml')).length;
+      }
+      for (const pid of fs.readdirSync(projDir)) {
+        const instDir = path.join(projDir, pid, 'instincts');
+        if (fs.existsSync(instDir)) {
+          projInst += fs.readdirSync(instDir).filter(f => f.endsWith('.yaml')).length;
+        }
+      }
+    } catch (_) {}
+
+    // Count laws
+    let lawCount = 0;
+    try {
+      const lawsDir = path.join(CORTEX_DIR, 'laws');
+      if (fs.existsSync(lawsDir)) {
+        lawCount = fs.readdirSync(lawsDir).filter(f => f.endsWith('.txt')).length;
+      }
+    } catch (_) {}
+
+    mem.stats.total_observations = obsCount;
+    mem.stats.total_instincts = globalInst + projInst;
+    mem.stats.total_laws = lawCount;
+    mem.stats.last_updated = TODAY;
+
+    const tmp = memPath + '.tmp.' + process.pid;
+    fs.writeFileSync(tmp, JSON.stringify(mem, null, 2), { mode: 0o600 });
+    fs.renameSync(tmp, memPath);
+    log(`Stats updated: ${obsCount} obs, ${globalInst + projInst} instincts, ${lawCount} laws`);
+  } catch (e) {
+    log(`Stats update failed: ${e.message}`);
+  }
+}
+
+// -------------------------------------------------------------------
 // Step 7: Write context.md
 // -------------------------------------------------------------------
 
@@ -744,6 +808,9 @@ async function main() {
 
     // Step 7: Write context.md
     writeContextFile(observations);
+
+    // Step 8: Update memory.json stats
+    updateMemoryStats();
 
     log('Session learner completed successfully');
   } catch (e) {

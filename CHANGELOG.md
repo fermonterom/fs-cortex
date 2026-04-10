@@ -4,6 +4,12 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.7.2] — 2026-04-10
+
+### Fixed
+- **session-learner.js**: Workflow chain detector now requires 5+ repetitions (was 3) and skips same-tool trigrams (Bash→Bash→Bash). Eliminates ~90% of noise proposals.
+- **session-learner.js**: Auto-updates memory.json stats (observations, instincts, laws) at end of each session. Stats were permanently stuck at 0.
+
 ## [3.7.1] — 2026-04-10
 
 ### Fixed
