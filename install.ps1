@@ -356,7 +356,52 @@ if ($ImportBackup) {
                 }
             }
         }
-        Print-Ok "Backup imported"
+        # Copy memory.json (user identity + stats)
+        $memSrc = Join-Path $tempDir.FullName "memory.json"
+        if (Test-Path $memSrc) {
+            $memDest = Join-Path $CortexDir "memory.json"
+            if (-not (Test-Path $memDest)) { Copy-Item $memSrc $memDest }
+        }
+        # Copy reflexes.json (user customizations)
+        $refSrc = Join-Path $tempDir.FullName "reflexes.json"
+        if (Test-Path $refSrc) {
+            $refDest = Join-Path $CortexDir "reflexes.json"
+            if (-not (Test-Path $refDest)) { Copy-Item $refSrc $refDest }
+        }
+        # Copy projects registry
+        $regSrc = Join-Path $tempDir.FullName "projects" "registry.json"
+        if (Test-Path $regSrc) {
+            $regDir = Join-Path $CortexDir "projects"
+            if (-not (Test-Path $regDir)) { New-Item -ItemType Directory -Path $regDir -Force | Out-Null }
+            Copy-Item $regSrc (Join-Path $regDir "registry.json") -Force
+        }
+        # Copy project-scoped instincts
+        $projInstDir = Join-Path $tempDir.FullName "projects"
+        if (Test-Path $projInstDir) {
+            Get-ChildItem $projInstDir -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+                $projInstSrc = Join-Path $_.FullName "instincts"
+                if (Test-Path $projInstSrc) {
+                    $projDest = Join-Path $CortexDir "projects" $_.Name "instincts"
+                    if (-not (Test-Path $projDest)) { New-Item -ItemType Directory -Path $projDest -Force | Out-Null }
+                    Copy-Item "$projInstSrc/*" $projDest -Force -ErrorAction SilentlyContinue
+                }
+            }
+        }
+        # Copy evolved content
+        $evolvedSrc = Join-Path $tempDir.FullName "evolved"
+        if (Test-Path $evolvedSrc) {
+            $evolvedDest = Join-Path $CortexDir "evolved"
+            if (-not (Test-Path $evolvedDest)) { New-Item -ItemType Directory -Path $evolvedDest -Force | Out-Null }
+            Copy-Item "$evolvedSrc/*" $evolvedDest -Force -ErrorAction SilentlyContinue
+        }
+        # Copy daily summaries
+        $dailySrc = Join-Path $tempDir.FullName "daily-summaries"
+        if (Test-Path $dailySrc) {
+            $dailyDest = Join-Path $CortexDir "daily-summaries"
+            if (-not (Test-Path $dailyDest)) { New-Item -ItemType Directory -Path $dailyDest -Force | Out-Null }
+            Copy-Item "$dailySrc/*" $dailyDest -Force -ErrorAction SilentlyContinue
+        }
+        Print-Ok "Backup imported (all 8 categories)"
         Remove-Item $tempDir.FullName -Recurse -Force -ErrorAction SilentlyContinue
     }
     catch {
@@ -387,8 +432,11 @@ mem["identity"]["name"] = os.environ.get("CX_USER_NAME", "")
 mem["identity"]["role"] = os.environ.get("CX_USER_ROLE", "")
 mem["identity"]["language"] = os.environ.get("CX_USER_LANG", "en")
 mem["stats"]["installed"] = datetime.datetime.now().strftime("%Y-%m-%d")
-with open(mem_path, "w") as f:
+import tempfile
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(mem_path), suffix=".tmp")
+with os.fdopen(fd, "w") as f:
     json.dump(mem, f, indent=2)
+os.replace(tmp, mem_path)
 '@ 2>$null
 
     # Copy seed laws
