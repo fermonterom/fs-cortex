@@ -78,15 +78,15 @@ def scrub_secrets(val):
     return s
 
 
-# ── Error Detection (9 patterns from Sinapsis) ──────────────────────
+# ── Error Detection (9 patterns — keep aligned with session-learner.js isError()) ──
 
 ERROR_PATTERNS = [
-    re.compile(r"\berror\b", re.I),
-    re.compile(r"\bfailed\b", re.I),
+    re.compile(r"(?:^|\s)error[:\s]", re.I | re.M),          # "error:" not "ErrorBoundary"
+    re.compile(r"(?:^|\s)failed(?!\s*:\s*0)", re.I | re.M),   # not "failed: 0"
     re.compile(r"\bexception\b", re.I),
     re.compile(r"\btraceback\b", re.I),
     re.compile(r"\bfatal\b", re.I),
-    re.compile(r"\bpanic\b", re.I),
+    re.compile(r"(?:^|\s)panic[:(]", re.I | re.M),            # "panic:" not Go panic()
     re.compile(r"\bsegfault\b", re.I),
     re.compile(r"\bOOM\b"),
     re.compile(r"\bcommand not found\b", re.I),

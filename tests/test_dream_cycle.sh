@@ -303,6 +303,45 @@ print('ok' if score >= 0 else 'negative')
 
 echo ""
 
+# ── Decay formula consistency ─────────────────────────────────────
+
+echo "--- Decay Formula Consistency ---"
+PYTHONPATH="$PROJECT_ROOT/hooks/lib" python3 -c "
+from dream_cycle import apply_staleness_decay
+from datetime import datetime, timedelta
+
+def make_inst(confidence, days_ago):
+    ts = (datetime.now() - timedelta(days=days_ago)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    return {'id': 'test', 'confidence': confidence, 'last_seen': ts, 'action': 'test'}
+
+# Test 1: 0.80 confidence, 61 days stale => 0.70 (linear: 0.80 - 0.05*2)
+# Use 61 to guarantee 2 full 30-day periods (staleness_score may be days-1)
+inst60 = make_inst(0.80, 61)
+active, _ = apply_staleness_decay([inst60])
+assert len(active) == 1, f'Expected active, got archived'
+assert abs(active[0]['confidence'] - 0.70) < 0.01, f'Expected ~0.70, got {active[0][\"confidence\"]}'
+print('PASS: decay(0.80, 61d) = 0.70')
+
+# Test 2: 0.80 confidence, 31 days stale => 0.75
+inst30 = make_inst(0.80, 31)
+active2, _ = apply_staleness_decay([inst30])
+assert abs(active2[0]['confidence'] - 0.75) < 0.01, f'Expected ~0.75, got {active2[0][\"confidence\"]}'
+print('PASS: decay(0.80, 31d) = 0.75')
+
+# Test 3: 0.80 confidence, 0 days stale => 0.80 (no decay)
+inst0 = make_inst(0.80, 0)
+active3, _ = apply_staleness_decay([inst0])
+assert abs(active3[0]['confidence'] - 0.80) < 0.01, f'Expected ~0.80, got {active3[0][\"confidence\"]}'
+print('PASS: decay(0.80, 0d) = 0.80')
+" 2>&1 | while IFS= read -r line; do
+  case "$line" in
+    PASS:*) pass "${line#PASS: }" ;;
+    *) echo "  $line"; fail "decay formula consistency" ;;
+  esac
+done
+
+echo ""
+
 # --- Summary ---
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

@@ -123,9 +123,13 @@ perms = s.get("permissions", {})
 perms["allow"] = [p for p in perms.get("allow", []) if "cortex" not in p]
 perms["additionalDirectories"] = [d for d in perms.get("additionalDirectories", []) if "cortex" not in d]
 
-with open(settings_file, "w") as f:
+import tempfile, stat
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(settings_file), suffix='.tmp')
+with os.fdopen(fd, 'w') as f:
     json.dump(s, f, indent=2)
     f.write("\n")
+os.chmod(tmp, stat.S_IRUSR | stat.S_IWUSR)
+os.replace(tmp, settings_file)
 PYEOF
     [ $? -eq 0 ] && echo "  Cleaned settings.json"
 fi

@@ -5,7 +5,7 @@
 # Reads stdin ONCE, loads all config ONCE, outputs combined context.
 #
 # Pipeline: stdin JSON -> node inline script -> matched reflexes + instincts -> JSON output
-# Limits: max 2 reflexes + max 2 instincts per injection, domain dedup on instincts
+# Limits: max 2 reflexes + max 3 instincts per injection, domain dedup on instincts
 # Safety: exits 0 silently on any error (never blocks Claude)
 
 set -e
@@ -25,9 +25,14 @@ command -v node >/dev/null 2>&1 || exit 0
 _CX_INPUT_FILE=$(mktemp "${TMPDIR:-/tmp}/cx-input-XXXXXX")
 chmod 600 "$_CX_INPUT_FILE"
 echo "$INPUT_JSON" > "$_CX_INPUT_FILE"
-trap "rm -f '$_CX_INPUT_FILE'" EXIT
+trap 'rm -f "'"$_CX_INPUT_FILE"'"' EXIT
 
 export _CX_INPUT_FILE
+# Validate CORTEX_DIR is under real home directory
+_REAL_HOME=$(eval echo ~"$(whoami)" 2>/dev/null || echo "$HOME")
+if [[ "$CORTEX_DIR" != "$_REAL_HOME/.claude/cortex" ]]; then
+  exit 0  # Refuse to run with non-standard CORTEX_DIR
+fi
 export _CX_CORTEX_DIR="$CORTEX_DIR"
 export _CX_REFLEXES_FILE="$REFLEXES_FILE"
 export _CX_GLOBAL_INSTINCTS_DIR="$GLOBAL_INSTINCTS_DIR"
@@ -81,42 +86,27 @@ function safeRegexTest(pattern, text) {
   }
 }
 
-/** Parse YAML frontmatter from instinct file (no npm deps).
- *  Extracts: id, trigger, action, confidence, domain, scope, project_id */
+// Import shared YAML utilities (used by session-learner.js too)
+const yamlUtils = require(path.join(__dirname, 'lib', 'yaml-utils'));
+
+/** Parse instinct YAML using shared yaml-utils module */
 function parseInstinctYaml(content) {
-  const match = content.match(/^---\s*\n([\s\S]*?)\n---/);
-  if (!match) return null;
-  const block = match[1];
-  const get = (key) => {
-    const m = block.match(new RegExp("^" + key + ":\\s*\"?([^\"\\n]+)\"?", "m"));
-    return m ? m[1].trim() : null;
-  };
-  const id = get("id");
-  const trigger = get("trigger");
-  const action = get("action");
-  if (!id || !trigger || !action) return null;
-  const conf = parseFloat(get("confidence") || "0");
+  const r = yamlUtils.parseYamlFrontmatter(content);
+  if (!r || !r.fields.id || !r.fields.trigger || !r.fields.action) return null;
+  const conf = typeof r.fields.confidence === 'number' ? r.fields.confidence : parseFloat(r.fields.confidence || '0');
   return {
-    id,
-    trigger,
-    action,
+    id: r.fields.id,
+    trigger: String(r.fields.trigger),
+    action: String(r.fields.action),
     confidence: isNaN(conf) ? 0 : conf,
-    domain: get("domain") || "general",
-    scope: get("scope") || "global",
-    project_id: get("project_id") || null,
+    domain: r.fields.domain || 'general',
+    scope: r.fields.scope || 'global',
+    project_id: r.fields.project_id || null,
   };
 }
 
 /** Collect .yaml files from a directory (non-recursive) */
-function listYamlFiles(dir) {
-  try {
-    return fs.readdirSync(dir)
-      .filter((f) => f.endsWith(".yaml") || f.endsWith(".yml"))
-      .map((f) => path.join(dir, f));
-  } catch {
-    return [];
-  }
-}
+const listYamlFiles = yamlUtils.listYamlFiles;
 
 /** Derive project_id + root from git remote URL: sha256(url)[0:12] */
 function detectProject(cwd) {

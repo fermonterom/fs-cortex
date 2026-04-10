@@ -36,9 +36,17 @@ const TIMEOUT = setTimeout(() => {
 // Utilities
 // -------------------------------------------------------------------
 
+const MAX_LOG_BYTES = 512 * 1024; // 512KB
+
 function log(msg) {
   try {
     ensureDir(LOG_DIR);
+    // Rotate if oversized
+    try {
+      if (fs.existsSync(LOG_PATH) && fs.statSync(LOG_PATH).size > MAX_LOG_BYTES) {
+        fs.renameSync(LOG_PATH, LOG_PATH + '.1');
+      }
+    } catch (_) {}
     const line = `[${now()}] ${msg}\n`;
     fs.appendFileSync(LOG_PATH, line);
   } catch (_) {
@@ -249,12 +257,12 @@ function detectErrorResolutions(observations) {
 }
 
 function isError(obs) {
-  // Check explicit err field
+  // Check explicit err field (set by observe.py)
   if (obs.err === true) return true;
-  // Check output for common error patterns
+  // Check output — patterns aligned with observe.py ERROR_PATTERNS
   const output = String(obs.output || '');
   if (!output) return false;
-  return /\b(error|Error|ERROR|ENOENT|EACCES|EPERM|failed|Failed|FAILED|exception|Exception|denied|not found|No such file)\b/.test(output);
+  return /(?:^|\s)error[:\s]|(?:^|\s)failed(?!\s*:\s*0)|\bexception\b|\btraceback\b|\bfatal\b|(?:^|\s)panic[:(]|\bsegfault\b|\bOOM\b|\bcommand not found\b|\bENOENT\b|\bEACCES\b|\bEPERM\b/im.test(output);
 }
 
 // -------------------------------------------------------------------
@@ -297,7 +305,7 @@ function detectRepetitions(observations) {
 }
 
 // -------------------------------------------------------------------
-// Step 3b: Detect user corrections (same file edited 2+ times)
+// Step 3b: Detect user corrections (same file edited 3+ times with overlapping regions)
 // -------------------------------------------------------------------
 
 function extractFilePath(input) {
@@ -305,6 +313,20 @@ function extractFilePath(input) {
   const s = String(input);
   const m = s.match(/"file_path"\s*:\s*"([^"]+)"/);
   return m ? m[1] : null;
+}
+
+function hasOverlappingEdits(edits) {
+  // Check if any edits target overlapping old_string regions (true corrections)
+  const oldStrings = edits.map(e => {
+    const m = String(e.input || '').match(/"old_string"\s*:\s*"([^"]{0,200})"/);
+    return m ? m[1] : null;
+  }).filter(Boolean);
+  for (let i = 0; i < oldStrings.length; i++) {
+    for (let j = i + 1; j < oldStrings.length; j++) {
+      if (oldStrings[i].includes(oldStrings[j]) || oldStrings[j].includes(oldStrings[i])) return true;
+    }
+  }
+  return false;
 }
 
 function detectUserCorrections(observations) {
@@ -321,13 +343,14 @@ function detectUserCorrections(observations) {
   }
 
   for (const [file, edits] of Object.entries(fileEdits)) {
-    if (edits.length >= 2) {
+    // Require 3+ edits AND overlapping regions to reduce false positives
+    if (edits.length >= 3 && hasOverlappingEdits(edits)) {
       const hash = shortHash(file);
       corrections.push({
         id: `correction-${hash}`,
         trigger: `Edit.*${path.basename(file).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
         action: `User corrected edits to ${sanitizeProposalAction(path.basename(file))} (${edits.length} times). Review pattern.`,
-        confidence: 0.50,
+        confidence: 0.40,
         domain: 'user-preference',
         source: 'session-learner:correction',
         status: 'pending',

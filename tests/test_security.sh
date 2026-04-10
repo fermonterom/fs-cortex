@@ -61,7 +61,7 @@ else:
 # --- Test 4: Malicious instinct validation ---
 echo "Test 4: Malicious instinct rejected by validator"
 SANDBOX=$(mktemp -d)
-trap "rm -rf $SANDBOX" EXIT
+trap "rm -rf '$SANDBOX'" EXIT
 
 cat > "$SANDBOX/malicious.yaml" << 'YAMLEOF'
 ---
