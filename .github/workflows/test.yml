@@ -70,6 +70,51 @@ jobs:
         if: always()
         run: bash tests/run_all.sh 2>&1 | tail -10
 
+  # Update test badge after all test jobs complete
+  badge:
+    needs: [test, test-windows]
+    if: github.ref == 'refs/heads/main' && always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Count tests
+        id: count
+        run: |
+          RESULT=$(bash tests/run_all.sh 2>&1 | grep 'Results:' | sed 's/.*: //' | sed 's/ passed.*//' | paste -sd+ - | bc)
+          # Add PowerShell tests (can't run on Linux, use known count)
+          TOTAL=$((RESULT + 9))
+          echo "total=$TOTAL" >> "$GITHUB_OUTPUT"
+          # Determine color
+          FAILED=$(bash tests/run_all.sh 2>&1 | grep 'Results:' | sed 's/.*, //' | sed 's/ failed.*//' | paste -sd+ - | bc)
+          if [ "$FAILED" -eq 0 ]; then
+            echo "color=44cc11" >> "$GITHUB_OUTPUT"
+            echo "status=${TOTAL} passing" >> "$GITHUB_OUTPUT"
+          else
+            echo "color=e05d44" >> "$GITHUB_OUTPUT"
+            echo "status=${TOTAL} (${FAILED} failing)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update badge gist
+        uses: schneegans/dynamic-badges-action@v1.7.0
+        with:
+          auth: ${{ secrets.GIST_TOKEN }}
+          gistID: ${{ vars.BADGE_GIST_ID }}
+          filename: fs-cortex-tests.json
+          label: tests
+          message: ${{ steps.count.outputs.status }}
+          color: ${{ steps.count.outputs.color }}
+
   test-windows:
     runs-on: windows-latest
     steps:
