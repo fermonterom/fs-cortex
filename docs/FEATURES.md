@@ -1,4 +1,4 @@
-# fs-cortex v3.6.6 — Feature Reference
+# fs-cortex v3.7.0 — Feature Reference
 
 > Complete inventory of all features, commands, hooks, modules, and capabilities.
 > Last updated: 2026-04-10
@@ -16,9 +16,9 @@ OBSERVATIONS  →  PROPOSALS  →  INSTINCTS  →  LAWS
 (JSONL, async)   (pending)     (YAML, 0.30+)  (TXT, 0.90+)
   observe.py      cx-analyze    cx-validate     cx-distill
                                       ↓
-                               SKILLS / COMMANDS / RULES
-                                    (evolved/)
-                                     cx-evolve
+                               SKILLS / COMMANDS / RULES / AGENTS
+                                         (evolved/)
+                                          cx-evolve
 ```
 
 Parallel systems (not part of the confidence pipeline):
@@ -92,11 +92,12 @@ Parallel systems (not part of the confidence pipeline):
 - `CORTEX-MANAGED` marker
 
 ### session-learner.js — Pattern Detection at Session End
-- **4 pattern detectors**:
+- **5 pattern detectors**:
   1. Error-fix pairs (is_error flag → Edit/Write within 10-event window)
   2. Repetitions (same tool+input 5+ times)
   3. User corrections (same file edited 3+ times with overlapping regions — reduces false positives)
   4. Workflow chains (3-tool trigrams repeated 3+ times)
+  5. Agent patterns (recurring Agent tool usage with similar descriptions, Jaccard >= 0.40, 3+ uses → agent-evolution proposals)
 - **sanitizeProposalAction()**: sanitizes all proposal text against prompt injection
 - Auto-generates proposals with `session_date` for cross-day tracking
 - Preserves user validation status (approved/rejected) on proposal dedup
@@ -150,7 +151,7 @@ Parallel systems (not part of the confidence pipeline):
 | `/cx-analyze` | Detect patterns in observations → proposals (Opus 1M agent) | ~5K |
 | `/cx-distill` | Promote instincts to laws (0.90+), apply decay, Jaccard promotions | ~800 |
 | `/cx-validate` | Review and accept/reject proposals interactively (shorthand UX) | ~500 |
-| `/cx-evolve` | Cluster mature instincts → skills/commands/rules | ~1K |
+| `/cx-evolve` | Cluster mature instincts → skills/commands/rules/agents | ~1K |
 | `/cx-dream` | Dream Cycle: dedup, contradictions, staleness, regex, health score | ~600 |
 | `/cx-router` | Command catalog with token costs, session budget estimate, next action | ~50 |
 | `/cx-promote` | Cross-project instinct promotion (Jaccard ≥0.70, 2+ projects) | ~300 |
@@ -335,7 +336,8 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 ├── evolved/
 │   ├── skills/
 │   ├── commands/
-│   └── rules/
+│   ├── rules/
+│   └── agents/
 ├── daily-summaries/            # EOD summaries (*.md)
 ├── exports/                    # Portable skills
 └── log/                        # Session learner logs
@@ -377,3 +379,4 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 | v3.6.4 | 2026-04-10 | FEATURES.md public in git, internal docs untracked |
 | v3.6.5 | 2026-04-10 | PowerShell test suite (9 tests), CI windows-latest job |
 | v3.6.6 | 2026-04-10 | Usage Guide in README, visual HTML explainer, docs cleanup |
+| v3.7.0 | 2026-04-10 | Agent evolution: cx-evolve generates agents, session-learner detects Agent patterns |

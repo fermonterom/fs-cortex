@@ -21,7 +21,7 @@
 Observe (hooks)  →  Analyze  →  Validate  →  Distill  →  Evolve  →  Audit
     auto             manual      manual       manual      manual     manual
 
-   OBSERVATIONS  →  PROPOSALS  →  INSTINCTS  →  LAWS  →  SKILLS/COMMANDS/RULES
+   OBSERVATIONS  →  PROPOSALS  →  INSTINCTS  →  LAWS  →  SKILLS/COMMANDS/RULES/AGENTS
    (JSONL, 0 tok)                  (YAML)       (TXT)     (evolved/)
 ```
 
@@ -182,7 +182,7 @@ You work → Cortex observes → /cx-analyze detects patterns → /cx-validate y
 | `/cx-analyze` | Detect patterns in observations → proposals (with descriptions) |
 | `/cx-distill` | Distill laws (universality gate), decay, Jaccard promotions |
 | `/cx-validate` | Review proposals with Claude verdicts + shorthand input |
-| `/cx-evolve` | Cluster instincts → skills/commands/rules (checks existing skills) |
+| `/cx-evolve` | Cluster instincts → skills/commands/rules/agents (checks existing) |
 | `/cx-dream` | Dream Cycle: dedup, contradictions, staleness, regex validation, health score |
 | `/cx-router` | Command catalog with token costs and next action suggestion |
 | `/cx-promote` | Promote project instincts to global (cross-project, Jaccard ≥0.70) |

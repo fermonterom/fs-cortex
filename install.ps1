@@ -20,7 +20,7 @@ $CommandsDir = Join-Path $ClaudeDir "commands"
 $HooksDir = Join-Path $ClaudeDir "hooks" "cortex"
 $SettingsFile = Join-Path $ClaudeDir "settings.json"
 $ClaudeMd = Join-Path $ClaudeDir "CLAUDE.md"
-$NewVersion = "3.6.6"
+$NewVersion = "3.7.0"
 
 # --- Helpers ---
 
@@ -119,7 +119,7 @@ if (-not $HasCortex) {
 Print-Step "Creating directory structure..."
 $dirs = @(
     "laws/archive", "instincts/global", "instincts/archive",
-    "projects", "evolved/skills", "evolved/commands", "evolved/rules",
+    "projects", "evolved/skills", "evolved/commands", "evolved/rules", "evolved/agents",
     "exports", "daily-summaries", "log"
 )
 foreach ($d in $dirs) {

@@ -4,6 +4,18 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.7.0] — 2026-04-10
+
+### Added
+- **Agent evolution**: `/cx-evolve` now generates reusable agents from recurring Agent tool patterns
+- **Agent pattern detector**: `session-learner.js` detects recurring Agent tool usage (3+ similar descriptions, Jaccard >= 0.40) and proposes `agent-evolution` instincts
+- **`evolved/agents/`** directory in installer (install.sh + install.ps1) for evolved agent definitions
+
+### Changed
+- **cx-evolve.md**: Updated artifact types table to include Agent (.md), added agent generation section with system prompt synthesis, tool access, and dual-write to `evolved/agents/` + `~/.claude/agents/`
+- **Knowledge pipeline**: `SKILLS/COMMANDS/RULES` → `SKILLS/COMMANDS/RULES/AGENTS` in all docs and diagrams (README, FEATURES.md, FEATURES-visual.html)
+- **session-learner.js**: 5 pattern detectors (was 4) — added `detectAgentPatterns()`
+
 ## [3.6.6] — 2026-04-10
 
 ### Added

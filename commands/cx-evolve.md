@@ -1,6 +1,6 @@
 ---
 name: cx-evolve
-description: Evolve clusters of mature instincts into skills, commands, or rules
+description: Evolve clusters of mature instincts into skills, commands, rules, or agents
 command: true
 ---
 
@@ -52,6 +52,7 @@ For each cluster, determine the best artifact type:
 | All about same technology/API | Skill (.md) | fs-supabase-rls.md |
 | All about same workflow step | Command (.md) | fs-pre-deploy-check.md |
 | All simple guard rules | Passive Rule (reflexes.json) | New entries in reflexes.json |
+| Recurring Agent patterns | Agent (.md) | fs-code-reviewer.md |
 
 #### 3a: Check for pending evolved skills
 
@@ -129,6 +130,18 @@ For **Rules**: The canonical output is new entries appended to `~/.claude/cortex
 - matcher, condition, action derived from instinct triggers/actions
 - A backup copy of the generated rule entries is also written to `~/.claude/cortex/evolved/rules/` for reference (not authoritative — reflexes.json is the source of truth)
 
+For **Agents**: Generate an agent .md with:
+- Metadata (name, description, model recommendation)
+- System prompt synthesized from the recurring Agent prompts
+- Tool access requirements (which tools the agent needs)
+- Invocation example (`Agent tool` with the prompt template)
+- Written to `~/.claude/cortex/evolved/agents/` and also to `~/.claude/agents/` for immediate use
+
+Agent detection: session-learner.js detects Agent tool observations with similar
+descriptions (Jaccard >= 0.40 on description words, 3+ occurrences). These appear
+as proposals with domain `agent-evolution`. When evolving, cx-evolve synthesizes
+the common prompt pattern into a reusable agent definition.
+
 For **Merges**: Read the target skill, identify the correct section, and append the new instinct content:
 - Show a preview/diff of the proposed changes to the user BEFORE writing (merges modify existing files — this is more invasive than creating new ones)
 - Add new content under the most relevant existing section
@@ -137,8 +150,9 @@ For **Merges**: Read the target skill, identify the correct section, and append 
 
 ### Step 5: Write and Mark Sources
 
-1. Write NEW artifacts to `~/.claude/cortex/evolved/{skills,commands,rules}/`
-2. Write MERGED content directly into the existing skill file in `~/.claude/skills/`
+1. Write NEW artifacts to `~/.claude/cortex/evolved/{skills,commands,rules,agents}/`
+2. Write AGENTS also to `~/.claude/agents/` for immediate availability
+3. Write MERGED content directly into the existing skill file in `~/.claude/skills/`
 3. All generated files MUST use `fs-` prefix (e.g., `fs-supabase-rls.md`)
 4. Update source instincts: set `evolved_to: "{artifact-id}"` in their YAML
 

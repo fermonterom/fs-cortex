@@ -400,6 +400,62 @@ function detectWorkflowChains(observations, minCount) {
 }
 
 // -------------------------------------------------------------------
+// Step 3d: Detect recurring Agent tool patterns (same purpose across sessions)
+// -------------------------------------------------------------------
+
+function detectAgentPatterns(observations) {
+  const agentObs = observations.filter(o => o.tool === 'Agent');
+  if (agentObs.length < 2) return [];
+
+  // Extract description from each Agent observation
+  const descriptions = [];
+  for (const obs of agentObs) {
+    try {
+      const input = typeof obs.input === 'string' ? JSON.parse(obs.input) : obs.input;
+      if (input && input.description) {
+        descriptions.push({ desc: String(input.description).toLowerCase().trim(), obs });
+      }
+    } catch (_) {}
+  }
+
+  // Group by similar descriptions (Jaccard on words)
+  const groups = {};
+  for (const d of descriptions) {
+    const words = new Set(d.desc.split(/\s+/).filter(w => w.length > 2));
+    let matched = false;
+    for (const key of Object.keys(groups)) {
+      const keyWords = new Set(key.split(/\s+/).filter(w => w.length > 2));
+      const inter = [...words].filter(w => keyWords.has(w)).length;
+      const union = new Set([...words, ...keyWords]).size;
+      if (union > 0 && inter / union >= 0.40) {
+        groups[key].push(d);
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) groups[d.desc] = [d];
+  }
+
+  // Propose agent evolution for groups with 3+ similar uses
+  return Object.entries(groups)
+    .filter(([_, items]) => items.length >= 3)
+    .map(([desc, items]) => {
+      const hash = shortHash('agent-' + desc);
+      return {
+        id: `agent-pattern-${hash}`,
+        trigger: 'Agent',
+        action: sanitizeProposalAction(`Recurring agent pattern: "${desc}" (${items.length} uses). Consider evolving into a dedicated agent with /cx-evolve.`),
+        confidence: Math.min(0.70, 0.40 + items.length * 0.05),
+        domain: 'agent-evolution',
+        source: 'session-learner:agent-pattern',
+        status: 'pending',
+        detected: TODAY,
+        session: items[0].obs._resolvedSession || items[0].obs.sid || 'unknown',
+      };
+    });
+}
+
+// -------------------------------------------------------------------
 // Step 4: Update existing instinct YAML files
 // -------------------------------------------------------------------
 
@@ -653,6 +709,10 @@ async function main() {
     const workflowProposals = detectWorkflowChains(observations);
     log(`Detected ${workflowProposals.length} workflow chain(s)`);
 
+    // Step 3d: Detect agent patterns
+    const agentProposals = detectAgentPatterns(observations);
+    log(`Detected ${agentProposals.length} agent pattern(s)`);
+
     // Step 4: Update instinct YAML files
     updateInstincts(observations);
 
@@ -665,6 +725,7 @@ async function main() {
       ...repetitionProposals,
       ...correctionProposals,
       ...workflowProposals,
+      ...agentProposals,
     ].map((p) => ({ ...p, session_date: TODAY }));
     writeProposals(allProposals);
 
@@ -691,6 +752,6 @@ if (require.main === module) {
   module.exports = {
     isError, extractFilePath, sanitizeProposalAction,
     detectErrorResolutions, detectRepetitions,
-    detectUserCorrections, detectWorkflowChains,
+    detectUserCorrections, detectWorkflowChains, detectAgentPatterns,
   };
 }
