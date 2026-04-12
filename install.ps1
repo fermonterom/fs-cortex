@@ -20,7 +20,7 @@ $CommandsDir = Join-Path $ClaudeDir "commands"
 $HooksDir = Join-Path $ClaudeDir "hooks" "cortex"
 $SettingsFile = Join-Path $ClaudeDir "settings.json"
 $ClaudeMd = Join-Path $ClaudeDir "CLAUDE.md"
-$NewVersion = "3.10.5"
+$NewVersion = "3.10.6"
 
 # --- Helpers ---
 
@@ -143,21 +143,36 @@ if (-not (Test-Path $reflexesDest)) {
 }
 else {
     Print-Warn "reflexes.json exists, preserving user data"
-    # Migrate new reflexes into existing file (v3.8.0+)
+    # Migrate reflexes: add new + update matcher/condition/action (v3.10.6+)
+    # Preserves user runtime data: fireCount, lastFired, enabled
     try {
         $userReflexes = Get-Content $reflexesDest -Raw | ConvertFrom-Json
         $defaultReflexes = Get-Content (Join-Path $ScriptDir "core" "reflexes.default.json") -Raw | ConvertFrom-Json
-        $existingIds = @($userReflexes.reflexes | ForEach-Object { $_.id })
-        $added = 0
-        foreach ($r in $defaultReflexes.reflexes) {
-            if ($r.id -notin $existingIds) {
-                $userReflexes.reflexes += $r
+        $userById = @{}
+        foreach ($u in $userReflexes.reflexes) { $userById[$u.id] = $u }
+        $added = 0; $updated = 0
+        foreach ($d in $defaultReflexes.reflexes) {
+            if (-not $userById.ContainsKey($d.id)) {
+                $userReflexes.reflexes += $d
                 $added++
+            } else {
+                $u = $userById[$d.id]
+                $changed = $false
+                foreach ($field in @("matcher", "condition", "action", "severity")) {
+                    if ($d.PSObject.Properties[$field] -and $u.$field -ne $d.$field) {
+                        $u.$field = $d.$field
+                        $changed = $true
+                    }
+                }
+                if ($changed) { $updated++ }
             }
         }
-        if ($added -gt 0) {
+        if ($added -gt 0 -or $updated -gt 0) {
             $userReflexes | ConvertTo-Json -Depth 10 | Set-Content $reflexesDest -Encoding UTF8
-            Write-Host "  Migrated $added new reflex(es)"
+            $parts = @()
+            if ($added -gt 0) { $parts += "$added new" }
+            if ($updated -gt 0) { $parts += "$updated updated" }
+            Write-Host "  Reflexes migrated: $($parts -join ', ')"
         }
     } catch { Write-Warning "  Reflex migration skipped: $_" }
 }

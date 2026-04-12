@@ -4,6 +4,11 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.10.6] — 2026-04-12
+
+### Fixed
+- **install.sh/ps1**: Reflex migration now updates existing reflexes (matcher, condition, action, severity) from defaults — not just adds new ones. Preserves user runtime data (fireCount, lastFired, enabled). Previously a reflex bug fix required manual editing of `~/.claude/cortex/reflexes.json`.
+
 ## [3.10.5] — 2026-04-12
 
 ### Fixed

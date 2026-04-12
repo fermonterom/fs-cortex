@@ -21,7 +21,7 @@ COMMANDS_DIR="$CLAUDE_DIR/commands"
 HOOKS_DIR="$CLAUDE_DIR/hooks/cortex"
 SETTINGS_FILE="$CLAUDE_DIR/settings.json"
 CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
-NEW_VERSION="3.10.5"
+NEW_VERSION="3.10.6"
 
 print_header() {
     echo ""
@@ -147,7 +147,8 @@ if [ ! -f "$CORTEX_DIR/reflexes.json" ]; then
     print_ok "Created reflexes.json"
 else
     print_warn "reflexes.json exists, preserving user data"
-    # Migrate new reflexes into existing file (v3.8.0+)
+    # Migrate reflexes: add new + update matcher/condition/action of existing (v3.10.6+)
+    # Preserves user runtime data: fireCount, lastFired, enabled
     if command -v python3 >/dev/null 2>&1; then
         python3 -c "
 import json, sys
@@ -156,15 +157,27 @@ dpath = '$SCRIPT_DIR/core/reflexes.default.json'
 try:
     with open(rpath) as f: user = json.load(f)
     with open(dpath) as f: defaults = json.load(f)
-    existing_ids = {r['id'] for r in user.get('reflexes', [])}
-    added = 0
-    for r in defaults.get('reflexes', []):
-        if r['id'] not in existing_ids:
-            user['reflexes'].append(r)
+    user_by_id = {r['id']: r for r in user.get('reflexes', [])}
+    added, updated = 0, 0
+    for d in defaults.get('reflexes', []):
+        if d['id'] not in user_by_id:
+            user['reflexes'].append(d)
             added += 1
-    if added:
+        else:
+            u = user_by_id[d['id']]
+            changed = False
+            for field in ('matcher', 'condition', 'action', 'severity'):
+                if field in d and u.get(field) != d[field]:
+                    u[field] = d[field]
+                    changed = True
+            if changed:
+                updated += 1
+    if added or updated:
         with open(rpath, 'w') as f: json.dump(user, f, indent=2)
-        print(f'  Migrated {added} new reflex(es)')
+        parts = []
+        if added: parts.append(str(added) + ' new')
+        if updated: parts.append(str(updated) + ' updated')
+        print('  Reflexes migrated: ' + ', '.join(parts))
 except Exception as e:
     print(f'  Reflex migration skipped: {e}', file=sys.stderr)
 " 2>/dev/null
