@@ -12,13 +12,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: ShellCheck
-        run: shellcheck --severity=error hooks/observe.sh hooks/session-start.sh tests/*.sh install.sh uninstall.sh
+        run: shellcheck --severity=error hooks/injector.sh tests/*.sh install.sh uninstall.sh
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.13'
       - name: Python lint
-        run: pip install flake8 && flake8 hooks/*.py --max-line-length=120 --select=E9,F63,F7,F82
+        run: pip install flake8 && flake8 hooks/*.py hooks/lib/*.py --max-line-length=120 --select=E9,F63,F7,F82
 
   test:
     strategy:

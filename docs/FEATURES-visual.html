@@ -291,7 +291,7 @@ pre code { background: none; padding: 0; color: inherit; }
 </div>
 
 <div class="callout anim" style="--i:16">
-  <strong>Decay natural:</strong> Si no usas un patron durante 30 dias, su confianza baja -0.05. Despues de 90 dias sin uso, se archiva automaticamente. Tu conocimiento activo siempre esta fresco y relevante.
+  <strong>Decay natural:</strong> Si no usas un patron durante 30 dias, su confianza baja -0.05. Despues de 90 dias sin uso, se archiva automaticamente. Ademas, los instintos con 60+ dias sin uso se saltan silenciosamente en la inyeccion, sin esperar al ciclo de limpieza. Tu conocimiento activo siempre esta fresco y relevante.
 </div>
 </section>
 
@@ -304,7 +304,7 @@ pre code { background: none; padding: 0; color: inherit; }
   <table>
     <tr><th>Hook</th><th>Cuando</th><th>Que hace</th></tr>
     <tr><td><code>observe.py</code></td><td>Cada herramienta</td><td>Graba observaciones (~70ms, 0 tokens)</td></tr>
-    <tr><td><code>session-start.sh</code></td><td>Al abrir sesion</td><td>Inyecta leyes + contexto + resumen</td></tr>
+    <tr><td><code>session-start.py</code></td><td>Al abrir sesion</td><td>Inyecta leyes + contexto + resumen</td></tr>
     <tr><td><code>injector.sh</code></td><td>Cada herramienta</td><td>Inyecta instintos y reflexes relevantes</td></tr>
     <tr><td><code>session-learner.js</code></td><td>Al cerrar sesion</td><td>Detecta patrones y genera propuestas</td></tr>
   </table>
@@ -325,7 +325,7 @@ pre code { background: none; padding: 0; color: inherit; }
 
 <!-- SECTION 6: COMMANDS -->
 <section id="comandos" class="section">
-<h2 class="anim" style="--i:20">14 comandos a tu disposicion</h2>
+<h2 class="anim" style="--i:20">16 comandos a tu disposicion</h2>
 
 <div class="cmd-group anim" style="--i:21">
   <h4>Aprendizaje (lo esencial)</h4>
@@ -334,6 +334,7 @@ pre code { background: none; padding: 0; color: inherit; }
     <div class="cmd-card"><code>/cx-validate</code><p>Revisa y confirma propuestas</p></div>
     <div class="cmd-card"><code>/cx-distill</code><p>Promueve instintos a leyes</p></div>
     <div class="cmd-card"><code>/cx-gotcha</code><p>Captura un error como instinto</p></div>
+    <div class="cmd-card"><code>/cx-downvote</code><p>Rechaza instintos incorrectos</p></div>
   </div>
 </div>
 
@@ -356,6 +357,7 @@ pre code { background: none; padding: 0; color: inherit; }
     <div class="cmd-card"><code>/cx-restore</code><p>Restaurar desde backup</p></div>
     <div class="cmd-card"><code>/cx-export</code><p>Exportar como skill</p></div>
     <div class="cmd-card"><code>/cx-router</code><p>Catalogo de comandos</p></div>
+    <div class="cmd-card"><code>/cx-retro</code><p>Retrospectiva semanal</p></div>
   </div>
 </div>
 </section>
@@ -398,7 +400,7 @@ cd fs-cortex</code></pre>
       <a href="mailto:info@fersora.com">info@fersora.com</a> &nbsp;&middot;&nbsp;
       <a href="https://fersora.com" target="_blank">fersora.com</a>
     </div>
-    <div class="footer-meta">fs-cortex v3.10.2 &middot; Open source (MIT)</div>
+    <div class="footer-meta">fs-cortex v3.10.3 &middot; Open source (MIT)</div>
   </div>
 </footer>
 

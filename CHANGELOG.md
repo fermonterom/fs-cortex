@@ -4,6 +4,12 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.10.4] — 2026-04-12
+
+### Fixed
+- **CI**: ShellCheck step referenced deleted `observe.sh` and `session-start.sh` — updated to `injector.sh` only. Added `hooks/lib/*.py` to flake8 lint scope.
+- **FEATURES-visual.html**: Added cx-downvote + cx-retro cards, updated session-start.sh→.py, "14→16 comandos", inline staleness mention, footer version.
+
 ## [3.10.3] — 2026-04-12
 
 ### Added
