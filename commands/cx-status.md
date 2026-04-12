@@ -64,7 +64,21 @@ INSTINCTS:
 
 Read `~/.claude/cortex/projects/registry.json`.
 
-Display table:
+For EACH project hash in the registry, gather real data:
+- **OBS**: count lines in `~/.claude/cortex/projects/<hash>/observations.jsonl` (use `wc -l`). Show 0 if file missing.
+- **INST**: count `*.yaml` files in `~/.claude/cortex/projects/<hash>/instincts/` (use `ls | wc -l`). Show 0 if dir missing.
+
+IMPORTANT: Do NOT skip projects or show "—" placeholders. Run a single bash loop over ALL hashes to collect counts efficiently:
+
+```bash
+for hash in $(cat ~/.claude/cortex/projects/registry.json | python3 -c "import json,sys; [print(k) for k in json.load(sys.stdin)]"); do
+  obs=$(wc -l < ~/.claude/cortex/projects/$hash/observations.jsonl 2>/dev/null || echo 0)
+  inst=$(ls ~/.claude/cortex/projects/$hash/instincts/*.yaml 2>/dev/null | wc -l | tr -d ' ')
+  echo "$hash $obs $inst"
+done
+```
+
+Display table sorted by LAST SEEN descending:
 
 ```
 PROJECTS:

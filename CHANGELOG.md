@@ -4,6 +4,11 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.7.4] — 2026-04-12
+
+### Fixed
+- **cx-status.md**: Step 3 (Projects) now explicitly counts observations and instincts per project hash via bash loop instead of relying on LLM inference. Previously showed "—" for all projects except the current one.
+
 ## [3.7.3] — 2026-04-10
 
 ### Changed
