@@ -4,6 +4,14 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.10.2] — 2026-04-12
+
+### Fixed
+- **FEATURES.md**: Added cx-downvote and cx-retro to commands table (14→16). Updated hook references session-start.sh→.py, observe.sh→.py. Updated test counts (8/8/16 for observe/learner/injector).
+- **README.md**: Updated commands table (14→16, added cx-downvote, cx-retro). Updated reflexes table (8→10, added instinct-downvote, capture-decision).
+- **SKILL.md**: Updated version v3.6→v3.10. Added cx-downvote, cx-retro to commands table and frontmatter description.
+- **FEATURES-visual.html**: Updated footer version to v3.10.2.
+
 ## [3.10.1] — 2026-04-12
 
 ### Fixed

@@ -1,4 +1,4 @@
-# fs-cortex v3.10.1 — Feature Reference
+# fs-cortex v3.10.2 — Feature Reference
 
 > Complete inventory of all features, commands, hooks, modules, and capabilities.
 > Last updated: 2026-04-12
@@ -38,7 +38,7 @@ Parallel systems (not part of the confidence pipeline):
 |---|---|---|---|---|
 | Observer | `observe.py` | Pre/PostToolUse | Async (0 tokens) | 10s |
 | Injector | `injector.sh` | PreToolUse | Sync | 3s |
-| Session Start | `session-start.sh` | SessionStart + /compact | Sync | 5s |
+| Session Start | `session-start.py` | SessionStart + /compact | Sync | 5s |
 | Session Learner | `session-learner.js` | Stop | Sync | 15s |
 
 ---
@@ -112,7 +112,7 @@ Parallel systems (not part of the confidence pipeline):
 - Exports functions for testability via `require.main` guard
 - **Error patterns aligned** with observe.py (9 + ENOENT/EACCES/EPERM)
 
-### observe.sh — Thin Wrapper
+### observe.py — Observer (direct invocation, no wrapper)
 - 12-line bash wrapper that delegates to `observe.py`
 - Detects python3/python automatically
 - Supports `CORTEX_PYTHON` env var override
@@ -143,7 +143,7 @@ Parallel systems (not part of the confidence pipeline):
 
 ---
 
-## Commands (14)
+## Commands (16)
 
 | Command | Purpose | Token Cost |
 |---|---|---|
@@ -158,6 +158,8 @@ Parallel systems (not part of the confidence pipeline):
 | `/cx-audit` | Token overhead, duplicates, conflicts, cleanup | ~400 |
 | `/cx-eod` | End-of-day summary for next session | ~300 |
 | `/cx-gotcha` | Capture error→fix as high-priority instinct | ~200 |
+| `/cx-downvote` | Negative feedback on incorrect instinct injection (reduces confidence) | ~100 |
+| `/cx-retro` | Weekly retrospective: command usage, instinct activations, health trend | ~200 |
 | `/cx-export` | Generate portable skill for Claude.ai or sharing | ~500 |
 | `/cx-backup` | Create portable .tar.gz backup for machine transfer | ~100 |
 | `/cx-restore` | Import knowledge from backup archive | ~200 |
@@ -279,20 +281,20 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 
 ---
 
-## Tests (11 suites, 159 tests)
+## Tests (11 suites, 155 tests)
 
 | Suite | Tests | Coverage |
 |---|---|---|
 | `test_security.sh` | 7 | Injection, command injection, scrubbing, validation |
 | `test_dream_cycle.sh` | 26 | Jaccard, contradictions, staleness, regex, health, **decay formula consistency** |
-| `test_observe.sh` | 7 | Scrubbing, is_error, dedup, atomic write, e2e, perf |
-| `test_session_learner.sh` | 7 | Error-fix pairs, corrections, chains, proposals |
-| `test_injector.sh` | 14 | Sanitization, ReDoS, limits, markers, yaml-utils |
+| `test_observe.sh` | 8 | Scrubbing, is_error, dedup, atomic write, e2e, perf, subagent capture |
+| `test_session_learner.sh` | 8 | Error-fix pairs, corrections, chains, proposals, command timeline |
+| `test_injector.sh` | 16 | Sanitization, ReDoS, limits, markers, yaml-utils, .last-instinct, engine |
 | `test_yaml_utils.sh` | 13 | Floats, ints, strings, colon values, update, list |
 | `test_install.sh` | 37 | Fresh install, upgrade, idempotency, path traversal |
 | `test_hooks_e2e.sh` | 14 | Full pipeline: observe→inject→learn, **token budget reset** |
 | `test_uninstall.sh` | 11 | Cleanup, backup creation, data preservation, **safety guard**, CLAUDE.md preservation |
-| `test_integrity.sh` | 14 | observe.sh wrapper, 14 commands validated, core file schemas, **version consistency** |
+| `test_integrity.sh` | 14 | observe.py direct, 16 commands validated, core file schemas, **version consistency** |
 | `test_install_ps1.ps1` | 9 | PowerShell syntax, version consistency, security features, backup categories, hook config, **CI on windows-latest** |
 
 ### CI

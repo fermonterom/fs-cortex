@@ -179,7 +179,7 @@ You work → Cortex observes → /cx-analyze detects patterns → /cx-validate y
 → unused knowledge decays (-0.05/month) → /cx-dream cleans up stale instincts
 ```
 
-## Commands (14)
+## Commands (16)
 
 | Command | What it does |
 |---------|-------------|
@@ -194,6 +194,8 @@ You work → Cortex observes → /cx-analyze detects patterns → /cx-validate y
 | `/cx-audit` | Token overhead, duplicates, conflicts, cleanup |
 | `/cx-eod` | End-of-day summary, saves context for next session |
 | `/cx-gotcha` | Capture error→fix as high-priority instinct |
+| `/cx-downvote` | Negative feedback on incorrect instinct injection (reduces confidence) |
+| `/cx-retro` | Weekly retrospective: command usage, instinct activations, health trend |
 | `/cx-export` | Generate portable skill for Claude.ai or sharing |
 | `/cx-backup` | Create portable .tar.gz backup for machine transfer |
 | `/cx-restore` | Import knowledge from a backup archive |
@@ -278,7 +280,7 @@ Also fires `session-start.py` on `/compact` to re-inject laws.
 
 Deterministic rules that fire via hooks — not probabilistic instructions. Triggers are regex patterns matched against tool names and inputs.
 
-Default reflexes (8):
+Default reflexes (10):
 
 | Reflex | Trigger (regex) | Action |
 |--------|---------|--------|
@@ -290,6 +292,8 @@ Default reflexes (8):
 | `git-merge-verify` | gh pr merge | Verify checks, clean up branch |
 | `api-auth-check` | Edit route.ts/api/ | Validate authentication |
 | `security-headers` | Edit vercel.json/next.config | Verify security headers |
+| `instinct-downvote` | "wrong instinct" / "ignore instinct" | Suggest /cx-downvote |
+| `capture-decision` | "from now on" / "always use" / "never use" | Suggest saving decision |
 
 Each reflex tracks `fireCount` and `lastFired` for audit purposes.
 

@@ -5,11 +5,12 @@ description: |
   crystallizes patterns as atomic instincts with confidence scoring,
   distills proven knowledge into laws. Commands: /cx-status, /cx-analyze,
   /cx-distill, /cx-validate, /cx-evolve, /cx-eod, /cx-gotcha, /cx-audit,
-  /cx-export, /cx-backup, /cx-restore, /cx-dream, /cx-router, /cx-promote.
+  /cx-downvote, /cx-retro, /cx-export, /cx-backup, /cx-restore, /cx-dream,
+  /cx-router, /cx-promote.
 auto_activate: true
 ---
 
-# Cortex v3.6 — Continuous Learning System
+# Cortex v3.10 — Continuous Learning System
 
 > Every session creates a connection. Cortex turns them into instinct.
 
@@ -52,7 +53,7 @@ When the system prompt contains `EOD RESUME`, Claude MUST proactively present it
 4. **Priorities** — List PRIORITIES as numbered list
 5. **Ask** — Ask where to start (user's language from memory.json)
 
-### Commands (14)
+### Commands (16)
 
 | Command | Purpose |
 |---------|---------|
@@ -64,6 +65,8 @@ When the system prompt contains `EOD RESUME`, Claude MUST proactively present it
 | `/cx-audit` | Token overhead, duplicates, conflicts, cleanup proposals |
 | `/cx-eod` | End-of-day summary for next session |
 | `/cx-gotcha` | Capture error→fix as high-priority instinct |
+| `/cx-downvote` | Negative feedback on incorrect instinct injection |
+| `/cx-retro` | Weekly retrospective: command usage, health trend |
 | `/cx-export` | Portable skill for Claude.ai or sharing |
 | `/cx-backup` | .tar.gz backup for machine transfer |
 | `/cx-restore` | Import backup with intelligent merge |
