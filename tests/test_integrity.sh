@@ -34,10 +34,10 @@ fi
 
 echo ""
 
-# ── TEST 2: All 16 commands exist ─────────────────────────────────
+# ── TEST 2: All 17 commands exist ─────────────────────────────────
 
 echo "--- Commands existence ---"
-EXPECTED_COMMANDS="cx-analyze cx-audit cx-backup cx-distill cx-downvote cx-dream cx-eod cx-evolve cx-export cx-gotcha cx-promote cx-restore cx-retro cx-router cx-status cx-validate"
+EXPECTED_COMMANDS="cx-analyze cx-audit cx-backup cx-distill cx-downvote cx-dream cx-eod cx-evolve cx-export cx-gotcha cx-promote cx-restore cx-retro cx-router cx-status cx-timeline cx-validate"
 MISSING=0
 for cmd in $EXPECTED_COMMANDS; do
     if [ ! -f "$PROJECT_ROOT/commands/$cmd.md" ]; then
@@ -45,7 +45,7 @@ for cmd in $EXPECTED_COMMANDS; do
         MISSING=$((MISSING + 1))
     fi
 done
-[ "$MISSING" -eq 0 ] && pass "all 16 commands present"
+[ "$MISSING" -eq 0 ] && pass "all 17 commands present"
 
 echo ""
 

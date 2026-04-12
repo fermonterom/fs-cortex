@@ -294,10 +294,10 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 | `test_session_learner.sh` | 8 | Error-fix pairs, corrections, chains, proposals, command timeline |
 | `test_injector.sh` | 16 | Sanitization, ReDoS, limits, markers, yaml-utils, .last-instinct, engine |
 | `test_yaml_utils.sh` | 13 | Floats, ints, strings, colon values, update, list |
-| `test_install.sh` | 37 | Fresh install, upgrade, idempotency, path traversal |
+| `test_install.sh` | 38 | Fresh install, upgrade, idempotency, path traversal |
 | `test_hooks_e2e.sh` | 14 | Full pipeline: observe→inject→learn, **token budget reset** |
 | `test_uninstall.sh` | 11 | Cleanup, backup creation, data preservation, **safety guard**, CLAUDE.md preservation |
-| `test_integrity.sh` | 14 | observe.py direct, 16 commands validated, core file schemas, **version consistency** |
+| `test_integrity.sh` | 14 | observe.py direct, 17 commands validated, core file schemas, **version consistency** |
 | `test_install_ps1.ps1` | 9 | PowerShell syntax, version consistency, security features, backup categories, hook config, **CI on windows-latest** |
 
 ### CI
