@@ -183,6 +183,40 @@ console.log(hasAll ? 'OK' : 'FAIL:' + JSON.stringify(p));
 ")
 [ "$result" = "OK" ] && pass "proposal has required fields" || fail "structure: $result"
 
+# --- Test 8: Command usage timeline detection (v3.8.0) ---
+echo "--- Command Timeline ---"
+result=$(node -e "
+// Load detectCommandUsage from the real module
+const { detectCommandUsage } = require('$PROJECT_ROOT/hooks/session-learner.js');
+// Mock fs.appendFileSync to capture timeline writes only (not log writes)
+const fs = require('fs');
+const origAppend = fs.appendFileSync;
+const origMkdir = fs.mkdirSync;
+let written = '';
+fs.appendFileSync = (p, data) => {
+  if (p.includes('timeline.jsonl')) { written = data; }
+  else { origAppend(p, data); }
+};
+fs.mkdirSync = (p, opts) => { try { origMkdir(p, opts); } catch(_) {} };
+
+const obs = [
+  { tool: 'Skill', input: '{\"skill\":\"cx-dream\"}', ts: '2026-01-01T00:00:00Z', pid: 'abc123' },
+  { tool: 'Skill', input: '{\"skill\":\"cx-status\"}', ts: '2026-01-01T00:01:00Z', pid: 'abc123' },
+  { tool: 'Read', input: '/tmp/file.txt', ts: '2026-01-01T00:02:00Z', pid: 'abc123' },
+  { tool: 'Skill', input: '{\"skill\":\"commit\"}', ts: '2026-01-01T00:03:00Z', pid: 'abc123' },
+];
+detectCommandUsage(obs);
+
+fs.appendFileSync = origAppend;
+fs.mkdirSync = origMkdir;
+
+// Should have 2 cx- entries (cx-dream, cx-status), not 'commit'
+const lines = written.trim().split('\n');
+const cmds = lines.map(l => JSON.parse(l).cmd);
+console.log(cmds.length === 2 && cmds.includes('cx-dream') && cmds.includes('cx-status') ? 'OK' : 'FAIL:' + JSON.stringify(cmds));
+")
+[ "$result" = "OK" ] && pass "timeline detects cx-* commands only" || fail "timeline: $result"
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

@@ -20,7 +20,7 @@ $CommandsDir = Join-Path $ClaudeDir "commands"
 $HooksDir = Join-Path $ClaudeDir "hooks" "cortex"
 $SettingsFile = Join-Path $ClaudeDir "settings.json"
 $ClaudeMd = Join-Path $ClaudeDir "CLAUDE.md"
-$NewVersion = "3.7.4"
+$NewVersion = "3.8.0"
 
 # --- Helpers ---
 
@@ -141,7 +141,26 @@ if (-not (Test-Path $reflexesDest)) {
     Copy-Item (Join-Path $ScriptDir "core" "reflexes.default.json") $reflexesDest
     Print-Ok "Created reflexes.json"
 }
-else { Print-Warn "reflexes.json exists, preserving user data" }
+else {
+    Print-Warn "reflexes.json exists, preserving user data"
+    # Migrate new reflexes into existing file (v3.8.0+)
+    try {
+        $userReflexes = Get-Content $reflexesDest -Raw | ConvertFrom-Json
+        $defaultReflexes = Get-Content (Join-Path $ScriptDir "core" "reflexes.default.json") -Raw | ConvertFrom-Json
+        $existingIds = @($userReflexes.reflexes | ForEach-Object { $_.id })
+        $added = 0
+        foreach ($r in $defaultReflexes.reflexes) {
+            if ($r.id -notin $existingIds) {
+                $userReflexes.reflexes += $r
+                $added++
+            }
+        }
+        if ($added -gt 0) {
+            $userReflexes | ConvertTo-Json -Depth 10 | Set-Content $reflexesDest -Encoding UTF8
+            Write-Host "  Migrated $added new reflex(es)"
+        }
+    } catch { Write-Warning "  Reflex migration skipped: $_" }
+}
 Print-Ok "Core files ready"
 
 # Step 6: Install skill

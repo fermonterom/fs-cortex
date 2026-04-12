@@ -404,10 +404,8 @@ def main():
     if os.environ.get("ECC_SKIP_OBSERVE", "0") == "1":
         return
 
-    # Skip subagents
+    # Capture subagent ID if present (no longer skipped — v3.8.0)
     agent_id = data.get("agent_id", "")
-    if agent_id:
-        return
 
     # Skip non-useful tools
     tool_name = data.get("tool_name", data.get("tool", ""))
@@ -484,6 +482,9 @@ def main():
         "pid": project_id,
         "pname": project_name,
     }
+
+    if agent_id:
+        observation["aid"] = agent_id[:24]
 
     if is_error and error_msg:
         observation["err_msg"] = scrub_secrets(error_msg)

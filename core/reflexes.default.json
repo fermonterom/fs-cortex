@@ -79,6 +79,16 @@
       "enabled": true,
       "fireCount": 0,
       "lastFired": null
+    },
+    {
+      "id": "capture-decision",
+      "matcher": "Bash|Edit|Write",
+      "condition": "from now on|always use|never use|switching to|no longer use|de ahora en adelante|siempre usar|nunca usar",
+      "action": "Strategic decision detected. Consider saving to memory or creating a Cortex instinct with /cx-gotcha.",
+      "severity": "low",
+      "enabled": true,
+      "fireCount": 0,
+      "lastFired": null
     }
   ]
 }

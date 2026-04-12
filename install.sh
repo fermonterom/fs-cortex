@@ -21,7 +21,7 @@ COMMANDS_DIR="$CLAUDE_DIR/commands"
 HOOKS_DIR="$CLAUDE_DIR/hooks/cortex"
 SETTINGS_FILE="$CLAUDE_DIR/settings.json"
 CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
-NEW_VERSION="3.7.4"
+NEW_VERSION="3.8.0"
 
 print_header() {
     echo ""
@@ -147,6 +147,28 @@ if [ ! -f "$CORTEX_DIR/reflexes.json" ]; then
     print_ok "Created reflexes.json"
 else
     print_warn "reflexes.json exists, preserving user data"
+    # Migrate new reflexes into existing file (v3.8.0+)
+    if command -v python3 >/dev/null 2>&1; then
+        python3 -c "
+import json, sys
+rpath = '$CORTEX_DIR/reflexes.json'
+dpath = '$SCRIPT_DIR/core/reflexes.default.json'
+try:
+    with open(rpath) as f: user = json.load(f)
+    with open(dpath) as f: defaults = json.load(f)
+    existing_ids = {r['id'] for r in user.get('reflexes', [])}
+    added = 0
+    for r in defaults.get('reflexes', []):
+        if r['id'] not in existing_ids:
+            user['reflexes'].append(r)
+            added += 1
+    if added:
+        with open(rpath, 'w') as f: json.dump(user, f, indent=2)
+        print(f'  Migrated {added} new reflex(es)')
+except Exception as e:
+    print(f'  Reflex migration skipped: {e}', file=sys.stderr)
+" 2>/dev/null
+    fi
 fi
 print_ok "Core files ready"
 

@@ -157,6 +157,25 @@ else
     fail "performance: ${elapsed}ms avg (target <500ms)"
 fi
 
+# --- Test 8: Subagent observations captured (v3.8.0) ---
+echo "--- Subagent Capture ---"
+SANDBOX_SUB=$(mktemp -d)
+mkdir -p "$SANDBOX_SUB/.claude/cortex"
+SUB_SID="sub-$(date +%s)-$$"
+rm -f "$DEDUP_DIR/dedup-$SUB_SID" 2>/dev/null || true
+echo '{"tool_name":"Read","session_id":"'"$SUB_SID"'","agent_id":"agent-abc123","cwd":"'"$SANDBOX_SUB"'","tool_input":{"file_path":"/tmp/test.txt"}}' | HOME="$SANDBOX_SUB" python3 "$PROJECT_ROOT/hooks/observe.py" post 2>/dev/null
+if [ -f "$SANDBOX_SUB/.claude/cortex/observations.jsonl" ]; then
+    # Verify aid field present in observation
+    if grep -q '"aid"' "$SANDBOX_SUB/.claude/cortex/observations.jsonl"; then
+        pass "subagent: observation captured with aid field"
+    else
+        fail "subagent: observation written but missing aid field"
+    fi
+else
+    fail "subagent: no observation file (agent_id still being skipped?)"
+fi
+rm -rf "$SANDBOX_SUB"
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

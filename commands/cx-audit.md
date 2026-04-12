@@ -79,6 +79,7 @@ Look for contradictions:
 - Instincts with `last_seen` > 60 days ago — stale, candidate for archive
 - Instincts with `occurrences: 0` or 1 — weak evidence
 - Evolved artifacts not referenced by any active instinct
+- **Command usage** (from `~/.claude/cortex/log/timeline.jsonl`): report Cortex commands with 0 invocations in last 30 days as "unused commands". If timeline.jsonl missing, skip this check.
 
 ### Step 6: Present Cleanup Proposal
 

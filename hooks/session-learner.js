@@ -22,6 +22,7 @@ const PROPOSALS_PATH = path.join(CORTEX_DIR, 'proposals.json');
 const GLOBAL_INSTINCTS_DIR = path.join(CORTEX_DIR, 'instincts', 'global');
 const LOG_DIR = path.join(CORTEX_DIR, 'log');
 const LOG_PATH = path.join(LOG_DIR, 'session-learner.log');
+const TIMELINE_PATH = path.join(LOG_DIR, 'timeline.jsonl');
 
 const TODAY = new Date().toISOString().slice(0, 10);
 function now() { return new Date().toISOString(); }
@@ -458,6 +459,41 @@ function detectAgentPatterns(observations) {
 }
 
 // -------------------------------------------------------------------
+// Step 3e: Detect Cortex command usage and write timeline
+// -------------------------------------------------------------------
+
+function detectCommandUsage(observations) {
+  // Find Skill tool uses that match cx-* patterns
+  const cxPattern = /\bcx-\w+/;
+  const commands = [];
+
+  for (const obs of observations) {
+    if (obs.tool !== 'Skill') continue;
+    const input = typeof obs.input === 'string' ? obs.input : JSON.stringify(obs.input || '');
+    const match = input.match(cxPattern);
+    if (match) {
+      commands.push({
+        ts: obs.ts,
+        cmd: match[0],
+        pid: obs.pid || 'global',
+      });
+    }
+  }
+
+  if (commands.length === 0) return;
+
+  // Append to timeline.jsonl
+  try {
+    fs.mkdirSync(LOG_DIR, { recursive: true });
+    const lines = commands.map((c) => JSON.stringify(c)).join('\n') + '\n';
+    fs.appendFileSync(TIMELINE_PATH, lines);
+    log(`Wrote ${commands.length} command(s) to timeline`);
+  } catch (e) {
+    log(`Timeline write failed: ${e.message}`);
+  }
+}
+
+// -------------------------------------------------------------------
 // Step 4: Update existing instinct YAML files
 // -------------------------------------------------------------------
 
@@ -791,6 +827,9 @@ async function main() {
     // Step 5: Update reflex fire counts
     updateReflexes(observations);
 
+    // Step 5b: Detect and log Cortex command usage
+    detectCommandUsage(observations);
+
     // Step 6: Combine all proposals with session_date for cross-day tracking
     const allProposals = [
       ...errorProposals,
@@ -833,5 +872,6 @@ if (require.main === module) {
     isError, extractFilePath, sanitizeProposalAction,
     detectErrorResolutions, detectRepetitions,
     detectUserCorrections, detectWorkflowChains, detectAgentPatterns,
+    detectCommandUsage,
   };
 }

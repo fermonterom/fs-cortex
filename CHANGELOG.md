@@ -4,6 +4,16 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.8.0] — 2026-04-12
+
+### Added
+- **observe.py**: Subagent tool use now captured (was silently skipped). New `aid` field in observation JSONL for agent ID.
+- **session-learner.js**: Command usage timeline — detects `/cx-*` Skill invocations and logs to `~/.claude/cortex/log/timeline.jsonl`. Enables usage reporting in cx-audit and cx-dream.
+- **reflexes**: New `capture-decision` reflex — detects strategic decisions ("from now on", "always use", "never use") and reminds to persist them. Bilingual EN+ES.
+- **install.sh/ps1**: Automatic reflex migration — new reflexes from defaults are appended to existing installations without overwriting user data.
+- **cx-audit.md**: Command usage analysis from timeline data (unused commands in last 30 days).
+- **cx-dream.md**: Maintenance bonus/penalty in health score based on recent command usage.
+
 ## [3.7.4] — 2026-04-12
 
 ### Fixed

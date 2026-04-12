@@ -67,6 +67,7 @@ Execute in order:
 
 5. **Health score**: `calculate_health_score(stats)`
    - Display score with breakdown
+   - **Maintenance bonus/penalty** (from `~/.claude/cortex/log/timeline.jsonl`): +5 if cx-dream or cx-distill run in last 14 days, -5 if no maintenance command run in 30 days. Skip if timeline.jsonl missing.
 
 ### Step 3: Apply Changes
 
