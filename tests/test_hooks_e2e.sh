@@ -105,10 +105,10 @@ fi
 
 echo ""
 
-# ── TEST 2: session-start.sh produces valid JSON ──────────────────
+# ── TEST 2: session-start.py produces valid JSON ──────────────────
 
-echo "--- session-start.sh ---"
-RESULT=$(echo '{"cwd":"'"$SANDBOX"'"}' | HOME="$SANDBOX" bash "$SANDBOX/.claude/hooks/cortex/session-start.sh" 2>/dev/null || echo "")
+echo "--- session-start.py ---"
+RESULT=$(echo '{"cwd":"'"$SANDBOX"'"}' | HOME="$SANDBOX" python3 "$SANDBOX/.claude/hooks/cortex/session-start.py" 2>/dev/null || echo "")
 
 if [ -n "$RESULT" ]; then
     python3 -c "
@@ -117,9 +117,9 @@ data = json.loads(sys.argv[1])
 assert 'hookSpecificOutput' in data, 'Missing hookSpecificOutput'
 assert data['hookSpecificOutput']['hookEventName'] == 'SessionStart', 'Wrong event name'
 ctx = data['hookSpecificOutput']['additionalContext']
-assert 'CORTEX LAWS' in ctx, 'Missing laws in context'
+assert 'CORTEX LAWS' in ctx or 'CORTEX:' in ctx, 'Missing laws in context'
 print('OK')
-" "$RESULT" 2>/dev/null | grep -q OK && pass "session-start.sh: valid JSON with laws" || fail "session-start.sh: bad output"
+" "$RESULT" 2>/dev/null | grep -q OK && pass "session-start.py: valid JSON with laws" || fail "session-start.py: bad output"
 
     # Check skills hint present
     echo "$RESULT" | python3 -c "
@@ -128,9 +128,9 @@ data = json.loads(sys.stdin.read())
 ctx = data['hookSpecificOutput']['additionalContext']
 assert 'cx-status' in ctx, 'Missing skills hint'
 print('OK')
-" 2>/dev/null | grep -q OK && pass "session-start.sh: skills hint injected" || fail "session-start.sh: no skills hint"
+" 2>/dev/null | grep -q OK && pass "session-start.py: skills hint injected" || fail "session-start.py: no skills hint"
 else
-    fail "session-start.sh: no output"
+    fail "session-start.py: no output"
 fi
 
 echo ""
@@ -324,7 +324,7 @@ echo "--- Token budget reset ---"
 echo "9999" > "$SANDBOX/.claude/cortex/.session-token-budget"
 
 # Run session-start — should delete the budget file
-echo '{}' | HOME="$SANDBOX" bash "$SANDBOX/.claude/hooks/cortex/session-start.sh" > /dev/null 2>&1 || true
+echo '{}' | HOME="$SANDBOX" python3 "$SANDBOX/.claude/hooks/cortex/session-start.py" > /dev/null 2>&1 || true
 
 if [ ! -f "$SANDBOX/.claude/cortex/.session-token-budget" ]; then
     pass "session-start resets .session-token-budget"

@@ -4,6 +4,16 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.10.0] — 2026-04-12
+
+### Changed
+- **session-start.sh → session-start.py**: Complete rewrite from Bash/Python hybrid to pure Python. Eliminates BSD/GNU `date` fallbacks, 4 inline `python3 -c` snippets, and `sed`/`tr`/`grep` subprocess chains. Uses `datetime`, `pathlib`, and `re` stdlib modules.
+- **observe.sh**: Deleted. Observer now invoked directly as `python3 observe.py` from settings.json hooks. The 12-line wrapper added zero value.
+- **injector.sh**: Reduced from 367 lines to 42-line thin wrapper. All Node.js logic extracted to `hooks/lib/injector-engine.js` for testability and linting.
+- **hooks/lib/cortex_utils.py**: New shared Python module — `sanitize_injection()`, `detect_project()`, `read_json_safe()`, `atomic_write()`. Used by both `observe.py` and `session-start.py`.
+- **hooks/lib/injector-engine.js**: New standalone Node.js module extracted from inline heredoc in injector.sh. Can be tested, linted, and imported independently.
+- **install.sh/ps1**: Legacy file cleanup on upgrade — removes `session-start.sh` and `observe.sh` before installing new Python hooks. Settings.json hook commands updated to `python3` invocations.
+
 ## [3.9.0] — 2026-04-12
 
 ### Added

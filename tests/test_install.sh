@@ -36,7 +36,7 @@ VER=$(cat "$SANDBOX/.claude/cortex/version" 2>/dev/null | tr -d '[:space:]')
 grep -q "NEW_VERSION=\"$VER\"" "$PROJECT_ROOT/install.sh" && pass "version matches install.sh ($VER)" || fail "version mismatch: $VER"
 
 # 1c: All hooks installed
-for hook in observe.sh observe.py injector.sh session-start.sh session-learner.js; do
+for hook in observe.py injector.sh session-start.py session-learner.js; do
     [ -f "$SANDBOX/.claude/hooks/cortex/$hook" ] && pass "hook: $hook installed" || fail "hook: $hook MISSING"
 done
 

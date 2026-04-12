@@ -13,30 +13,23 @@ fail() { FAIL=$((FAIL + 1)); echo "  FAIL: $1"; }
 echo "=== Integrity Tests ==="
 echo ""
 
-# ── TEST 1: observe.sh wrapper delegates to observe.py ────────────
+# ── TEST 1: observe.py runs directly (v3.10: observe.sh removed) ───
 
-echo "--- observe.sh wrapper ---"
+echo "--- observe.py direct ---"
 SANDBOX=$(mktemp -d)
 trap "rm -rf '$SANDBOX'" EXIT
 
-mkdir -p "$SANDBOX/cortex"
-cp "$PROJECT_ROOT/hooks/observe.sh" "$SANDBOX/"
-cp "$PROJECT_ROOT/hooks/observe.py" "$SANDBOX/"
+mkdir -p "$SANDBOX/.claude/cortex"
+OBS_SID="integrity-$(date +%s)-$$"
+DEDUP_DIR="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/cortex-$(id -u)"
+rm -f "$DEDUP_DIR/dedup-$OBS_SID" 2>/dev/null || true
+echo '{"tool_name":"Read","session_id":"'"$OBS_SID"'","cwd":"'"$SANDBOX"'","tool_input":"test"}' | \
+    HOME="$SANDBOX" python3 "$PROJECT_ROOT/hooks/observe.py" post 2>/dev/null || true
 
-# Run observe.sh with a test event — should produce same result as observe.py
-echo '{"tool_name":"Read","tool_input":"test","session_id":"wrapper-test","cwd":"'"$SANDBOX"'"}' | \
-    CORTEX_DIR="$SANDBOX/cortex" bash "$SANDBOX/observe.sh" post 2>/dev/null || true
-
-OBS_FILE=$(find "$SANDBOX/cortex" -name "observations.jsonl" 2>/dev/null | head -1)
-if [ -n "$OBS_FILE" ] && [ -s "$OBS_FILE" ]; then
-    pass "observe.sh wrapper produces observations"
+if [ -f "$SANDBOX/.claude/cortex/observations.jsonl" ]; then
+    pass "observe.py direct invocation (exit=0)"
 else
-    # observe.sh may not write if dedup kicks in or CORTEX_DIR layout doesn't match
-    # At minimum verify it exits 0 and delegates to python
-    echo '{}' | bash "$SANDBOX/observe.sh" post > /dev/null 2>&1
-    EXIT_CODE=$?
-    [ "$EXIT_CODE" -eq 0 ] || EXIT_CODE=$?
-    pass "observe.sh wrapper delegates to observe.py (exit=$EXIT_CODE)"
+    fail "observe.py: no observation written"
 fi
 
 echo ""
@@ -152,7 +145,7 @@ echo "--- ShellCheck (severity=error) ---"
 if command -v shellcheck >/dev/null 2>&1; then
     SC_ERRORS=0
     # Note: injector.sh excluded — 99% inline JS heredoc, shellcheck can't parse it
-    for script in "$PROJECT_ROOT/install.sh" "$PROJECT_ROOT/uninstall.sh" "$PROJECT_ROOT/hooks/observe.sh" "$PROJECT_ROOT/hooks/session-start.sh"; do
+    for script in "$PROJECT_ROOT/install.sh" "$PROJECT_ROOT/uninstall.sh" "$PROJECT_ROOT/hooks/injector.sh"; do
         if ! shellcheck --severity=error "$script" 2>/dev/null; then
             fail "shellcheck errors in $(basename "$script")"
             SC_ERRORS=$((SC_ERRORS + 1))

@@ -20,7 +20,7 @@ $CommandsDir = Join-Path $ClaudeDir "commands"
 $HooksDir = Join-Path $ClaudeDir "hooks" "cortex"
 $SettingsFile = Join-Path $ClaudeDir "settings.json"
 $ClaudeMd = Join-Path $ClaudeDir "CLAUDE.md"
-$NewVersion = "3.9.0"
+$NewVersion = "3.10.0"
 
 # --- Helpers ---
 
@@ -188,6 +188,15 @@ Print-Ok "Commands installed: $cmdNames"
 Print-Step "Installing hooks..."
 New-Item -ItemType Directory -Path $HooksDir -Force | Out-Null
 
+# Remove legacy shell hooks replaced by Python in v3.10.0
+foreach ($legacy in @("session-start.sh", "observe.sh")) {
+    $legacyPath = Join-Path $HooksDir $legacy
+    if (Test-Path $legacyPath) {
+        Write-Host "  Removing legacy hook: $legacy"
+        Remove-Item $legacyPath -Force
+    }
+}
+
 # Shell and JS hooks
 foreach ($ext in @("*.sh", "*.js", "*.py")) {
     Get-ChildItem (Join-Path $ScriptDir "hooks" $ext) -ErrorAction SilentlyContinue | ForEach-Object {
@@ -256,17 +265,17 @@ if "~/.claude/cortex" not in settings["permissions"].get("additionalDirectories"
 
 cortex_hooks = {
     "SessionStart": [
-        {"hooks": [{"type": "command", "command": "bash ~/.claude/hooks/cortex/session-start.sh", "timeout": 5000}]},
-        {"matcher": "compact", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/cortex/session-start.sh", "timeout": 5000}]}
+        {"hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/cortex/session-start.py", "timeout": 5000}]},
+        {"matcher": "compact", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/cortex/session-start.py", "timeout": 5000}]}
     ],
     "PreToolUse": [
         {"matcher": "*", "hooks": [
-            {"type": "command", "command": "bash ~/.claude/hooks/cortex/observe.sh pre", "timeout": 10000, "async": True},
+            {"type": "command", "command": "python3 ~/.claude/hooks/cortex/observe.py pre", "timeout": 10000, "async": True},
             {"type": "command", "command": "bash ~/.claude/hooks/cortex/injector.sh", "timeout": 3000}
         ]}
     ],
     "PostToolUse": [
-        {"matcher": "*", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/cortex/observe.sh post", "timeout": 10000, "async": True}]}
+        {"matcher": "*", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/cortex/observe.py post", "timeout": 10000, "async": True}]}
     ],
     "Stop": [
         {"hooks": [{"type": "command", "command": "node ~/.claude/hooks/cortex/session-learner.js", "timeout": 15000}]}

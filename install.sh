@@ -21,7 +21,7 @@ COMMANDS_DIR="$CLAUDE_DIR/commands"
 HOOKS_DIR="$CLAUDE_DIR/hooks/cortex"
 SETTINGS_FILE="$CLAUDE_DIR/settings.json"
 CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
-NEW_VERSION="3.9.0"
+NEW_VERSION="3.10.0"
 
 print_header() {
     echo ""
@@ -188,9 +188,18 @@ done
 INSTALLED_CMDS=$(ls "$SCRIPT_DIR/commands/"*.md 2>/dev/null | xargs -I{} basename {} .md | tr '\n' ', ' | sed 's/,$//')
 print_ok "Commands installed: $INSTALLED_CMDS"
 
-# Step 8: Install hooks (v2.0: observe.sh, session-start.sh, injector.sh, session-learner.js)
+# Step 8: Install hooks (v3.10: observe.py, session-start.py, injector.sh, session-learner.js)
 print_step "Installing hooks..."
 mkdir -p "$HOOKS_DIR"
+
+# Remove legacy shell hooks replaced by Python in v3.10.0
+for legacy in "$HOOKS_DIR/session-start.sh" "$HOOKS_DIR/observe.sh"; do
+    if [ -f "$legacy" ]; then
+        echo "  Removing legacy hook: $(basename "$legacy")"
+        rm -f "$legacy"
+    fi
+done
+
 for hook in "$SCRIPT_DIR/hooks/"*.sh "$SCRIPT_DIR/hooks/"*.js "$SCRIPT_DIR/hooks/"*.py; do
     [ -f "$hook" ] && cp "$hook" "$HOOKS_DIR/" && chmod +x "$HOOKS_DIR/$(basename "$hook")"
 done
@@ -265,18 +274,13 @@ for perm in cortex_perms:
 if "~/.claude/cortex" not in settings["permissions"].get("additionalDirectories", []):
     settings["permissions"]["additionalDirectories"].append("~/.claude/cortex")
 
-# Define cortex hooks (v2.0: 4 hooks — observe, session-start, injector, session-learner)
+# Define cortex hooks (v3.10: observe.py direct, session-start.py, injector.sh, session-learner.js)
 cortex_hooks = {
-    # SessionStart fires once at normal session start. The "compact" matcher fires
-    # specifically when /compact is used (context wipe). Both entries are needed
-    # because they are separate events in Claude Code's hook system — the global
-    # SessionStart does NOT fire on /compact. The compact entry re-injects laws
-    # and context after the context window is cleared.
     "SessionStart": [
         {
             "hooks": [{
                 "type": "command",
-                "command": "bash ~/.claude/hooks/cortex/session-start.sh",
+                "command": "python3 ~/.claude/hooks/cortex/session-start.py",
                 "timeout": 5000
             }]
         },
@@ -284,7 +288,7 @@ cortex_hooks = {
             "matcher": "compact",
             "hooks": [{
                 "type": "command",
-                "command": "bash ~/.claude/hooks/cortex/session-start.sh",
+                "command": "python3 ~/.claude/hooks/cortex/session-start.py",
                 "timeout": 5000
             }]
         }
@@ -295,7 +299,7 @@ cortex_hooks = {
             "hooks": [
                 {
                     "type": "command",
-                    "command": "bash ~/.claude/hooks/cortex/observe.sh pre",
+                    "command": "python3 ~/.claude/hooks/cortex/observe.py pre",
                     "timeout": 10000,
                     "async": True
                 },
@@ -312,7 +316,7 @@ cortex_hooks = {
             "matcher": "*",
             "hooks": [{
                 "type": "command",
-                "command": "bash ~/.claude/hooks/cortex/observe.sh post",
+                "command": "python3 ~/.claude/hooks/cortex/observe.py post",
                 "timeout": 10000,
                 "async": True
             }]
