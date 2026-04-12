@@ -376,6 +376,7 @@ Cortex — Continuous Learning Engine for Claude Code
 Inspired by:
 - [Everything Claude Code](https://github.com/affaan-m/everything-claude-code) by Affaan Mustafa — observation format and project scoping
 - [Sinapsis](https://github.com/Luispitik/sinapsis-3.2/) by Luis Salgado — hook architecture and injection patterns
+- [gstack](https://github.com/garrytan/gstack) by Garry Tan — confidence calibration concepts, command usage timeline, inline staleness approach
 
 ## License
 

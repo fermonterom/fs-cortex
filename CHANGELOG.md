@@ -10,6 +10,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **CI**: ShellCheck step referenced deleted `observe.sh` and `session-start.sh` — updated to `injector.sh` only. Added `hooks/lib/*.py` to flake8 lint scope.
 - **FEATURES-visual.html**: Added cx-downvote + cx-retro cards, updated session-start.sh→.py, "14→16 comandos", inline staleness mention, footer version.
 
+### Changed
+- **README.md**: Added [gstack](https://github.com/garrytan/gstack) by Garry Tan to Credits — confidence calibration concepts, command usage timeline, inline staleness approach.
+
 ## [3.10.3] — 2026-04-12
 
 ### Added
