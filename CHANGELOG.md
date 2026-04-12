@@ -4,6 +4,11 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.10.7] — 2026-04-12
+
+### Added
+- **CLAUDE.md**: Project-level context file for Claude Code — references `docs/FEATURES.md` as source of truth, summarizes release workflow and key directory structure.
+
 ## [3.10.6] — 2026-04-12
 
 ### Fixed

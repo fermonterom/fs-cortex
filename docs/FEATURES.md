@@ -1,4 +1,4 @@
-# fs-cortex v3.10.6 — Feature Reference
+# fs-cortex v3.10.7 — Feature Reference
 
 > Complete inventory of all features, commands, hooks, modules, and capabilities.
 > Last updated: 2026-04-12
@@ -384,3 +384,4 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 | v3.6.5 | 2026-04-10 | PowerShell test suite (9 tests), CI windows-latest job |
 | v3.6.6 | 2026-04-10 | Usage Guide in README, visual HTML explainer, docs cleanup |
 | v3.7.0 | 2026-04-10 | Agent evolution: cx-evolve generates agents, session-learner detects Agent patterns |
+| v3.10.7 | 2026-04-12 | CLAUDE.md added — project context, FEATURES.md reference, release workflow summary |
