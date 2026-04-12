@@ -1,4 +1,4 @@
-# fs-cortex v3.10.4 — Feature Reference
+# fs-cortex v3.10.5 — Feature Reference
 
 > Complete inventory of all features, commands, hooks, modules, and capabilities.
 > Last updated: 2026-04-12

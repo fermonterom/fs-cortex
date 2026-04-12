@@ -82,8 +82,8 @@
     },
     {
       "id": "instinct-downvote",
-      "matcher": "Bash|Edit|Write",
-      "condition": "cx-downvote|wrong instinct|ignore instinct|bad instinct|instinct incorrecto",
+      "matcher": "Bash",
+      "condition": "/cx-downvote|wrong instinct|ignore instinct|bad instinct|instinct incorrecto",
       "action": "Negative feedback detected. Use /cx-downvote to record it and reduce instinct confidence.",
       "severity": "low",
       "enabled": true,
