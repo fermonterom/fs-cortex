@@ -21,7 +21,7 @@ COMMANDS_DIR="$CLAUDE_DIR/commands"
 HOOKS_DIR="$CLAUDE_DIR/hooks/cortex"
 SETTINGS_FILE="$CLAUDE_DIR/settings.json"
 CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
-NEW_VERSION="3.10.2"
+NEW_VERSION="3.10.3"
 
 print_header() {
     echo ""

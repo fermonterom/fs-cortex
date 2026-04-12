@@ -4,6 +4,11 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.10.3] — 2026-04-12
+
+### Added
+- **injector-engine.js**: Inline read-only staleness filter — instincts not seen in 60+ days are skipped during injection without writing to disk. Stale instincts stop being injected immediately instead of waiting for a manual `/cx-dream`. Dream Cycle still handles permanent archival.
+
 ## [3.10.2] — 2026-04-12
 
 ### Fixed

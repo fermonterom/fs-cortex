@@ -1,4 +1,4 @@
-# fs-cortex v3.10.2 — Feature Reference
+# fs-cortex v3.10.3 — Feature Reference
 
 > Complete inventory of all features, commands, hooks, modules, and capabilities.
 > Last updated: 2026-04-12
@@ -203,9 +203,11 @@ All interactive commands use consistent shorthand (no modal dialogs):
 | 0.70–0.89 | Instinct | Automatic | Promotion candidate |
 | 0.90–0.95 | Law | Always (SessionStart) | Auto-distilled one-liner, capped at 0.95 |
 
-**Decay**: linear -0.05 per 30 days (e.g., 0.80 confidence after 60 days → 0.70). 90-day stale instincts auto-archive.
+**Inline staleness**: instincts not seen in 60+ days are skipped at injection time (read-only, no file writes). Immediate effect without manual `/cx-dream`.
+**Decay**: linear -0.05 per 30 days via Dream Cycle (e.g., 0.80 confidence after 60 days → 0.70). 90-day stale instincts auto-archive.
 **Promotion**: Jaccard similarity ≥0.70 + 2 projects + avg confidence ≥0.60 → global via `/cx-promote`.
 **Draft auto-promote**: 5+ trigger matches across 3+ sessions → confidence bumped to 0.35.
+**Downvote**: `/cx-downvote` records negative feedback. 30%+ rejection rate → confidence reduced. Below 0.10 → auto-archive.
 
 ---
 

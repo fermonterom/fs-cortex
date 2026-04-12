@@ -170,6 +170,14 @@ function main() {
 
   // ── 3. Parse, filter, match instincts ────────────────────────────────
 
+  // Load tracking data early for inline staleness check (read-only, no writes here)
+  const TRACKING_FILE = path.join(CORTEX_DIR, "instinct-tracking.json");
+  let tracking = {};
+  try { tracking = JSON.parse(fs.readFileSync(TRACKING_FILE, "utf8")); } catch {}
+
+  const STALE_DAYS = 60; // Skip instincts not seen in 60+ days (read-only decay)
+  const NOW_MS = Date.now();
+
   const candidates = [];
   const draftMatches = [];
   for (const file of instinctFiles) {
@@ -179,6 +187,12 @@ function main() {
       if (!inst) continue;
       if (inst.domain && inst.domain !== "general" && !projectDomains.has(inst.domain)) continue;
       if (inst.scope === "project" && inst.project_id && projectId && inst.project_id !== projectId) continue;
+      // Inline staleness: skip instincts not seen in 60+ days (no file writes)
+      const lastSeen = tracking[inst.id]?.last_seen;
+      if (lastSeen) {
+        const daysSince = (NOW_MS - new Date(lastSeen).getTime()) / 86400000;
+        if (daysSince > STALE_DAYS) continue;
+      }
       if (!safeRegexTest(inst.trigger, matchTarget)) continue;
       if (inst.confidence < 0.30) {
         draftMatches.push({ ...inst, _file: file });
@@ -207,13 +221,11 @@ function main() {
   }
 
   // ── 3b. Occurrence tracking (ALL matches including drafts) ──────────
+  // tracking + TRACKING_FILE already loaded in section 3 (inline staleness)
 
   const allMatched = [...matchedInstincts, ...draftMatches];
   if (allMatched.length > 0) {
     try {
-      const TRACKING_FILE = path.join(CORTEX_DIR, "instinct-tracking.json");
-      let tracking = {};
-      try { tracking = JSON.parse(fs.readFileSync(TRACKING_FILE, "utf8")); } catch {}
 
       for (const inst of allMatched) {
         const key = inst.id;

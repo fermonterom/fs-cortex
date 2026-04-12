@@ -49,7 +49,11 @@ Continuous 0.0–0.95 scale (capped, always refinable):
 | 0.70 - 0.89 | Instinct | Automatic, promotion candidate |
 | 0.90 - 0.95 | Law | Auto-distilled one-liner, injected always |
 
-**Decay**: -0.05 per 30 days without seeing the pattern. What you don't use fades.
+**Inline staleness**: instincts not seen in 60+ days are silently skipped at injection time (no file writes, immediate effect).
+
+**Decay**: -0.05 per 30 days via Dream Cycle. What you don't use fades.
+
+**Downvote**: `/cx-downvote` records negative feedback. 30%+ rejection rate → confidence reduced.
 
 **Promotion**: Jaccard similarity ≥ 0.70 + 2 projects + avg confidence ≥ 0.80 → global.
 
