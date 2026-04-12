@@ -4,6 +4,23 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.11.0] — 2026-04-12
+
+### Added
+- **cx-timeline**: New command — semantic knowledge event log. Shows chronological record of all instinct creations, promotions, decays, archives, downvotes, and evolutions. Supports `--last N`, `--event TYPE`, `--since DATE`, `--stats` filters. Summary statistics for last 7 days.
+- **knowledge-log.md**: Append-only event log at `~/.claude/cortex/knowledge-log.md`. Every knowledge-changing event appends one line with date, event type, instinct ID, confidence info, and source command. 11 event types tracked.
+- **cx-status domain grouping**: New "Knowledge by Domain" section (Step 2b) groups instincts by `domain` field with per-domain counts and law-tier entries.
+- **install.sh/ps1**: Create empty `knowledge-log.md` on install/upgrade (preserved on reinstall).
+- **injector-engine.js**: Draft auto-promote events now logged to knowledge-log.md.
+
+### Changed
+- **cx-validate.md**: Appends created/rejected/promoted/archived events to knowledge-log.md.
+- **cx-distill.md**: Appends decayed/archived/law/global events to knowledge-log.md.
+- **cx-dream.md**: Appends deduped/decayed/archived events to knowledge-log.md.
+- **cx-downvote.md**: Appends downvoted/archived events to knowledge-log.md.
+- **cx-evolve.md**: Appends evolved events to knowledge-log.md.
+- **cx-promote.md**: Appends global promotion events to knowledge-log.md.
+
 ## [3.10.7] — 2026-04-12
 
 ### Added

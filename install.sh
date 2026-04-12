@@ -21,7 +21,7 @@ COMMANDS_DIR="$CLAUDE_DIR/commands"
 HOOKS_DIR="$CLAUDE_DIR/hooks/cortex"
 SETTINGS_FILE="$CLAUDE_DIR/settings.json"
 CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
-NEW_VERSION="3.10.7"
+NEW_VERSION="3.11.0"
 
 print_header() {
     echo ""
@@ -133,6 +133,14 @@ print_step "Creating directory structure..."
 mkdir -p "$CORTEX_DIR"/{laws/archive,instincts/{global,archive},projects,evolved/{skills,commands,rules,agents},exports,daily-summaries,log}
 chmod 700 "$CORTEX_DIR"
 print_ok "Created ~/.claude/cortex/"
+
+# Create knowledge-log.md (append-only event log) — only if not already present
+KNOWLEDGE_LOG="$CORTEX_DIR/knowledge-log.md"
+if [ ! -f "$KNOWLEDGE_LOG" ]; then
+    touch "$KNOWLEDGE_LOG"
+    chmod 600 "$KNOWLEDGE_LOG"
+    print_ok "Created knowledge-log.md (event log)"
+fi
 
 # Step 5: Copy core files (preserve existing data on reinstall)
 print_step "Installing core files..."

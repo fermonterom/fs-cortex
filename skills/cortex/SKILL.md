@@ -5,8 +5,8 @@ description: |
   crystallizes patterns as atomic instincts with confidence scoring,
   distills proven knowledge into laws. Commands: /cx-status, /cx-analyze,
   /cx-distill, /cx-validate, /cx-evolve, /cx-eod, /cx-gotcha, /cx-audit,
-  /cx-downvote, /cx-retro, /cx-export, /cx-backup, /cx-restore, /cx-dream,
-  /cx-router, /cx-promote.
+  /cx-downvote, /cx-retro, /cx-timeline, /cx-export, /cx-backup, /cx-restore,
+  /cx-dream, /cx-router, /cx-promote.
 auto_activate: true
 ---
 

@@ -252,6 +252,12 @@ function main() {
               const tmp2 = inst._file + ".tmp." + process.pid;
               fs.writeFileSync(tmp2, content, { mode: 0o600 });
               fs.renameSync(tmp2, inst._file);
+              // Log auto-promote to knowledge timeline
+              try {
+                const logPath = path.join(CORTEX_DIR, "knowledge-log.md");
+                const logLine = `${new Date().toISOString().slice(0,10)} | auto-promote | ${inst.id} | ${confMatch[1]}→0.35 | injector-engine\n`;
+                fs.appendFileSync(logPath, logLine);
+              } catch {}
             }
           } catch {}
         }

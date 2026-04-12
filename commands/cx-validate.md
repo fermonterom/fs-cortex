@@ -118,6 +118,30 @@ This step runs ONLY after the user explicitly confirmed in Step 4.
 - Confirm instinct: update confidence + 0.20, update last_seen
 - Dismiss instinct: reduce confidence by 0.20, archive if below 0.10
 
+### Step 4c: Log to Knowledge Timeline
+
+After executing all actions in Step 4b, append one line per action to `~/.claude/cortex/knowledge-log.md`:
+
+For each accepted proposal:
+```bash
+echo "$(date +%Y-%m-%d) | created | {id} | {new_confidence} | cx-validate" >> ~/.claude/cortex/knowledge-log.md
+```
+
+For each rejected proposal:
+```bash
+echo "$(date +%Y-%m-%d) | rejected | {id} | {confidence} | cx-validate" >> ~/.claude/cortex/knowledge-log.md
+```
+
+For each confirmed hypothesis (confidence bumped):
+```bash
+echo "$(date +%Y-%m-%d) | promoted | {id} | {old_conf}→{new_conf} | cx-validate" >> ~/.claude/cortex/knowledge-log.md
+```
+
+For each dismissed hypothesis (archived):
+```bash
+echo "$(date +%Y-%m-%d) | archived | {id} | {final_conf} | cx-validate" >> ~/.claude/cortex/knowledge-log.md
+```
+
 ### Step 5: Summary
 
 ```

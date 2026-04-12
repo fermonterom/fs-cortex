@@ -37,6 +37,7 @@ Command          Cost        Purpose
 /cx-restore      ~200 tok    Import knowledge from backup archive
 /cx-downvote     ~100 tok    Downvote incorrect instinct injection (reduces confidence)
 /cx-retro        ~200 tok    Weekly retrospective: activity, usage, health trend
+/cx-timeline     ~100 tok    Knowledge event log: creations, promotions, decays, archives
 /cx-router       ~50 tok     This catalog
 
 Recommended flow:

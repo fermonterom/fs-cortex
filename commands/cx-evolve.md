@@ -156,6 +156,14 @@ For **Merges**: Read the target skill, identify the correct section, and append 
 3. All generated files MUST use `fs-` prefix (e.g., `fs-supabase-rls.md`)
 4. Update source instincts: set `evolved_to: "{artifact-id}"` in their YAML
 
+### Step 5b: Log to Knowledge Timeline
+
+After writing artifacts in Step 5, append one line per evolved cluster to `~/.claude/cortex/knowledge-log.md`:
+
+```bash
+echo "$(date +%Y-%m-%d) | evolved | {artifact-id} | {N} instincts | cx-evolve" >> ~/.claude/cortex/knowledge-log.md
+```
+
 ### Step 6: Summary
 
 ```

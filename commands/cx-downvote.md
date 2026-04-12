@@ -85,6 +85,20 @@ If an instinct was archived:
     Moved to: ~/.claude/cortex/instincts/archive/
 ```
 
+### Step 5: Log to Knowledge Timeline
+
+After applying confidence changes in Steps 3-4, append one line per instinct to `~/.claude/cortex/knowledge-log.md`:
+
+For each downvoted instinct (where confidence actually changed):
+```bash
+echo "$(date +%Y-%m-%d) | downvoted | {id} | {old_conf}→{new_conf} | cx-downvote" >> ~/.claude/cortex/knowledge-log.md
+```
+
+If an instinct was archived due to downvote:
+```bash
+echo "$(date +%Y-%m-%d) | archived | {id} | {final_conf} | cx-downvote" >> ~/.claude/cortex/knowledge-log.md
+```
+
 ## Edge cases
 
 - **No `.last-instinct` file**: show message, suggest running a tool first

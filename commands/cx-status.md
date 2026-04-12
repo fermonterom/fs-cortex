@@ -60,6 +60,33 @@ INSTINCTS:
   [same grouping]
 ```
 
+### Step 2b: Knowledge by Domain
+
+Using the instincts already parsed in Step 2 (both project and global), group by the `domain` YAML field and count per type.
+
+For each unique domain found:
+- **Instincts**: count of instincts in that domain (any confidence)
+- **Law-tier**: count of instincts with confidence >= 0.90 in that domain
+
+If an instinct has no `domain` field, count it under "unknown".
+Sort domains by total instinct count (descending).
+
+Display:
+
+```
+KNOWLEDGE BY DOMAIN:
+  Domain              Instincts   Law-tier (≥0.90)
+  ─────────────────────────────────────────────────
+  database            5           2
+  web-development     3           1
+  testing             4           0
+  workflow            2           0
+  unknown             1           0
+```
+
+Note: Laws (.txt files) have no domain metadata — only instinct YAML files are counted.
+Reflexes have no domain field — they are not included in this section.
+
 ### Step 3: Projects
 
 Read `~/.claude/cortex/projects/registry.json`.

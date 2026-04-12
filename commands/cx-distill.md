@@ -192,6 +192,30 @@ If the user provides invalid shorthand, ask them to repeat with the correct form
 
 Wait for user confirmation before executing any promotions. NEVER use AskUserQuestion — always present as plain text.
 
+### Step 4b: Log to Knowledge Timeline
+
+After all changes in Steps 2-4, append one line per action to `~/.claude/cortex/knowledge-log.md`:
+
+For each decayed instinct:
+```bash
+echo "$(date +%Y-%m-%d) | decayed | {id} | {old_conf}→{new_conf} | cx-distill" >> ~/.claude/cortex/knowledge-log.md
+```
+
+For each archived instinct:
+```bash
+echo "$(date +%Y-%m-%d) | archived | {id} | {final_conf} | cx-distill" >> ~/.claude/cortex/knowledge-log.md
+```
+
+For each new law distilled:
+```bash
+echo "$(date +%Y-%m-%d) | law | {id} | {confidence} | cx-distill" >> ~/.claude/cortex/knowledge-log.md
+```
+
+For each Jaccard promotion (project → global):
+```bash
+echo "$(date +%Y-%m-%d) | global | {id} | {confidence} | cx-distill" >> ~/.claude/cortex/knowledge-log.md
+```
+
 ### Step 5: Summary
 
 ```

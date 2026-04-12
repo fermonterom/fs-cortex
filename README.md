@@ -183,16 +183,17 @@ You work → Cortex observes → /cx-analyze detects patterns → /cx-validate y
 → unused knowledge decays (-0.05/month) → /cx-dream cleans up stale instincts
 ```
 
-## Commands (16)
+## Commands (17)
 
 | Command | What it does |
 |---------|-------------|
-| `/cx-status` | Dashboard: laws, instincts, projects, reflexes, tracking, health |
+| `/cx-status` | Dashboard: laws, instincts, projects, reflexes, tracking, health, domain grouping |
 | `/cx-analyze` | Detect patterns in observations → proposals (with descriptions) |
 | `/cx-distill` | Distill laws (universality gate), decay, Jaccard promotions |
 | `/cx-validate` | Review proposals with Claude verdicts + shorthand input |
 | `/cx-evolve` | Cluster instincts → skills/commands/rules/agents (checks existing) |
 | `/cx-dream` | Dream Cycle: dedup, contradictions, staleness, regex validation, health score |
+| `/cx-timeline` | Knowledge event log: creations, promotions, decays, archives, evolutions |
 | `/cx-router` | Command catalog with token costs and next action suggestion |
 | `/cx-promote` | Promote project instincts to global (cross-project, Jaccard ≥0.70) |
 | `/cx-audit` | Token overhead, duplicates, conflicts, cleanup |
@@ -275,6 +276,7 @@ Also fires `session-start.py` on `/compact` to re-inject laws.
 │   ├── commands/
 │   ├── rules/
 │   └── agents/
+├── knowledge-log.md         # Append-only knowledge event timeline
 ├── daily-summaries/         # EOD summaries
 ├── exports/                 # Portable skills
 └── log/

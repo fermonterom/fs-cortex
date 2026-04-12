@@ -77,6 +77,25 @@ If not `--dry-run`:
 - Move archived instincts to archive directory
 - Update `~/.claude/cortex/.last-dream` timestamp
 
+### Step 3b: Log to Knowledge Timeline
+
+After applying changes in Step 3, append one line per action to `~/.claude/cortex/knowledge-log.md`:
+
+For each deduplicated instinct (the removed one):
+```bash
+echo "$(date +%Y-%m-%d) | deduped | {removed_id} | merged-with:{kept_id} | cx-dream" >> ~/.claude/cortex/knowledge-log.md
+```
+
+For each decayed instinct:
+```bash
+echo "$(date +%Y-%m-%d) | decayed | {id} | {old_conf}→{new_conf} | cx-dream" >> ~/.claude/cortex/knowledge-log.md
+```
+
+For each archived instinct:
+```bash
+echo "$(date +%Y-%m-%d) | archived | {id} | {final_conf} | cx-dream" >> ~/.claude/cortex/knowledge-log.md
+```
+
 ### Step 4: Report
 
 Display a summary:

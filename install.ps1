@@ -20,7 +20,7 @@ $CommandsDir = Join-Path $ClaudeDir "commands"
 $HooksDir = Join-Path $ClaudeDir "hooks" "cortex"
 $SettingsFile = Join-Path $ClaudeDir "settings.json"
 $ClaudeMd = Join-Path $ClaudeDir "CLAUDE.md"
-$NewVersion = "3.10.7"
+$NewVersion = "3.11.0"
 
 # --- Helpers ---
 
@@ -126,6 +126,13 @@ foreach ($d in $dirs) {
     New-Item -ItemType Directory -Path (Join-Path $CortexDir $d) -Force | Out-Null
 }
 Print-Ok "Created ~/.claude/cortex/"
+
+# Create knowledge-log.md (append-only event log) — only if not already present
+$knowledgeLog = Join-Path $CortexDir "knowledge-log.md"
+if (-not (Test-Path $knowledgeLog)) {
+    New-Item -ItemType File -Path $knowledgeLog -Force | Out-Null
+    Print-Ok "Created knowledge-log.md (event log)"
+}
 
 # Step 5: Copy core files (preserve existing data on reinstall)
 Print-Step "Installing core files..."

@@ -1,4 +1,4 @@
-# fs-cortex v3.10.7 — Feature Reference
+# fs-cortex v3.11.0 — Feature Reference
 
 > Complete inventory of all features, commands, hooks, modules, and capabilities.
 > Last updated: 2026-04-12
@@ -143,11 +143,11 @@ Parallel systems (not part of the confidence pipeline):
 
 ---
 
-## Commands (16)
+## Commands (17)
 
 | Command | Purpose | Token Cost |
 |---|---|---|
-| `/cx-status` | Dashboard: laws, instincts, projects, reflexes, tracking, health | ~200 |
+| `/cx-status` | Dashboard: laws, instincts, projects, reflexes, tracking, health, domain grouping | ~200 |
 | `/cx-analyze` | Detect patterns in observations → proposals (Opus 1M agent) | ~5K |
 | `/cx-distill` | Promote instincts to laws (0.90+), apply decay, Jaccard promotions | ~800 |
 | `/cx-validate` | Review and accept/reject proposals interactively (shorthand UX) | ~500 |
@@ -160,6 +160,7 @@ Parallel systems (not part of the confidence pipeline):
 | `/cx-gotcha` | Capture error→fix as high-priority instinct | ~200 |
 | `/cx-downvote` | Negative feedback on incorrect instinct injection (reduces confidence) | ~100 |
 | `/cx-retro` | Weekly retrospective: command usage, instinct activations, health trend | ~200 |
+| `/cx-timeline` | Knowledge event log: creations, promotions, decays, archives, evolutions | ~100 |
 | `/cx-export` | Generate portable skill for Claude.ai or sharing | ~500 |
 | `/cx-backup` | Create portable .tar.gz backup for machine transfer | ~100 |
 | `/cx-restore` | Import knowledge from backup archive | ~200 |
@@ -275,7 +276,7 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 
 ### What Gets Updated
 - Hooks (5 files + lib/ directory)
-- Commands (14 .md files)
+- Commands (17 .md files)
 - SKILL.md + agents
 - Cortex section in CLAUDE.md
 - Version marker
@@ -342,6 +343,7 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 │   ├── commands/
 │   ├── rules/
 │   └── agents/
+├── knowledge-log.md             # Append-only knowledge event timeline
 ├── daily-summaries/            # EOD summaries (*.md)
 ├── exports/                    # Portable skills
 └── log/                        # Session learner logs
@@ -385,3 +387,4 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 | v3.6.6 | 2026-04-10 | Usage Guide in README, visual HTML explainer, docs cleanup |
 | v3.7.0 | 2026-04-10 | Agent evolution: cx-evolve generates agents, session-learner detects Agent patterns |
 | v3.10.7 | 2026-04-12 | CLAUDE.md added — project context, FEATURES.md reference, release workflow summary |
+| v3.11.0 | 2026-04-12 | cx-timeline command, knowledge-log.md event log, cx-status domain grouping |

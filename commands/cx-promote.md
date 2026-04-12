@@ -68,6 +68,14 @@ For accepted candidates:
    - `promoted_date` field with current date
 2. Do NOT delete the project-scoped originals (they may have project-specific trigger patterns)
 
+### Step 4b: Log to Knowledge Timeline
+
+After applying promotions in Step 4, append one line per promoted instinct to `~/.claude/cortex/knowledge-log.md`:
+
+```bash
+echo "$(date +%Y-%m-%d) | global | {id} | {confidence} | cx-promote" >> ~/.claude/cortex/knowledge-log.md
+```
+
 ### Step 5: Report
 
 ```
