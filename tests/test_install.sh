@@ -45,9 +45,9 @@ for lib in dream_cycle.py validate_instinct.py yaml-utils.js; do
     [ -f "$SANDBOX/.claude/hooks/cortex/lib/$lib" ] && pass "lib: $lib installed" || fail "lib: $lib MISSING"
 done
 
-# 1e: All 14 commands installed
+# 1e: All 16 commands installed
 CMD_COUNT=$(ls "$SANDBOX/.claude/commands/cx-"*.md 2>/dev/null | wc -l | tr -d ' ')
-[ "$CMD_COUNT" -eq 14 ] && pass "14 commands installed" || fail "commands: $CMD_COUNT (expected 14)"
+[ "$CMD_COUNT" -eq 16 ] && pass "16 commands installed" || fail "commands: $CMD_COUNT (expected 16)"
 
 # 1f: SKILL.md installed
 [ -f "$SANDBOX/.claude/skills/cortex/SKILL.md" ] && pass "SKILL.md installed" || fail "SKILL.md MISSING"

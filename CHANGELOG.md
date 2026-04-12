@@ -4,6 +4,18 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.9.0] — 2026-04-12
+
+### Added
+- **cx-downvote**: New command to downvote incorrect instinct injections. Records negative feedback in instinct-tracking.json and reduces confidence when rejection rate exceeds thresholds (20%→-0.05, 30%→-0.10, 50%→-0.15). Auto-archives instincts below 0.10 confidence.
+- **cx-retro**: Weekly retrospective command — aggregates command usage (from timeline.jsonl), instinct activations, downvotes, and maintenance status over configurable date range. Pure read-only reporting with actionable recommendations.
+- **injector.sh**: Writes `.last-instinct` file on every injection with instinct IDs and timestamp, enabling `/cx-downvote` to identify targets.
+- **reflexes**: New `instinct-downvote` reflex — detects phrases like "wrong instinct", "ignore instinct" and reminds user about `/cx-downvote`.
+
+### Changed
+- **cx-router.md**: Updated command table with cx-downvote (~100 tok) and cx-retro (~200 tok). Total commands: 16.
+- **claudemd-section.md**: Updated command list to include cx-downvote and cx-retro.
+
 ## [3.8.0] — 2026-04-12
 
 ### Added

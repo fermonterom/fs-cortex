@@ -294,6 +294,16 @@ try {
     }
   }
 
+  // ── 3c. Write last injected instinct IDs for /cx-downvote ────────────
+
+  if (matchedInstincts.length > 0) {
+    try {
+      const ids = matchedInstincts.map(i => i.id);
+      const lastInstFile = path.join(process.env._CX_CORTEX_DIR, ".last-instinct");
+      fs.writeFileSync(lastInstFile, JSON.stringify({ ids, ts: new Date().toISOString() }));
+    } catch {}
+  }
+
   // ── 4. Token budget cap ──────────────────────────────────────────────
 
   const SESSION_BUDGET_FILE = path.join(process.env._CX_CORTEX_DIR, ".session-token-budget");

@@ -86,6 +86,10 @@ console.log(r.fields.confidence === 0.75 && r.fields.count === 5 ? 'OK' : 'FAIL'
 ")
 [ "$result" = "OK" ] && pass "yaml-utils parses floats+ints" || fail "yaml: $result"
 
+# --- Test 11: .last-instinct write code exists (v3.9.0) ---
+echo "--- Last Instinct ---"
+grep -q '\.last-instinct' "$INJECTOR" && pass ".last-instinct write in injector" || fail ".last-instinct code missing"
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

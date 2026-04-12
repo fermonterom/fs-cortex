@@ -35,6 +35,8 @@ Command          Cost        Purpose
 /cx-export       ~500 tok    Generate portable skill for Claude.ai or sharing
 /cx-backup       ~100 tok    Create .tar.gz backup for machine transfer
 /cx-restore      ~200 tok    Import knowledge from backup archive
+/cx-downvote     ~100 tok    Downvote incorrect instinct injection (reduces confidence)
+/cx-retro        ~200 tok    Weekly retrospective: activity, usage, health trend
 /cx-router       ~50 tok     This catalog
 
 Recommended flow:
