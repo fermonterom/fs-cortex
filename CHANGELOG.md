@@ -4,6 +4,12 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.11.1] — 2026-04-12
+
+### Fixed
+- **test_install.sh**: Updated expected command count from 16 to 17 (cx-timeline added).
+- **test_integrity.sh**: Updated expected command list and count to include cx-timeline.
+
 ## [3.11.0] — 2026-04-12
 
 ### Added
