@@ -273,9 +273,9 @@ def main():
 
     # 1b. Commands hint
     parts.append(
-        'Cortex commands: /cx-status /cx-analyze /cx-dream /cx-distill /cx-validate '
-        '/cx-evolve /cx-eod /cx-gotcha /cx-downvote /cx-retro /cx-audit. '
-        'Use /cx-status for system state.'
+        'Cortex commands: /cx-status /cx-analyze /cx-distill /cx-validate /cx-evolve '
+        '/cx-dream /cx-audit /cx-eod /cx-gotcha /cx-downvote /cx-retro /cx-export '
+        '/cx-backup /cx-restore /cx-router /cx-promote. Use /cx-status for system state.'
     )
 
     # 2. New day check

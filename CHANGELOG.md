@@ -4,6 +4,19 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.10.1] — 2026-04-12
+
+### Fixed
+- **observe.py**: Removed `Skill` from skip list — was preventing timeline.jsonl from ever having data (cx-retro and cx-audit command usage would always be empty).
+- **cortex_utils.py**: Fixed `atomic_write()` double-close risk on fd in error path. Added `os.makedirs()` for parent directory creation.
+- **session-start.py**: Commands hint now lists all 16 commands (was missing 5: export, backup, restore, router, promote).
+- **README.md**: Updated `session-start.sh` → `session-start.py` in 3 locations. Updated reflex count 8 → 10.
+- **SECURITY.md**: Updated hook file references (observe.sh/session-start.sh → observe.py/session-start.py).
+- **FEATURES.md**: Updated reflex count 8 → 10.
+- **cx-audit.md**: Updated reflex count in token analysis example.
+- **test_install_ps1.ps1**: Updated hook filenames and mock settings for v3.10 (session-start.py, observe.py).
+- **test_install.sh**: Added cortex_utils.py and injector-engine.js to lib installation check.
+
 ## [3.10.0] — 2026-04-12
 
 ### Changed

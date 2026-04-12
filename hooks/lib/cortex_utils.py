@@ -67,14 +67,21 @@ def read_json_safe(filepath, default=None):
 def atomic_write(filepath, content):
     """Write content atomically via temp+rename."""
     dirpath = os.path.dirname(filepath)
+    os.makedirs(dirpath, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=dirpath, prefix='.tmp-')
+    closed = False
     try:
         os.write(fd, content.encode() if isinstance(content, str) else content)
         os.close(fd)
+        closed = True
         os.chmod(tmp, 0o600)
         os.replace(tmp, filepath)
     except Exception:
-        os.close(fd) if not os.get_inheritable(fd) else None
+        if not closed:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
         try:
             os.unlink(tmp)
         except Exception:

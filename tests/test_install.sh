@@ -41,7 +41,7 @@ for hook in observe.py injector.sh session-start.py session-learner.js; do
 done
 
 # 1d: Python lib modules installed
-for lib in dream_cycle.py validate_instinct.py yaml-utils.js; do
+for lib in dream_cycle.py validate_instinct.py cortex_utils.py yaml-utils.js injector-engine.js; do
     [ -f "$SANDBOX/.claude/hooks/cortex/lib/$lib" ] && pass "lib: $lib installed" || fail "lib: $lib MISSING"
 done
 

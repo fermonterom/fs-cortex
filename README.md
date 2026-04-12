@@ -30,7 +30,7 @@ Observe (hooks)  →  Analyze  →  Validate  →  Distill  →  Evolve  →  Au
    (JSONL, 0 tok)                  (YAML)       (TXT)     (evolved/)
 ```
 
-Parallel systems: **Reflexes** (8 deterministic rules, always fire) and **Agents** (3 specialized: pattern analysis, code review, task planning).
+Parallel systems: **Reflexes** (10 deterministic rules, always fire) and **Agents** (3 specialized: pattern analysis, code review, task planning).
 
 ### Dual Injection
 
@@ -120,7 +120,7 @@ Open Claude Code and work normally. Cortex works automatically.
 | Hook | When it runs | What it does |
 |------|-------------|-------------|
 | `observe.py` | Every tool use | Records observations silently (async, 0 tokens, ~70ms) |
-| `session-start.sh` | Session open / `/compact` | Injects your laws + context bridge + EOD resume |
+| `session-start.py` | Session open / `/compact` | Injects your laws + context bridge + EOD resume |
 | `injector.sh` | Every tool use | Injects matching instincts (max 3) + reflexes (max 2) |
 | `session-learner.js` | Session close | Detects error→fix pairs, corrections, workflows → proposals |
 
@@ -230,12 +230,12 @@ Claude provides a verdict with reasoning per item before you decide. All command
 
 | Hook | Event | Purpose | Blocking? |
 |------|-------|---------|-----------|
-| `session-start.sh` | SessionStart | Inject Laws + EOD resume (once) + context.md bridge | Sync (5s) |
+| `session-start.py` | SessionStart | Inject Laws + EOD resume (once) + context.md bridge | Sync (5s) |
 | `observe.py` | PreToolUse / PostToolUse | Capture tool start/complete (single-process, ~70ms) | Async (0 tokens) |
 | `injector.sh` | PreToolUse | Inject matched reflexes + instincts | Sync (3s) |
 | `session-learner.js` | Stop | Analyze session, proposals, context.md | Sync (15s) |
 
-Also fires `session-start.sh` on `/compact` to re-inject laws.
+Also fires `session-start.py` on `/compact` to re-inject laws.
 
 ### Agents (invoked on demand)
 
@@ -250,7 +250,7 @@ Also fires `session-start.sh` on `/compact` to re-inject laws.
 ```
 ~/.claude/cortex/
 ├── memory.json              # Identity + config + stats
-├── reflexes.json            # Deterministic rules (8 default)
+├── reflexes.json            # Deterministic rules (10 default)
 ├── proposals.json           # Pending proposals from session-learner + cx-analyze
 ├── laws/                    # One-liners (max 10 active)
 │   ├── *.txt

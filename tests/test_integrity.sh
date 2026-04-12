@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Integrity tests — validate project structure, commands, core files, observe.sh wrapper
+# Integrity tests — validate project structure, commands, core files, hook markers
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

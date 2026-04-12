@@ -135,7 +135,7 @@ if ($hookMissing -eq 0) { Test-Pass "all $($hookEvents.Count) hook events config
 
 # ── TEST 8: Hook files referenced ─────────────────────────────────
 
-$hookFiles = @("session-start.sh", "observe.sh", "injector.sh", "session-learner.js")
+$hookFiles = @("session-start.py", "observe.py", "injector.sh", "session-learner.js")
 $hfMissing = 0
 foreach ($hf in $hookFiles) {
     if ($content -match [regex]::Escape($hf)) {
@@ -171,7 +171,7 @@ if os.path.exists(settings_file):
 settings.setdefault('permissions', {})
 settings['permissions'].setdefault('allow', [])
 settings['hooks'] = {
-    'SessionStart': [{'hooks': [{'type': 'command', 'command': 'bash ~/.claude/hooks/cortex/session-start.sh'}]}],
+    'SessionStart': [{'hooks': [{'type': 'command', 'command': 'python3 ~/.claude/hooks/cortex/session-start.py'}]}],
     'PreToolUse': [{'hooks': [{'type': 'command', 'command': 'bash ~/.claude/hooks/cortex/injector.sh'}]}]
 }
 fd, tmp = tempfile.mkstemp(dir=os.path.dirname(settings_file), suffix='.tmp')

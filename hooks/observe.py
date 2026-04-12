@@ -407,9 +407,9 @@ def main():
     # Capture subagent ID if present (no longer skipped — v3.8.0)
     agent_id = data.get("agent_id", "")
 
-    # Skip non-useful tools
+    # Skip non-useful tools (Skill kept for cx-* timeline tracking in session-learner)
     tool_name = data.get("tool_name", data.get("tool", ""))
-    if tool_name in ("ToolSearch", "Skill"):
+    if tool_name in ("ToolSearch",):
         return
 
     # 4. Session ID and dedup

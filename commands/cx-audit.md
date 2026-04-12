@@ -50,7 +50,7 @@ TOKEN OVERHEAD ANALYSIS
   PER-TOOL-USE (when matched):
   Instincts (global)           12       ~480 (max 2 injected = ~80)
   Instincts (project)          8        ~320 (max 2 injected = ~80)
-  Reflexes                     8        ~160 (max 2 injected = ~40)
+  Reflexes                     10       ~200 (max 2 injected = ~40)
   ─────────────────────────────────────────────
   Subtotal per tool use:                ~120 max
 

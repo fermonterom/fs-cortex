@@ -1,4 +1,4 @@
-# fs-cortex v3.10.0 — Feature Reference
+# fs-cortex v3.10.1 — Feature Reference
 
 > Complete inventory of all features, commands, hooks, modules, and capabilities.
 > Last updated: 2026-04-12
@@ -22,7 +22,7 @@ OBSERVATIONS  →  PROPOSALS  →  INSTINCTS  →  LAWS
 ```
 
 Parallel systems (not part of the confidence pipeline):
-- **Reflexes** (8 default) — deterministic rules, always fire on matcher
+- **Reflexes** (10 default) — deterministic rules, always fire on matcher
 - **Agents** (3) — specialized for pattern analysis, code review, and task planning
 
 ### Dual Injection Architecture
@@ -207,7 +207,7 @@ All interactive commands use consistent shorthand (no modal dialogs):
 
 ---
 
-## Reflexes (8 default)
+## Reflexes (10 default)
 
 Deterministic rules via hooks — not probabilistic instructions. Triggers are regex patterns.
 
