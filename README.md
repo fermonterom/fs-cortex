@@ -192,7 +192,7 @@ You work → Cortex observes → /cx-analyze detects patterns → /cx-validate y
 | `/cx-distill` | Distill laws (universality gate), decay, Jaccard promotions |
 | `/cx-validate` | Review proposals with Claude verdicts + shorthand input |
 | `/cx-evolve` | Cluster instincts → skills/commands/rules/agents (checks existing) |
-| `/cx-dream` | Dream Cycle: dedup, contradictions, staleness, regex validation, health score |
+| `/cx-dream` | Dream Cycle: dedup, contradictions, staleness, regex, health, cleanup |
 | `/cx-timeline` | Knowledge event log: creations, promotions, decays, archives, evolutions |
 | `/cx-router` | Command catalog with token costs and next action suggestion |
 | `/cx-promote` | Promote project instincts to global (cross-project, Jaccard ≥0.70) |
@@ -354,14 +354,14 @@ Key measures:
 ## Tests
 
 ```bash
-bash tests/run_all.sh              # Run 10 bash suites (150 tests) + 1 PS1 suite (9 tests)
+bash tests/run_all.sh              # Run 10 bash suites (161 tests) + 1 PS1 suite (9 tests)
 bash tests/test_security.sh        # 7 security regression tests
-bash tests/test_dream_cycle.sh     # 26 dream cycle tests (dedup, decay, health)
-bash tests/test_observe.sh         # 7 observer tests (scrubbing, is_error, dedup, perf)
-bash tests/test_session_learner.sh # 7 session learner tests (detectors, proposals)
-bash tests/test_injector.sh        # 14 injector tests (sanitization, ReDoS, limits)
+bash tests/test_dream_cycle.sh     # 32 dream cycle tests (dedup, decay, health, cleanup)
+bash tests/test_observe.sh         # 8 observer tests (scrubbing, is_error, dedup, perf)
+bash tests/test_session_learner.sh # 8 session learner tests (detectors, proposals)
+bash tests/test_injector.sh        # 16 injector tests (sanitization, ReDoS, limits)
 bash tests/test_yaml_utils.sh      # 13 YAML parser tests (floats, strings, edge cases)
-bash tests/test_install.sh         # 37 install tests (fresh, upgrade, idempotency)
+bash tests/test_install.sh         # 38 install tests (fresh, upgrade, idempotency)
 bash tests/test_hooks_e2e.sh       # 14 end-to-end hook pipeline tests
 bash tests/test_uninstall.sh       # 11 uninstall tests (cleanup, backup, safety guard)
 bash tests/test_integrity.sh       # 14 integrity tests (commands, core files, versions)

@@ -110,6 +110,13 @@ function main() {
   const matchedReflexes = [];
   const matchedInstincts = [];
 
+  // ── 0. Load memory.json config ──────────────────────────────────────
+  let memoryConfig = {};
+  try {
+    const mem = JSON.parse(fs.readFileSync(path.join(CORTEX_DIR, "memory.json"), "utf8"));
+    memoryConfig = mem.config || {};
+  } catch {}
+
   // ── 1. Load and match reflexes ───────────────────────────────────────
 
   const reflexesFile = process.env._CX_REFLEXES_FILE;
@@ -117,12 +124,13 @@ function main() {
     try {
       const reflexData = JSON.parse(fs.readFileSync(reflexesFile, "utf8"));
       const reflexes = reflexData.reflexes || [];
+      const MAX_REFLEXES = memoryConfig.max_reflexes_per_injection || 2;
       for (const r of reflexes) {
         if (!r.enabled) continue;
         if (!r.matcher || !safeRegexTest(r.matcher, toolName)) continue;
         if (r.condition && !safeRegexTest(r.condition, toolInputStr)) continue;
         matchedReflexes.push({ id: r.id, action: r.action, severity: r.severity || "medium" });
-        if (matchedReflexes.length >= 2) break;
+        if (matchedReflexes.length >= MAX_REFLEXES) break;
       }
     } catch (e) {
       if (process.env.CORTEX_DEBUG) process.stderr.write("[cortex:injector] reflexes: " + e.message + "\n");
@@ -206,7 +214,7 @@ function main() {
 
   candidates.sort((a, b) => b.confidence - a.confidence);
 
-  const MAX_INSTINCTS = 3;
+  const MAX_INSTINCTS = memoryConfig.max_instincts_per_injection || 3;
   const MAX_TOTAL_CHARS = 1500;
   let totalChars = 0;
   const seenDomains = new Set();

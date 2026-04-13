@@ -72,10 +72,10 @@ grep -q "CORTEX-MANAGED" "$PROJECT_ROOT/hooks/session-learner.js" && pass "sessi
 grep -q "CORTEX-MANAGED" "$PROJECT_ROOT/hooks/lib/injector-engine.js" && pass "injector-engine.js has CORTEX-MANAGED" || fail "no marker in engine"
 grep -q "CORTEX-MANAGED" "$PROJECT_ROOT/hooks/lib/cortex_utils.py" && pass "cortex_utils.py has CORTEX-MANAGED" || fail "no marker in utils"
 
-# --- Test 8: MAX_INSTINCTS = 3 ---
+# --- Test 8: MAX_INSTINCTS defaults to 3 (now configurable via memory.json) ---
 echo "--- Injection Limits ---"
 ENGINE="$PROJECT_ROOT/hooks/lib/injector-engine.js"
-grep -q "MAX_INSTINCTS = 3" "$ENGINE" && pass "MAX_INSTINCTS = 3" || fail "MAX_INSTINCTS not 3"
+grep -q "max_instincts_per_injection.*||.*3" "$ENGINE" && pass "MAX_INSTINCTS configurable (default 3)" || fail "MAX_INSTINCTS not configurable with default 3"
 
 # --- Test 9: MAX_TOTAL_CHARS = 1500 ---
 grep -q "MAX_TOTAL_CHARS = 1500" "$ENGINE" && pass "MAX_TOTAL_CHARS = 1500" || fail "MAX_TOTAL_CHARS not 1500"

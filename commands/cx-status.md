@@ -118,13 +118,17 @@ PROJECTS:
 
 Read `~/.claude/cortex/reflexes.json`.
 
-Display:
+Display each reflex with its runtime stats. Highlight reflexes that have **never fired** (fireCount = 0 or missing) with a `[NEVER FIRED]` tag — these are candidates for removal or trigger tuning.
 
 ```
 REFLEXES:
-  ID                        MATCHER              SEVERITY    FIRES  LAST FIRED
-  reflex-no-env-commit      *.env*               critical    12     2 days ago
-  reflex-test-before-push   pre-push             high        47     today
+  ID                        MATCHER              SEVERITY    ENABLED  FIRES  LAST FIRED
+  read-before-edit          Edit|Write           high        yes      87     today
+  env-never-commit          git add|commit       critical    yes      12     2 days ago
+  git-push-safety           git push             high        yes      0      [NEVER FIRED]
+  security-headers          vercel.json          medium      no       0      [NEVER FIRED]
+
+  Active: 8/10 | Never fired: 2 | Total fires: 247
 ```
 
 ### Step 5: System Health

@@ -7,9 +7,13 @@ Modules:
   3. Staleness scoring + auto-archive
   4. Regex validation for instinct triggers
   5. Health score calculation 0-100
+  6. Cleanup: orphan projects, expired context, old archives
 """
 
+import json
+import os
 import re
+import time
 import datetime
 
 
@@ -207,3 +211,154 @@ def calculate_health_score(stats):
         score += 5
 
     return max(0, min(100, score))
+
+
+# ── Module 6: Cleanup — Orphans, Expired Context, Old Archives ────
+
+
+def detect_orphan_projects(cortex_dir):
+    """Find orphan/stale projects in the cortex data directory.
+
+    Detects:
+      - dead_entry: registry entry whose directory no longer exists
+      - orphan_dir: project directory not listed in registry
+      - stale_project: last_seen > 90 days ago
+
+    Returns list of dicts: {id, name, type, detail}
+    """
+    projects_dir = os.path.join(cortex_dir, "projects")
+    registry_path = os.path.join(projects_dir, "registry.json")
+
+    registry = {}
+    try:
+        with open(registry_path, "r") as f:
+            registry = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+    results = []
+    now = time.time()
+    stale_threshold = 90 * 86400  # 90 days in seconds
+
+    # Check registry entries against filesystem
+    for pid, meta in registry.items():
+        proj_dir = os.path.join(projects_dir, pid)
+        name = meta.get("name", pid)
+        if not os.path.isdir(proj_dir):
+            results.append({
+                "id": pid,
+                "name": name,
+                "type": "dead_entry",
+                "detail": "Registry entry but directory missing",
+            })
+            continue
+        # Check staleness via last_seen
+        last_seen = meta.get("last_seen", "")
+        if last_seen:
+            try:
+                ls = datetime.datetime.fromisoformat(
+                    last_seen.replace("Z", "+00:00")
+                )
+                age_s = now - ls.timestamp()
+                if age_s > stale_threshold:
+                    age_days = int(age_s / 86400)
+                    results.append({
+                        "id": pid,
+                        "name": name,
+                        "type": "stale_project",
+                        "detail": f"Last seen {age_days} days ago",
+                    })
+            except (ValueError, TypeError):
+                pass
+
+    # Check filesystem dirs against registry (skip symlinks for safety)
+    try:
+        for entry in os.listdir(projects_dir):
+            full = os.path.join(projects_dir, entry)
+            if os.path.islink(full):
+                continue
+            if not os.path.isdir(full):
+                continue
+            if entry not in registry:
+                results.append({
+                    "id": entry,
+                    "name": entry,
+                    "type": "orphan_dir",
+                    "detail": "Directory exists but not in registry",
+                })
+    except OSError:
+        pass
+
+    return results
+
+
+def cleanup_expired_context(cortex_dir, ttl_days=14):
+    """Find context.md files older than TTL.
+
+    Returns list of dicts: {project_id, context_age_days, path}
+    """
+    projects_dir = os.path.join(cortex_dir, "projects")
+    expired = []
+    now = time.time()
+    ttl_seconds = ttl_days * 86400
+
+    try:
+        for entry in os.listdir(projects_dir):
+            entry_path = os.path.join(projects_dir, entry)
+            if os.path.islink(entry_path):
+                continue
+            ctx_path = os.path.join(entry_path, "context.md")
+            if os.path.isfile(ctx_path) and not os.path.islink(ctx_path):
+                age = now - os.path.getmtime(ctx_path)
+                if age > ttl_seconds:
+                    expired.append({
+                        "project_id": entry,
+                        "context_age_days": int(age / 86400),
+                        "path": ctx_path,
+                    })
+    except OSError:
+        pass
+
+    return expired
+
+
+def consolidate_old_archives(cortex_dir, days=90):
+    """Find old observation archive files that can be purged.
+
+    Returns list of dicts: {project_id, file_count, total_bytes, files}
+    """
+    projects_dir = os.path.join(cortex_dir, "projects")
+    results = []
+    now = time.time()
+    cutoff = days * 86400
+
+    try:
+        for entry in os.listdir(projects_dir):
+            entry_path = os.path.join(projects_dir, entry)
+            if os.path.islink(entry_path):
+                continue
+            archive_dir = os.path.join(entry_path, "observations.archive")
+            if not os.path.isdir(archive_dir) or os.path.islink(archive_dir):
+                continue
+            old_files = []
+            total_bytes = 0
+            for fname in os.listdir(archive_dir):
+                fpath = os.path.join(archive_dir, fname)
+                if not os.path.isfile(fpath) or os.path.islink(fpath):
+                    continue
+                age = now - os.path.getmtime(fpath)
+                if age > cutoff:
+                    size = os.path.getsize(fpath)
+                    old_files.append(fpath)
+                    total_bytes += size
+            if old_files:
+                results.append({
+                    "project_id": entry,
+                    "file_count": len(old_files),
+                    "total_bytes": total_bytes,
+                    "files": old_files,
+                })
+    except OSError:
+        pass
+
+    return results

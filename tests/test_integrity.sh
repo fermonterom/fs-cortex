@@ -93,7 +93,7 @@ python3 -c "
 import json
 with open('$PROJECT_ROOT/core/memory.template.json') as f:
     m = json.load(f)
-assert 'identity' in m, 'missing identity'
+assert 'identity' not in m, 'identity block should be removed (v3.12.0+)'
 assert 'config' in m, 'missing config'
 assert 'stats' in m, 'missing stats'
 cfg = m['config']

@@ -1,7 +1,7 @@
-# fs-cortex v3.11.1 — Feature Reference
+# fs-cortex v3.12.0 — Feature Reference
 
 > Complete inventory of all features, commands, hooks, modules, and capabilities.
-> Last updated: 2026-04-12
+> Last updated: 2026-04-14
 
 ---
 
@@ -65,11 +65,15 @@ Parallel systems (not part of the confidence pipeline):
 
 ### injector.sh — Real-time Instinct Injection
 - **Imports shared `yaml-utils.js`** for YAML parsing (eliminates inline parser drift risk)
-- **Domain pre-filter**: detects project stack (React, Node, Supabase, Python, Rust, Go) from package.json/config files, skips irrelevant instincts
-- **Occurrence tracking**: writes `instinct-tracking.json` with activation count, session list, first/last seen
-- **Draft auto-promote**: tracks ALL instinct matches (including confidence < 0.30); auto-promotes drafts to 0.35 after 5+ activations across 3+ sessions
+- **Domain pre-filter**: detects project stack (React, Node, Supabase, Python, Rust, Go) from package.json/pyproject.toml/Cargo.toml/go.mod, skips irrelevant instincts
+- **Domain dedup**: 1 instinct per domain per injection — higher confidence wins within the same domain. Prevents redundant advice from the same area saturating context
+- **Occurrence tracking**: writes `instinct-tracking.json` with per-instinct schema: `{ count, sessions[], projects_seen[], first_seen, last_seen }`. Tracks ALL matches including drafts (confidence < 0.30), not just injected instincts
+- **Session tracking**: stores last 20 session IDs per instinct (capped to prevent unbounded growth). Used for multi-session auto-promote gating
+- **Cross-project tracking**: `projects_seen[]` per instinct — records which projects triggered each instinct. Used by `/cx-promote` for cross-project analysis
+- **Draft auto-promote**: drafts with 5+ activations across 3+ distinct sessions → confidence bumped to 0.35. Events logged to `knowledge-log.md`
 - **Token budget cap**: per-session budget (8000 tokens); skips instinct injection when exceeded; reflexes always pass (safety exempt)
 - **Max 3 instincts** per injection, 500 chars each, 1500 chars total
+- **Inline staleness**: instincts not seen in 60+ days are skipped at injection time (read-only check against tracking data, no file writes to instinct YAML)
 - **sanitizeInjection()**: blocks 10 prompt injection keywords, strips control chars, enforces length limit
 - **isSafeRegex()**: ReDoS protection — bans nested quantifiers, >5 alternations, >100 chars, timing test
 - Uses `execFileSync` (not `execSync`) for command injection prevention
@@ -122,12 +126,13 @@ Parallel systems (not part of the confidence pipeline):
 ## Library Modules (3 files)
 
 ### hooks/lib/dream_cycle.py — Knowledge Maintenance
-5 modules for knowledge hygiene:
+6 modules for knowledge hygiene:
 1. **Jaccard dedup**: Unicode-safe tokenization (word boundaries + CJK characters), configurable threshold (default 0.80), **full pairwise comparison** (checks against ALL kept items, not just first match)
 2. **Contradiction detection**: 7 antonym pairs (EN: must/must not, always/never, enable/disable, allow/block, require/forbid; ES: siempre/nunca, permitir/prohibir). Same-domain only. No false positives on "document"/"domain"
 3. **Staleness scoring**: 0-100 based on age since last_seen (7d=0, 30d=30, 60d=60, 90d+=90+). Auto-archive at threshold (default 90). **Linear confidence decay**: -0.05 per 30 days (matches cx-distill and documented config)
 4. **Regex validation**: length limit (100), nested quantifier ban (ReDoS), alternation limit (5), compile test
 5. **Health score**: 0-100 with penalties (staleness -2/instinct, contradictions -10/pair, duplicates -3) and bonuses (laws +2, confidence +5)
+6. **Cleanup**: `detect_orphan_projects()` (dead registry entries, orphan dirs, stale >90d), `cleanup_expired_context()` (context.md beyond 14d TTL), `consolidate_old_archives()` (observation archives >90d). All return lists for reporting; destructive actions require confirmation
 
 ### hooks/lib/validate_instinct.py — Import Security
 - Validates instinct YAML files against 3 blocked injection patterns
@@ -206,8 +211,9 @@ All interactive commands use consistent shorthand (no modal dialogs):
 
 **Inline staleness**: instincts not seen in 60+ days are skipped at injection time (read-only, no file writes). Immediate effect without manual `/cx-dream`.
 **Decay**: linear -0.05 per 30 days via Dream Cycle (e.g., 0.80 confidence after 60 days → 0.70). 90-day stale instincts auto-archive.
-**Promotion**: Jaccard similarity ≥0.70 + 2 projects + avg confidence ≥0.60 → global via `/cx-promote`.
-**Draft auto-promote**: 5+ trigger matches across 3+ sessions → confidence bumped to 0.35.
+**Domain dedup**: 1 instinct per domain per injection. Higher confidence wins within the same domain. Max 3 domains per tool use. Prevents context saturation from redundant advice.
+**Promotion**: Jaccard similarity ≥0.70 + 2 projects + avg confidence ≥0.60 → global via `/cx-promote`. Cross-project analysis uses `projects_seen[]` from instinct-tracking.json.
+**Draft auto-promote**: 5+ trigger matches across 3+ distinct sessions → confidence bumped to 0.35. Events logged to `knowledge-log.md` with source `injector-engine`.
 **Downvote**: `/cx-downvote` records negative feedback. 30%+ rejection rate → confidence reduced. Below 0.10 → auto-archive.
 
 ---
@@ -284,12 +290,12 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 
 ---
 
-## Tests (11 suites, 155 tests)
+## Tests (11 suites, 170 tests)
 
 | Suite | Tests | Coverage |
 |---|---|---|
 | `test_security.sh` | 7 | Injection, command injection, scrubbing, validation |
-| `test_dream_cycle.sh` | 26 | Jaccard, contradictions, staleness, regex, health, **decay formula consistency** |
+| `test_dream_cycle.sh` | 32 | Jaccard, contradictions, staleness, regex, health, decay formula, **cleanup module 6** |
 | `test_observe.sh` | 8 | Scrubbing, is_error, dedup, atomic write, e2e, perf, subagent capture |
 | `test_session_learner.sh` | 8 | Error-fix pairs, corrections, chains, proposals, command timeline |
 | `test_injector.sh` | 16 | Sanitization, ReDoS, limits, markers, yaml-utils, .last-instinct, engine |
@@ -314,10 +320,10 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 ```
 ~/.claude/cortex/
 ├── version                    # Installed version (e.g., "3.6.0")
-├── memory.json                # Identity + config + stats
-├── reflexes.json              # 8 deterministic rules
+├── memory.json                # Config + stats (identity removed in v3.12.0)
+├── reflexes.json              # 10 deterministic rules
 ├── proposals.json             # Pending proposals from learner + cx-analyze
-├── instinct-tracking.json     # Activation stats per instinct
+├── instinct-tracking.json     # Per-instinct: {count, sessions[20], projects_seen[], first_seen, last_seen}
 ├── .session-token-budget      # Per-session token counter
 ├── .obs-count                 # Observation counter (triggers at 50)
 ├── .learn-pending             # Marker: run /cx-analyze
@@ -348,6 +354,46 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 ├── exports/                    # Portable skills
 └── log/                        # Session learner logs
 ```
+
+---
+
+## memory.json Configuration
+
+### Active config values (read by hooks at runtime)
+
+| Key | Default | Used by | Purpose |
+|---|---|---|---|
+| `max_observations_mb` | 10 | observe.py | Auto-archive observations.jsonl when exceeds this size |
+| `archive_days` | 30 | observe.py | Auto-purge archived observations older than N days |
+| `learn_threshold` | 50 | observe.py | Mark `.learn-pending` after N observations |
+
+### Config values used by commands (read by Claude, not by hooks)
+
+| Key | Default | Used by | Purpose |
+|---|---|---|---|
+| `law_threshold` | 0.90 | /cx-distill | Minimum confidence to distill instinct → law |
+| `max_laws` | 10 | /cx-distill, session-start.py | Maximum active laws |
+| `decay_per_30_days` | 0.05 | /cx-distill, /cx-dream | Linear confidence decay rate |
+| `promote_min_projects` | 2 | /cx-promote | Minimum projects for cross-project promotion |
+| `promote_min_confidence` | 0.80 | /cx-promote | Minimum avg confidence for promotion |
+| `jaccard_threshold` | 0.70 | /cx-promote, dream_cycle.py | Jaccard similarity threshold for dedup/promotion |
+| `confidence_cap` | 0.95 | /cx-distill | Maximum confidence value |
+| `context_ttl_days` | 14 | session-start.py | Context bridge expiry |
+
+### Previously dormant, now active (v3.12.0)
+
+| Key | Default | Now used by | Note |
+|---|---|---|---|
+| `max_instincts_per_injection` | 3 | injector-engine.js | Was hardcoded, now read from config with fallback to 3 |
+| `max_reflexes_per_injection` | 2 | injector-engine.js | Was hardcoded, now read from config with fallback to 2 |
+
+### Removed (v3.12.0)
+
+| Key | Reason |
+|---|---|
+| `identity.name` | Never read by any hook. User identity lives in CLAUDE.md |
+| `identity.role` | Never read by any hook |
+| `identity.language` | Never read by any hook |
 
 ---
 
@@ -388,3 +434,5 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 | v3.7.0 | 2026-04-10 | Agent evolution: cx-evolve generates agents, session-learner detects Agent patterns |
 | v3.10.7 | 2026-04-12 | CLAUDE.md added — project context, FEATURES.md reference, release workflow summary |
 | v3.11.0 | 2026-04-12 | cx-timeline command, knowledge-log.md event log, cx-status domain grouping |
+| v3.11.1 | 2026-04-12 | Test expectations fix for 17 commands |
+| v3.12.0 | 2026-04-14 | Dream Cycle Module 6 (cleanup), configurable injection limits, identity removal, reflex stats |

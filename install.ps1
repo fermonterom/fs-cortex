@@ -20,7 +20,7 @@ $CommandsDir = Join-Path $ClaudeDir "commands"
 $HooksDir = Join-Path $ClaudeDir "hooks" "cortex"
 $SettingsFile = Join-Path $ClaudeDir "settings.json"
 $ClaudeMd = Join-Path $ClaudeDir "CLAUDE.md"
-$NewVersion = "3.11.1"
+$NewVersion = "3.12.0"
 
 # --- Helpers ---
 
@@ -141,7 +141,29 @@ if (-not (Test-Path $memoryDest)) {
     Copy-Item (Join-Path $ScriptDir "core" "memory.template.json") $memoryDest
     Print-Ok "Created memory.json"
 }
-else { Print-Warn "memory.json exists, preserving user data" }
+else {
+    Print-Warn "memory.json exists, preserving user data"
+    # Migrate memory.json: remove dead identity block, update version (v3.12.0+)
+    try {
+        $memJson = Get-Content $memoryDest -Raw | ConvertFrom-Json
+        $changed = $false
+        if ($memJson.PSObject.Properties.Name -contains 'identity') {
+            $memJson.PSObject.Properties.Remove('identity')
+            $changed = $true
+        }
+        $curVer = ($memJson.version -split '\.') | ForEach-Object { [int]$_ }
+        if ($curVer.Count -lt 3 -or $curVer[0] -lt 3 -or ($curVer[0] -eq 3 -and $curVer[1] -lt 12)) {
+            $memJson.version = '3.12.0'
+            $changed = $true
+        }
+        if ($changed) {
+            $tmpPath = "$memoryDest.tmp.$PID"
+            $memJson | ConvertTo-Json -Depth 10 | Set-Content $tmpPath -Encoding UTF8
+            Move-Item $tmpPath $memoryDest -Force
+            Write-Host "  Migrated memory.json (removed identity, updated version)"
+        }
+    } catch {}
+}
 
 $reflexesDest = Join-Path $CortexDir "reflexes.json"
 if (-not (Test-Path $reflexesDest)) {
@@ -406,7 +428,7 @@ if ($ImportBackup) {
                 }
             }
         }
-        # Copy memory.json (user identity + stats)
+        # Copy memory.json (config + stats)
         $memSrc = Join-Path $tempDir.FullName "memory.json"
         if (Test-Path $memSrc) {
             $memDest = Join-Path $CortexDir "memory.json"
@@ -462,25 +484,13 @@ if ($ImportBackup) {
 # Step 13: Onboarding (only for fresh installs)
 if (-not $HasCortex -and -not $ImportBackup) {
     Print-Step "Setting up initial configuration..."
-    Write-Host ""
-    Write-Host "Quick setup (press Enter to skip any):" -ForegroundColor White
-    $userName = Read-Host "  Your name"
-    $userRole = Read-Host "  Your role"
-    $userLang = Read-Host "  Language (en/es/...)"
-    if ([string]::IsNullOrWhiteSpace($userLang)) { $userLang = "en" }
 
-    $env:CX_USER_NAME = $userName
-    $env:CX_USER_ROLE = $userRole
-    $env:CX_USER_LANG = $userLang
-
+    # Populate memory.json with install date
     & $PythonCmd -c @'
 import json, os, datetime
 mem_path = os.path.join(os.environ.get("USERPROFILE", ""), ".claude", "cortex", "memory.json")
 with open(mem_path) as f:
     mem = json.load(f)
-mem["identity"]["name"] = os.environ.get("CX_USER_NAME", "")
-mem["identity"]["role"] = os.environ.get("CX_USER_ROLE", "")
-mem["identity"]["language"] = os.environ.get("CX_USER_LANG", "en")
 mem["stats"]["installed"] = datetime.datetime.now().strftime("%Y-%m-%d")
 import tempfile
 fd, tmp = tempfile.mkstemp(dir=os.path.dirname(mem_path), suffix=".tmp")

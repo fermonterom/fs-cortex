@@ -246,9 +246,9 @@ echo ""
 
 echo "--- dream_cycle.py ---"
 PYTHONPATH="$SANDBOX/.claude/hooks/cortex/lib" python3 -c "
-from dream_cycle import jaccard_similarity, detect_contradictions, staleness_score, validate_trigger_regex, calculate_health_score
+from dream_cycle import jaccard_similarity, detect_contradictions, staleness_score, validate_trigger_regex, calculate_health_score, detect_orphan_projects, cleanup_expired_context, consolidate_old_archives
 
-# Quick smoke test of all 5 modules
+# Quick smoke test of all 6 modules
 assert jaccard_similarity('always use const', 'always use const') == 1.0
 assert len(detect_contradictions([
     {'id':'a','action':'always mock','domain':'test'},
@@ -257,8 +257,12 @@ assert len(detect_contradictions([
 assert staleness_score({'last_seen':'2099-01-01T00:00:00Z'}) == 0
 assert validate_trigger_regex('Bash|Edit')[0] == True
 assert 0 <= calculate_health_score({'stale_count':0,'contradiction_count':0,'duplicate_count':0,'law_count':2,'avg_confidence':0.7,'last_distill_days':3,'last_dream_days':2}) <= 100
+# Module 6: cleanup functions are callable (detailed tests in test_dream_cycle.sh)
+assert isinstance(detect_orphan_projects('/nonexistent'), list)
+assert isinstance(cleanup_expired_context('/nonexistent'), list)
+assert isinstance(consolidate_old_archives('/nonexistent'), list)
 print('OK')
-" 2>/dev/null | grep -q OK && pass "dream_cycle.py: all 5 modules work" || fail "dream_cycle.py: module failure"
+" 2>/dev/null | grep -q OK && pass "dream_cycle.py: all 6 modules work" || fail "dream_cycle.py: module failure"
 
 echo ""
 

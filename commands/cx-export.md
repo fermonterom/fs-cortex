@@ -26,7 +26,7 @@ Generates a portable skill file containing all condensed instincts and laws, rea
 Read from these sources:
 - Global instincts: `~/.claude/cortex/instincts/global/*.yaml`
 - Laws: `~/.claude/cortex/laws/*.txt`
-- Operator identity: `~/.claude/cortex/memory.json` (name, preferences)
+- Config: `~/.claude/cortex/memory.json` (config + stats)
 - If `--project`: also read `~/.claude/cortex/projects/<hash>/instincts/*.yaml`
 
 ### Step 2: Filter by Confidence
@@ -152,7 +152,7 @@ Show summary:
 - **No instincts above threshold**: "No instincts meet the confidence threshold (>= 0.70). Try --min-confidence 0.5 or run /cx-analyze first."
 - **No laws**: omit the Laws section, do not show empty table
 - **No gotchas**: omit the Gotchas section
-- **No memory.json**: skip operator identity, use generic header
+- **No memory.json**: skip config section, use generic header
 - **File already exists for today**: overwrite with new export (latest data wins)
 - **Large export (100+ instincts)**: warn user about token count, suggest raising threshold
 

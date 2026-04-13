@@ -101,7 +101,7 @@ confidence: 0.85
 domain: testing
 ---
 YAML
-echo '{"version":"3.0.0","identity":{"name":"TestUser"}}' > "$SANDBOX/.claude/cortex/memory.json"
+echo '{"version":"3.0.0","config":{"max_observations_mb":10},"stats":{"installed":"2026-01-01","test_marker":"TestUser"}}' > "$SANDBOX/.claude/cortex/memory.json"
 echo '{"reflexes":[{"id":"custom","matcher":".*","enabled":true}]}' > "$SANDBOX/.claude/cortex/reflexes.json"
 echo '{"test":"observation"}' > "$SANDBOX/.claude/cortex/projects/test123/observations.jsonl"
 echo '[{"id":"p1","status":"approved","action":"test"}]' > "$SANDBOX/.claude/cortex/proposals.json"

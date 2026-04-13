@@ -70,7 +70,7 @@ For each category, merge intelligently:
 - Create project directory structure for new projects
 
 **Memory** (`memory.json`):
-- Merge identity: keep local values if populated, use backup for empty fields
+- Merge config: keep local values if customized, use backup defaults otherwise
 - Merge stats: use MAX of each stat value
 - Merge config: keep local config (user may have customized)
 

@@ -72,7 +72,7 @@ When the system prompt contains `EOD RESUME`, Claude MUST proactively present it
 | `/cx-restore` | Import backup with intelligent merge |
 | `/cx-router` | Show command catalog with token costs and next action suggestion |
 | `/cx-promote` | Promote project instincts to global when found in 2+ projects |
-| `/cx-dream` | Dream Cycle: dedup, contradictions, staleness, regex validation, health score |
+| `/cx-dream` | Dream Cycle: dedup, contradictions, staleness, regex, health, cleanup |
 
 ### Learning Pipeline
 

@@ -1,10 +1,5 @@
 {
-  "version": "3.2.0",
-  "identity": {
-    "name": "",
-    "role": "",
-    "language": "en"
-  },
+  "version": "3.12.0",
   "config": {
     "max_observations_mb": 10,
     "archive_days": 30,

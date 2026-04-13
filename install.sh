@@ -21,7 +21,7 @@ COMMANDS_DIR="$CLAUDE_DIR/commands"
 HOOKS_DIR="$CLAUDE_DIR/hooks/cortex"
 SETTINGS_FILE="$CLAUDE_DIR/settings.json"
 CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
-NEW_VERSION="3.11.1"
+NEW_VERSION="3.12.0"
 
 print_header() {
     echo ""
@@ -149,6 +149,34 @@ if [ ! -f "$CORTEX_DIR/memory.json" ]; then
     print_ok "Created memory.json"
 else
     print_warn "memory.json exists, preserving user data"
+    # Migrate memory.json: remove dead identity block, update version (v3.12.0+)
+    if command -v python3 >/dev/null 2>&1; then
+        python3 -c "
+import json, os, tempfile
+mem_path = '$CORTEX_DIR/memory.json'
+try:
+    with open(mem_path) as f:
+        mem = json.load(f)
+    changed = False
+    if 'identity' in mem:
+        del mem['identity']
+        changed = True
+    cur = mem.get('version', '0.0.0')
+    cur_parts = tuple(int(x) for x in cur.split('.') if x.isdigit())
+    if cur_parts < (3, 12, 0):
+        mem['version'] = '3.12.0'
+        changed = True
+    if changed:
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(mem_path), suffix='.tmp')
+        with os.fdopen(fd, 'w') as f:
+            json.dump(mem, f, indent=2)
+            f.write('\n')
+        os.replace(tmp, mem_path)
+        print('  Migrated memory.json (removed identity, updated version)')
+except Exception as e:
+    pass
+" 2>/dev/null
+    fi
 fi
 if [ ! -f "$CORTEX_DIR/reflexes.json" ]; then
     cp "$SCRIPT_DIR/core/reflexes.default.json" "$CORTEX_DIR/reflexes.json"
@@ -480,26 +508,12 @@ fi
 if ! $HAS_CORTEX && [ -z "$IMPORT_BACKUP" ]; then
     print_step "Setting up initial configuration..."
 
-    # Populate memory.json with user input
-    echo ""
-    echo -e "${BOLD}Quick setup (press Enter to skip any):${NC}"
-    read -rp "  Your name: " USER_NAME
-    read -rp "  Your role: " USER_ROLE
-    read -rp "  Language (en/es/...): " USER_LANG
-    USER_LANG="${USER_LANG:-en}"
-
-    export CX_USER_NAME="$USER_NAME"
-    export CX_USER_ROLE="$USER_ROLE"
-    export CX_USER_LANG="$USER_LANG"
-
+    # Populate memory.json with install date
     "$PYTHON_CMD" -c '
 import json, os, datetime
 mem_path = os.path.expanduser("~/.claude/cortex/memory.json")
 with open(mem_path) as f:
     mem = json.load(f)
-mem["identity"]["name"] = os.environ.get("CX_USER_NAME", "")
-mem["identity"]["role"] = os.environ.get("CX_USER_ROLE", "")
-mem["identity"]["language"] = os.environ.get("CX_USER_LANG", "en")
 mem["stats"]["installed"] = datetime.datetime.now().strftime("%Y-%m-%d")
 import tempfile
 fd, tmp = tempfile.mkstemp(dir=os.path.dirname(mem_path), suffix=".tmp")

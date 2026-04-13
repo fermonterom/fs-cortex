@@ -1,6 +1,6 @@
 ---
 name: cx-dream
-description: Run Dream Cycle — dedup, contradiction detection, staleness decay, regex validation, health score
+description: Run Dream Cycle — dedup, contradictions, staleness, regex, health, cleanup
 command: true
 ---
 
@@ -8,12 +8,13 @@ command: true
 
 ## What it does
 
-Knowledge maintenance cycle that runs 5 modules in sequence:
+Knowledge maintenance cycle that runs 6 modules in sequence:
 1. **Jaccard dedup** — removes duplicate instincts (threshold 0.80)
 2. **Contradiction detection** — finds conflicting instincts in the same domain
 3. **Staleness scoring + auto-archive** — decays confidence, archives stale instincts (score >= 90)
 4. **Regex validation** — checks all instinct triggers for safety (ReDoS, length, syntax)
 5. **Health score** — calculates overall knowledge health 0-100
+6. **Cleanup** — detects orphan projects, expired context.md, old observation archives
 
 ## Usage
 
@@ -45,6 +46,9 @@ from dream_cycle import (
     apply_staleness_decay,
     validate_trigger_regex,
     calculate_health_score,
+    detect_orphan_projects,
+    cleanup_expired_context,
+    consolidate_old_archives,
 )
 ```
 
@@ -96,6 +100,51 @@ For each archived instinct:
 echo "$(date +%Y-%m-%d) | archived | {id} | {final_conf} | cx-dream" >> ~/.claude/cortex/knowledge-log.md
 ```
 
+### Step 3c: Cleanup (Module 6)
+
+Run the 3 cleanup functions against `~/.claude/cortex/`:
+
+```python
+CORTEX_DIR = os.path.expanduser("~/.claude/cortex")
+
+orphans = detect_orphan_projects(CORTEX_DIR)
+expired = cleanup_expired_context(CORTEX_DIR, ttl_days=14)
+old_archives = consolidate_old_archives(CORTEX_DIR, days=90)
+```
+
+**Display results:**
+
+```
+=== Cleanup ===
+
+Orphan projects: 2
+  - 21c71e44e035 (fs-vps-playbook) — dead_entry: Registry entry but directory missing
+  - a1b2c3d4e5f6 (unknown) — orphan_dir: Directory exists but not in registry
+
+Expired context.md: 3
+  - 0846920a5e13 — 23 days old
+  - b34a69eb49b4 — 18 days old
+
+Old archives (>90d): 1
+  - f1a2b3c4d5e6 — 4 files, 12.3 MB
+```
+
+**If not `--dry-run`, ask confirmation then apply:**
+
+- **dead_entry**: Remove entry from `registry.json` (atomic write)
+- **orphan_dir**: Remove directory from `projects/` (after user confirms)
+- **stale_project**: Offer to archive project instincts and remove observations
+- **expired context.md**: Delete the file
+- **old archives**: Delete archive files older than 90 days
+
+**Log to knowledge-log.md:**
+
+```bash
+echo "$(date +%Y-%m-%d) | orphan-removed | {id} | {type}:{name} | cx-dream" >> ~/.claude/cortex/knowledge-log.md
+echo "$(date +%Y-%m-%d) | context-cleaned | {project_id} | {age_days}d-expired | cx-dream" >> ~/.claude/cortex/knowledge-log.md
+echo "$(date +%Y-%m-%d) | archive-purged | {project_id} | {file_count}-files-{mb}MB | cx-dream" >> ~/.claude/cortex/knowledge-log.md
+```
+
 ### Step 4: Report
 
 Display a summary:
@@ -109,6 +158,11 @@ Contradictions found: 1
 Instincts decayed: 5
 Instincts archived: 2
 Invalid triggers: 0
+
+Cleanup:
+  Orphan projects: 2 (1 dead entry, 1 orphan dir)
+  Expired context.md: 3 (deleted)
+  Old archives purged: 4 files, 12.3 MB
 
 Health Score: 82/100
   Staleness: -4

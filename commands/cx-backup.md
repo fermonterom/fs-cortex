@@ -31,7 +31,7 @@ CORTEX BACKUP — Inventory
   Reflexes:        N rules
   Daily summaries: N files
   Evolved content: N skills + N commands + N rules
-  Memory:          identity + config
+  Memory:          config + stats
 ```
 
 ### Step 2: Create Archive

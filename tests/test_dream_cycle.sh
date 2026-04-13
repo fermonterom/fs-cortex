@@ -342,6 +342,100 @@ done
 
 echo ""
 
+# ── Cleanup Module Tests ─────────────────────────────────────────────
+
+echo "--- Module 6: Cleanup ---"
+
+# Setup temp dir for cleanup tests (trap ensures cleanup on failure)
+CLEANUP_TMP=$(mktemp -d)
+trap 'rm -rf "$CLEANUP_TMP" 2>/dev/null' EXIT
+mkdir -p "$CLEANUP_TMP/projects/abc123def456"
+mkdir -p "$CLEANUP_TMP/projects/orphan_no_reg"
+mkdir -p "$CLEANUP_TMP/projects/stale_proj_99/observations.archive"
+
+# Create registry with abc123 (exists) + dead_entry (missing dir) + stale_proj_99
+cat > "$CLEANUP_TMP/projects/registry.json" << 'REGEOF'
+{
+  "abc123def456": {"name": "active-project", "last_seen": "2026-04-13T10:00:00Z"},
+  "dead_entry_id": {"name": "deleted-project", "last_seen": "2026-04-01T10:00:00Z"},
+  "stale_proj_99": {"name": "stale-project", "last_seen": "2025-01-01T10:00:00Z"}
+}
+REGEOF
+
+# Test 27: Detect dead registry entry (dir missing)
+result=$(python3 -c "
+from dream_cycle import detect_orphan_projects
+orphans = detect_orphan_projects('$CLEANUP_TMP')
+dead = [o for o in orphans if o['type'] == 'dead_entry']
+print(len(dead))
+")
+[ "$result" = "1" ] && pass "orphan: dead registry entry detected" || fail "dead_entry=$result"
+
+# Test 28: Detect orphan directory (not in registry)
+result=$(python3 -c "
+from dream_cycle import detect_orphan_projects
+orphans = detect_orphan_projects('$CLEANUP_TMP')
+orphan_dirs = [o for o in orphans if o['type'] == 'orphan_dir']
+print(len(orphan_dirs))
+")
+[ "$result" = "1" ] && pass "orphan: orphan directory detected" || fail "orphan_dir=$result"
+
+# Test 29: Detect stale project (last_seen > 90d)
+result=$(python3 -c "
+from dream_cycle import detect_orphan_projects
+orphans = detect_orphan_projects('$CLEANUP_TMP')
+stale = [o for o in orphans if o['type'] == 'stale_project']
+print(len(stale))
+")
+[ "$result" = "1" ] && pass "orphan: stale project detected" || fail "stale=$result"
+
+# Test 30: Expired context.md detected (>14d)
+# Create context.md and backdate it to 20 days ago
+touch "$CLEANUP_TMP/projects/abc123def456/context.md"
+python3 -c "
+import os, time
+p = '$CLEANUP_TMP/projects/abc123def456/context.md'
+old = time.time() - (20 * 86400)
+os.utime(p, (old, old))
+"
+result=$(python3 -c "
+from dream_cycle import cleanup_expired_context
+expired = cleanup_expired_context('$CLEANUP_TMP', ttl_days=14)
+print(len(expired))
+")
+[ "$result" = "1" ] && pass "context: expired context.md detected" || fail "expired_ctx=$result"
+
+# Test 31: Fresh context.md NOT detected (<14d)
+touch "$CLEANUP_TMP/projects/orphan_no_reg/context.md"
+result=$(python3 -c "
+from dream_cycle import cleanup_expired_context
+expired = cleanup_expired_context('$CLEANUP_TMP', ttl_days=14)
+# orphan_no_reg has fresh context.md, should not appear
+fresh = [e for e in expired if e['project_id'] == 'orphan_no_reg']
+print(len(fresh))
+")
+[ "$result" = "0" ] && pass "context: fresh context.md not flagged" || fail "fresh_ctx=$result"
+
+# Test 32: Old archives detected (>90d)
+touch "$CLEANUP_TMP/projects/stale_proj_99/observations.archive/obs-old.jsonl"
+python3 -c "
+import os, time
+p = '$CLEANUP_TMP/projects/stale_proj_99/observations.archive/obs-old.jsonl'
+old = time.time() - (100 * 86400)
+os.utime(p, (old, old))
+"
+result=$(python3 -c "
+from dream_cycle import consolidate_old_archives
+archives = consolidate_old_archives('$CLEANUP_TMP', days=90)
+print(len(archives))
+")
+[ "$result" = "1" ] && pass "archives: old archive files detected" || fail "old_archives=$result"
+
+# Cleanup temp dir
+rm -rf "$CLEANUP_TMP"
+
+echo ""
+
 # --- Summary ---
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

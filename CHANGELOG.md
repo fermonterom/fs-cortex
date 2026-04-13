@@ -4,6 +4,28 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.12.0] — 2026-04-14
+
+### Security
+- **Symlink protection in cleanup functions**: All 3 new `dream_cycle.py` cleanup functions skip symlinks (`os.path.islink()` guard) to prevent information disclosure or deletion of files outside the cortex tree.
+- **Version comparison fix**: Migration in `install.sh`/`install.ps1` now uses tuple comparison `(3, 12, 0)` instead of string comparison, which failed for versions v3.2.0–v3.9.x.
+
+### Added
+- **Dream Cycle Module 6 — Cleanup**: 3 new functions in `dream_cycle.py`: `detect_orphan_projects()` (dead registry entries, orphan dirs, stale projects >90d), `cleanup_expired_context()` (context.md older than 14d TTL), `consolidate_old_archives()` (observation archives older than 90d). Integrated into `/cx-dream` as Step 3c with confirmation UX and knowledge-log.md events (`orphan-removed`, `context-cleaned`, `archive-purged`).
+- **Configurable injection limits**: `max_instincts_per_injection` and `max_reflexes_per_injection` from `memory.json` now read at runtime by `injector-engine.js`. Previously hardcoded as 3 and 2 respectively.
+- **Reflex stats in /cx-status**: Step 4 now shows `enabled`, `fireCount`, `lastFired` per reflex. Highlights reflexes that have never fired with `[NEVER FIRED]` tag. Summary line with active/total/never-fired counts.
+- **6 new tests** in `test_dream_cycle.sh`: orphan detection (dead entry, orphan dir, stale project), expired context.md, fresh context.md negative, old archive detection. Total: 32 tests in suite.
+
+### Changed
+- **cx-dream.md**: Updated from 5 modules to 6. Added Step 3c (Cleanup) with output format, confirmation flow, and knowledge-log event formats.
+- **cx-status.md**: Reflex table expanded with `ENABLED` column, `[NEVER FIRED]` highlights, and summary line.
+
+### Fixed
+- **injector-engine.js**: `MAX_INSTINCTS` and `MAX_REFLEXES` now read from `memory.json` config instead of being hardcoded. Loads `memory.json` once at engine start.
+
+### Removed
+- **memory.json `identity` block**: Removed dormant `identity.name`, `identity.role`, `identity.language` fields from template. No hook ever read these fields. Migration in `install.sh` and `install.ps1` removes the block from existing installations.
+
 ## [3.11.1] — 2026-04-12
 
 ### Fixed
