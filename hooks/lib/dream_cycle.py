@@ -111,8 +111,9 @@ def staleness_score(instinct):
     if not last_seen:
         return 100
     try:
-        last = datetime.datetime.fromisoformat(last_seen.replace('Z', '+00:00'))
-        age_days = (datetime.datetime.now(datetime.timezone.utc) - last).days
+        # Handle both date-only ("2026-04-14") and datetime ("2026-04-14T12:00:00Z")
+        last_date = datetime.date.fromisoformat(str(last_seen)[:10])
+        age_days = (datetime.date.today() - last_date).days
     except (ValueError, TypeError):
         return 100
 

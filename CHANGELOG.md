@@ -4,6 +4,11 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.12.1] — 2026-04-14
+
+### Fixed
+- **dream_cycle.py `staleness_score()`**: Fixed TypeError crash when `last_seen` is a date-only string ("2026-04-14"). `fromisoformat()` produced a naive datetime, but `datetime.now(utc)` is timezone-aware — subtraction raised TypeError, caught by except, returned max staleness (100), causing ALL instincts to be marked for archival. Fix: use `datetime.date.fromisoformat()` + `datetime.date.today()` which are both naive and handle both date-only and datetime strings via `str(last_seen)[:10]`.
+
 ## [3.12.0] — 2026-04-14
 
 ### Security

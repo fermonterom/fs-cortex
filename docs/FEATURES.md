@@ -1,4 +1,4 @@
-# fs-cortex v3.12.0 — Feature Reference
+# fs-cortex v3.12.1 — Feature Reference
 
 > Complete inventory of all features, commands, hooks, modules, and capabilities.
 > Last updated: 2026-04-14
@@ -436,3 +436,4 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 | v3.11.0 | 2026-04-12 | cx-timeline command, knowledge-log.md event log, cx-status domain grouping |
 | v3.11.1 | 2026-04-12 | Test expectations fix for 17 commands |
 | v3.12.0 | 2026-04-14 | Dream Cycle Module 6 (cleanup), configurable injection limits, identity removal, reflex stats |
+| v3.12.1 | 2026-04-14 | Fix staleness_score naive vs aware datetime crash (archived ALL instincts) |
