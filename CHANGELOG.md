@@ -4,6 +4,11 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.12.2] — 2026-04-20
+
+### Fixed
+- **install.ps1 line 20**: `Join-Path $ClaudeDir "hooks" "cortex"` crashed on PowerShell 7.6 with "No positional parameter found for argument 'cortex'". Fixed by chaining calls: `Join-Path (Join-Path $ClaudeDir "hooks") "cortex"`, which is compatible with all PowerShell versions (5.1+). Reported by AR8-Git (#16).
+
 ## [3.12.1] — 2026-04-14
 
 ### Fixed

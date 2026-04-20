@@ -17,10 +17,10 @@ $ClaudeDir = Join-Path $env:USERPROFILE ".claude"
 $CortexDir = Join-Path $ClaudeDir "cortex"
 $SkillsDir = Join-Path $ClaudeDir "skills"
 $CommandsDir = Join-Path $ClaudeDir "commands"
-$HooksDir = Join-Path $ClaudeDir "hooks" "cortex"
+$HooksDir = Join-Path (Join-Path $ClaudeDir "hooks") "cortex"
 $SettingsFile = Join-Path $ClaudeDir "settings.json"
 $ClaudeMd = Join-Path $ClaudeDir "CLAUDE.md"
-$NewVersion = "3.12.1"
+$NewVersion = "3.12.2"
 
 # --- Helpers ---
 

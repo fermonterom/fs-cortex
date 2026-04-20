@@ -1,7 +1,7 @@
-# fs-cortex v3.12.1 — Feature Reference
+# fs-cortex v3.12.2 — Feature Reference
 
 > Complete inventory of all features, commands, hooks, modules, and capabilities.
-> Last updated: 2026-04-14
+> Last updated: 2026-04-20
 
 ---
 
@@ -437,3 +437,4 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 | v3.11.1 | 2026-04-12 | Test expectations fix for 17 commands |
 | v3.12.0 | 2026-04-14 | Dream Cycle Module 6 (cleanup), configurable injection limits, identity removal, reflex stats |
 | v3.12.1 | 2026-04-14 | Fix staleness_score naive vs aware datetime crash (archived ALL instincts) |
+| v3.12.2 | 2026-04-20 | Fix install.ps1 Join-Path crash on PowerShell 7.6 (issue #16) |
