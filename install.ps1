@@ -20,7 +20,7 @@ $CommandsDir = Join-Path $ClaudeDir "commands"
 $HooksDir = Join-Path (Join-Path $ClaudeDir "hooks") "cortex"
 $SettingsFile = Join-Path $ClaudeDir "settings.json"
 $ClaudeMd = Join-Path $ClaudeDir "CLAUDE.md"
-$NewVersion = "3.12.2"
+$NewVersion = "3.12.3"
 
 # --- Helpers ---
 
@@ -84,7 +84,7 @@ if (Test-Path $CortexDir) {
     if (Test-Path $versionFile) {
         $InstalledVersion = (Get-Content $versionFile -Raw).Trim()
     }
-    $lawCount = (Get-ChildItem (Join-Path $CortexDir "laws" "*.txt") -ErrorAction SilentlyContinue | Measure-Object).Count
+    $lawCount = (Get-ChildItem ([IO.Path]::Combine($CortexDir, "laws", "*.txt")) -ErrorAction SilentlyContinue | Measure-Object).Count
     $instinctCount = (Get-ChildItem (Join-Path $CortexDir "instincts") -Filter "*.yaml" -Recurse -ErrorAction SilentlyContinue | Measure-Object).Count
 
     if ($InstalledVersion -eq "none") {
@@ -138,7 +138,7 @@ if (-not (Test-Path $knowledgeLog)) {
 Print-Step "Installing core files..."
 $memoryDest = Join-Path $CortexDir "memory.json"
 if (-not (Test-Path $memoryDest)) {
-    Copy-Item (Join-Path $ScriptDir "core" "memory.template.json") $memoryDest
+    Copy-Item ([IO.Path]::Combine($ScriptDir, "core", "memory.template.json")) $memoryDest
     Print-Ok "Created memory.json"
 }
 else {
@@ -167,7 +167,7 @@ else {
 
 $reflexesDest = Join-Path $CortexDir "reflexes.json"
 if (-not (Test-Path $reflexesDest)) {
-    Copy-Item (Join-Path $ScriptDir "core" "reflexes.default.json") $reflexesDest
+    Copy-Item ([IO.Path]::Combine($ScriptDir, "core", "reflexes.default.json")) $reflexesDest
     Print-Ok "Created reflexes.json"
 }
 else {
@@ -176,7 +176,7 @@ else {
     # Preserves user runtime data: fireCount, lastFired, enabled
     try {
         $userReflexes = Get-Content $reflexesDest -Raw | ConvertFrom-Json
-        $defaultReflexes = Get-Content (Join-Path $ScriptDir "core" "reflexes.default.json") -Raw | ConvertFrom-Json
+        $defaultReflexes = Get-Content ([IO.Path]::Combine($ScriptDir, "core", "reflexes.default.json")) -Raw | ConvertFrom-Json
         $userById = @{}
         foreach ($u in $userReflexes.reflexes) { $userById[$u.id] = $u }
         $added = 0; $updated = 0
@@ -212,8 +212,8 @@ Print-Step "Installing cortex skill..."
 $skillDest = Join-Path $SkillsDir "cortex"
 $agentsDest = Join-Path $skillDest "agents"
 New-Item -ItemType Directory -Path $agentsDest -Force | Out-Null
-Copy-Item (Join-Path $ScriptDir "skills" "cortex" "SKILL.md") (Join-Path $skillDest "SKILL.md") -Force
-Get-ChildItem (Join-Path $ScriptDir "agents" "*.md") -ErrorAction SilentlyContinue | ForEach-Object {
+Copy-Item ([IO.Path]::Combine($ScriptDir, "skills", "cortex", "SKILL.md")) (Join-Path $skillDest "SKILL.md") -Force
+Get-ChildItem ([IO.Path]::Combine($ScriptDir, "agents", "*.md")) -ErrorAction SilentlyContinue | ForEach-Object {
     Copy-Item $_.FullName $agentsDest -Force
 }
 Print-Ok "Skill installed to ~/.claude/skills/cortex/"
@@ -221,7 +221,7 @@ Print-Ok "Skill installed to ~/.claude/skills/cortex/"
 # Step 7: Install commands
 Print-Step "Installing commands..."
 New-Item -ItemType Directory -Path $CommandsDir -Force | Out-Null
-$cmdFiles = Get-ChildItem (Join-Path $ScriptDir "commands" "*.md") -ErrorAction SilentlyContinue
+$cmdFiles = Get-ChildItem ([IO.Path]::Combine($ScriptDir, "commands", "*.md")) -ErrorAction SilentlyContinue
 foreach ($cmd in $cmdFiles) {
     Copy-Item $cmd.FullName $CommandsDir -Force
 }
@@ -243,14 +243,14 @@ foreach ($legacy in @("session-start.sh", "observe.sh")) {
 
 # Shell and JS hooks
 foreach ($ext in @("*.sh", "*.js", "*.py")) {
-    Get-ChildItem (Join-Path $ScriptDir "hooks" $ext) -ErrorAction SilentlyContinue | ForEach-Object {
+    Get-ChildItem ([IO.Path]::Combine($ScriptDir, "hooks", $ext)) -ErrorAction SilentlyContinue | ForEach-Object {
         Copy-Item $_.FullName $HooksDir -Force
     }
 }
 Print-Ok "Hooks installed to ~/.claude/hooks/cortex/"
 
 # Step 8a: Install Python lib modules
-$libSrc = Join-Path $ScriptDir "hooks" "lib"
+$libSrc = [IO.Path]::Combine($ScriptDir, "hooks", "lib")
 if (Test-Path $libSrc) {
     $libDest = Join-Path $HooksDir "lib"
     New-Item -ItemType Directory -Path $libDest -Force | Out-Null
@@ -264,8 +264,8 @@ if (Test-Path $libSrc) {
 
 # Step 9: Install seed instinct (only if not already present)
 Print-Step "Installing seed instinct..."
-$seedDest = Join-Path $CortexDir "instincts" "global" "read-instructions-before-executing.yaml"
-$seedSrc = Join-Path $ScriptDir "rules" "seed.md"
+$seedDest = [IO.Path]::Combine($CortexDir, "instincts", "global", "read-instructions-before-executing.yaml")
+$seedSrc = [IO.Path]::Combine($ScriptDir, "rules", "seed.md")
 if (Test-Path $seedDest) {
     Print-Warn "Seed instinct already exists, preserving"
 }
@@ -357,7 +357,7 @@ catch {
 
 # Step 11: Update CLAUDE.md
 Print-Step "Updating CLAUDE.md..."
-$sectionFile = Join-Path $ScriptDir "core" "claudemd-section.md"
+$sectionFile = [IO.Path]::Combine($ScriptDir, "core", "claudemd-section.md")
 
 if (Test-Path $ClaudeMd) {
     # Backup CLAUDE.md before any modification
@@ -414,7 +414,7 @@ if ($ImportBackup) {
         $lawsDir = Join-Path $tempDir.FullName "laws"
         if (Test-Path $lawsDir) {
             Get-ChildItem "$lawsDir/*.txt" -ErrorAction SilentlyContinue | ForEach-Object {
-                $dest = Join-Path $CortexDir "laws" $_.Name
+                $dest = [IO.Path]::Combine($CortexDir, "laws", $_.Name)
                 if (-not (Test-Path $dest)) { Copy-Item $_.FullName $dest }
             }
         }
@@ -423,7 +423,7 @@ if ($ImportBackup) {
             $src = Join-Path $tempDir.FullName $instDir
             if (Test-Path $src) {
                 Get-ChildItem "$src/*.yaml" -ErrorAction SilentlyContinue | ForEach-Object {
-                    $dest = Join-Path $CortexDir "instincts" "global" $_.Name
+                    $dest = [IO.Path]::Combine($CortexDir, "instincts", "global", $_.Name)
                     if (-not (Test-Path $dest)) { Copy-Item $_.FullName $dest }
                 }
             }
@@ -441,7 +441,7 @@ if ($ImportBackup) {
             if (-not (Test-Path $refDest)) { Copy-Item $refSrc $refDest }
         }
         # Copy projects registry
-        $regSrc = Join-Path $tempDir.FullName "projects" "registry.json"
+        $regSrc = [IO.Path]::Combine($tempDir.FullName, "projects", "registry.json")
         if (Test-Path $regSrc) {
             $regDir = Join-Path $CortexDir "projects"
             if (-not (Test-Path $regDir)) { New-Item -ItemType Directory -Path $regDir -Force | Out-Null }
@@ -453,7 +453,7 @@ if ($ImportBackup) {
             Get-ChildItem $projInstDir -Directory -ErrorAction SilentlyContinue | ForEach-Object {
                 $projInstSrc = Join-Path $_.FullName "instincts"
                 if (Test-Path $projInstSrc) {
-                    $projDest = Join-Path $CortexDir "projects" $_.Name "instincts"
+                    $projDest = [IO.Path]::Combine($CortexDir, "projects", $_.Name, "instincts")
                     if (-not (Test-Path $projDest)) { New-Item -ItemType Directory -Path $projDest -Force | Out-Null }
                     Copy-Item "$projInstSrc/*" $projDest -Force -ErrorAction SilentlyContinue
                 }
@@ -500,7 +500,7 @@ os.replace(tmp, mem_path)
 '@ 2>$null
 
     # Copy seed laws
-    $seedLawsDir = Join-Path $ScriptDir "seeds" "laws"
+    $seedLawsDir = [IO.Path]::Combine($ScriptDir, "seeds", "laws")
     if (Test-Path $seedLawsDir) {
         Get-ChildItem "$seedLawsDir/*.txt" -ErrorAction SilentlyContinue | ForEach-Object {
             Copy-Item $_.FullName (Join-Path $CortexDir "laws") -Force
@@ -510,10 +510,10 @@ os.replace(tmp, mem_path)
     }
 
     # Copy seed instincts
-    $seedInstDir = Join-Path $ScriptDir "seeds" "instincts"
+    $seedInstDir = [IO.Path]::Combine($ScriptDir, "seeds", "instincts")
     if (Test-Path $seedInstDir) {
         Get-ChildItem "$seedInstDir/*.yaml" -ErrorAction SilentlyContinue | ForEach-Object {
-            Copy-Item $_.FullName (Join-Path $CortexDir "instincts" "global") -Force
+            Copy-Item $_.FullName ([IO.Path]::Combine($CortexDir, "instincts", "global")) -Force
         }
         $seedInstCount = (Get-ChildItem "$seedInstDir/*.yaml" -ErrorAction SilentlyContinue | Measure-Object).Count
         Print-Ok "Seed instincts installed: $seedInstCount"
@@ -542,7 +542,7 @@ else {
 }
 Write-Host "  Data:      ~/.claude/cortex/"
 Write-Host "  Skill:     ~/.claude/skills/cortex/SKILL.md"
-$cmdList = (Get-ChildItem (Join-Path $ScriptDir "commands" "*.md") | ForEach-Object { "/$($_.BaseName)" }) -join ", "
+$cmdList = (Get-ChildItem ([IO.Path]::Combine($ScriptDir, "commands", "*.md")) | ForEach-Object { "/$($_.BaseName)" }) -join ", "
 Write-Host "  Commands:  $cmdList"
 Write-Host "  Hooks:     ~/.claude/hooks/cortex/"
 Write-Host ""

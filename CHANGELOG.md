@@ -4,6 +4,11 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.12.3] — 2026-04-21
+
+### Fixed
+- **install.ps1 — 19 additional `Join-Path` 3+ arg calls**: v3.12.2 only fixed line 20; the same PowerShell 7.6 crash (`No positional parameter found for argument 'X'`) recurred on line 87 and throughout the installer. All remaining `Join-Path $a $b $c [$d...]` calls replaced with `[System.IO.Path]::Combine($a, $b, $c, [$d...])` — a .NET method that works identically across PS 5.1–7.x and accepts any number of path segments. Affected lines: 87 (laws glob), 141/170/179 (core templates), 215/216 (skill + agents), 224 (commands), 246 (hooks glob), 253 (lib dir), 267/268 (seed instinct + rule), 360 (CLAUDE.md section), 417/426 (backup laws/instincts import), 444/456 (projects registry + project-scoped instincts), 503/513/516 (seed laws/instincts), 545 (summary). Same fix applied to `tests/test_install_ps1.ps1:159`. Reported by AR8-Git (#16 continuation).
+
 ## [3.12.2] — 2026-04-20
 
 ### Fixed

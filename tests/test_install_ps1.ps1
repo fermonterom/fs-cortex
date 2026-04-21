@@ -156,7 +156,7 @@ try {
     New-Item -ItemType Directory -Path (Join-Path $sandbox ".claude") -Force | Out-Null
 
     # Create a minimal settings.json so Python merge doesn't fail
-    $settingsPath = Join-Path $sandbox ".claude" "settings.json"
+    $settingsPath = [IO.Path]::Combine($sandbox, ".claude", "settings.json")
     '{}' | Set-Content $settingsPath
 
     # Run the Python hook-merge portion only (avoids interactive prompts)
