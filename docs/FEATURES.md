@@ -1,7 +1,7 @@
-# fs-cortex v3.12.4 — Feature Reference
+# fs-cortex v3.13.0 — Feature Reference
 
 > Complete inventory of all features, commands, hooks, modules, and capabilities.
-> Last updated: 2026-04-22
+> Last updated: 2026-04-23
 
 ---
 
@@ -148,11 +148,12 @@ Parallel systems (not part of the confidence pipeline):
 
 ---
 
-## Commands (17)
+## Commands (18)
 
 | Command | Purpose | Token Cost |
 |---|---|---|
 | `/cx-status` | Dashboard: laws, instincts, projects, reflexes, tracking, health, domain grouping | ~200 |
+| `/cx-dashboard` | Visual HTML report with Fersora brand — laws, instincts, reflexes, projects, health, timeline | ~150 |
 | `/cx-analyze` | Detect patterns in observations → proposals (Opus 1M agent) | ~5K |
 | `/cx-distill` | Promote instincts to laws (0.90+), apply decay, Jaccard promotions | ~800 |
 | `/cx-validate` | Review and accept/reject proposals interactively (shorthand UX) | ~500 |
@@ -303,7 +304,7 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 | `test_install.sh` | 38 | Fresh install, upgrade, idempotency, path traversal |
 | `test_hooks_e2e.sh` | 14 | Full pipeline: observe→inject→learn, **token budget reset** |
 | `test_uninstall.sh` | 11 | Cleanup, backup creation, data preservation, **safety guard**, CLAUDE.md preservation |
-| `test_integrity.sh` | 14 | observe.py direct, 17 commands validated, core file schemas, **version consistency** |
+| `test_integrity.sh` | 14 | observe.py direct, 18 commands validated, core file schemas, **version consistency** |
 | `test_install_ps1.ps1` | 9 | PowerShell syntax, version consistency, security features, backup categories, hook config, **CI on windows-latest** |
 
 ### CI
@@ -440,3 +441,4 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 | v3.12.2 | 2026-04-20 | Fix install.ps1 Join-Path crash on PowerShell 7.6 (issue #16) |
 | v3.12.3 | 2026-04-21 | Fix 19 additional Join-Path 3+ arg calls in install.ps1 + tests (issue #16 continuation) |
 | v3.12.4 | 2026-04-22 | Windows injector.js cross-platform hook (bash no longer required) |
+| v3.13.0 | 2026-04-23 | /cx-dashboard visual HTML report with Fersora brand + project dedup by root |

@@ -4,6 +4,15 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.13.0] — 2026-04-23
+
+### Added
+- **`/cx-dashboard` command**: generates a self-contained visual HTML dashboard of the complete Cortex state at `~/.claude/cortex/dashboard.html` and opens it in the browser. Styled with the Fersora brand (Merriweather + Open Sans + JetBrains Mono, Fersora Green / Lavender / Orange palette, sticky nav with scroll-spy, footer with contact signature). Shows laws, instincts (grouped by confidence tier), reflexes (with fire stats and `[never fired]` flags), projects, top activations, recent events from `knowledge-log.md`, and a computed system health score (0-100) with semantic coloring. Complements `/cx-status` (ASCII terminal dashboard) for shareable reports and at-a-glance overviews. Brings parity with Sinapsis's visual reports.
+- **`hooks/lib/dashboard_gen.py`**: the dashboard generator (~370 lines, zero external deps, Python 3.8+, cross-platform). Read-only — never modifies Cortex data. Atomic write via `os.replace()`.
+
+### Fixed
+- **Dashboard project deduplication**: `read_projects()` now groups registry entries by normalized root path and sums obs/instinct counts. Prevents the same physical project appearing twice when Cortex assigned different hashes before and after `git remote` was added (since `detectProject()` uses `hashInput = url || root` — no remote falls back to path, producing a different hash than the remote-URL hash). Canonical entry is the one with a remote (or most recent activity). A warning banner + `+N dup` badge appears when duplicates are detected, suggesting `/cx-dream` for permanent consolidation.
+
 ## [3.12.4] — 2026-04-22
 
 ### Fixed
