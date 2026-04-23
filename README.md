@@ -125,7 +125,7 @@ Open Claude Code and work normally. Cortex works automatically.
 |------|-------------|-------------|
 | `observe.py` | Every tool use | Records observations silently (async, 0 tokens, ~70ms) |
 | `session-start.py` | Session open / `/compact` | Injects your laws + context bridge + EOD resume |
-| `injector.sh` | Every tool use | Injects matching instincts (max 3) + reflexes (max 2) |
+| `injector.sh` / `injector.js` | Every tool use | Injects matching instincts (max 3) + reflexes (max 2). `.sh` on Unix, `.js` on Windows. |
 | `session-learner.js` | Session close | Detects error→fix pairs, corrections, workflows → proposals |
 
 You don't configure or run anything. Just work — Cortex learns in the background.
@@ -162,7 +162,7 @@ Cortex reminds you when action is needed:
 
 ```
 1. Open Claude Code     → laws inject automatically
-2. Work normally        → observe.py records, injector.sh injects
+2. Work normally        → observe.py records, injector injects
 3. [ACTION] N proposals → /cx-validate (1 min)
 4. [MAINT] reminder     → /cx-distill or /cx-dream (30 sec each)
 5. End of day           → /cx-eod (optional but useful)
@@ -239,7 +239,7 @@ Claude provides a verdict with reasoning per item before you decide. All command
 |------|-------|---------|-----------|
 | `session-start.py` | SessionStart | Inject Laws + EOD resume (once) + context.md bridge | Sync (5s) |
 | `observe.py` | PreToolUse / PostToolUse | Capture tool start/complete (single-process, ~70ms) | Async (0 tokens) |
-| `injector.sh` | PreToolUse | Inject matched reflexes + instincts | Sync (3s) |
+| `injector.sh` / `injector.js` | PreToolUse | Inject matched reflexes + instincts (`.sh` on Unix, `.js` on Windows — both delegate to `lib/injector-engine.js`) | Sync (3s) |
 | `session-learner.js` | Stop | Analyze session, proposals, context.md | Sync (15s) |
 
 Also fires `session-start.py` on `/compact` to re-inject laws.

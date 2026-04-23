@@ -1,7 +1,7 @@
-# fs-cortex v3.12.3 — Feature Reference
+# fs-cortex v3.12.4 — Feature Reference
 
 > Complete inventory of all features, commands, hooks, modules, and capabilities.
-> Last updated: 2026-04-21
+> Last updated: 2026-04-22
 
 ---
 
@@ -439,3 +439,4 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 | v3.12.1 | 2026-04-14 | Fix staleness_score naive vs aware datetime crash (archived ALL instincts) |
 | v3.12.2 | 2026-04-20 | Fix install.ps1 Join-Path crash on PowerShell 7.6 (issue #16) |
 | v3.12.3 | 2026-04-21 | Fix 19 additional Join-Path 3+ arg calls in install.ps1 + tests (issue #16 continuation) |
+| v3.12.4 | 2026-04-22 | Windows injector.js cross-platform hook (bash no longer required) |

@@ -13,6 +13,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: ShellCheck
         run: shellcheck --severity=error hooks/injector.sh tests/*.sh install.sh uninstall.sh
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Node syntax check (cross-platform hooks)
+        run: node --check hooks/injector.js && node --check hooks/session-learner.js && node --check hooks/lib/injector-engine.js && node --check hooks/lib/yaml-utils.js
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -142,3 +148,13 @@ jobs:
       - name: Run PowerShell installer tests
         shell: pwsh
         run: pwsh tests/test_install_ps1.ps1
+
+      - name: Validate injector.js runs on Windows (no bash required)
+        shell: pwsh
+        run: |
+          node --check hooks/injector.js
+          $payload = '{"tool_name":"Bash","tool_input":{"command":"ls"},"cwd":".","session_id":"ci-test"}'
+          $result = $payload | node hooks/injector.js 2>&1
+          $exit = $LASTEXITCODE
+          if ($exit -ne 0) { throw "injector.js exited with $exit: $result" }
+          Write-Host "injector.js OK (exit 0, no bash required)"

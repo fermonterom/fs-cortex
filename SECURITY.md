@@ -34,7 +34,7 @@ fs-cortex runs as Claude Code hooks with access to:
 ### In scope
 
 - Prompt injection via instinct action/trigger fields
-- Command injection via hooks (`observe.py`, `session-start.py`, `injector.sh`, `injector-engine.js`)
+- Command injection via hooks (`observe.py`, `session-start.py`, `injector.sh`, `injector.js`, `injector-engine.js`)
 - Secret leakage in observation logs
 - Path traversal in project detection or backup/restore
 - ReDoS in instinct trigger regex patterns

@@ -38,7 +38,7 @@ Evolved artifacts (skills, commands, rules in evolved/)
 - **Laws** injected at SessionStart (~300 tokens for max 10 laws)
 - **Context bridge** injected at SessionStart (project context.md, 14d TTL)
 - **EOD Resume** injected at SessionStart — Claude MUST present it proactively
-- **Instincts** injected per PreToolUse via injector.sh (max 3 instincts + 2 reflexes)
+- **Instincts** injected per PreToolUse via injector.sh (Unix) / injector.js (Windows) (max 3 instincts + 2 reflexes)
 - **Observations** captured silently via async hooks (0 tokens)
 - **Session analysis** runs at Stop (session-learner.js: proposals, context.md)
 - After ~50 observations, session-start suggests running /cx-analyze

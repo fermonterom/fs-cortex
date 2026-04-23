@@ -20,7 +20,7 @@ $CommandsDir = Join-Path $ClaudeDir "commands"
 $HooksDir = Join-Path (Join-Path $ClaudeDir "hooks") "cortex"
 $SettingsFile = Join-Path $ClaudeDir "settings.json"
 $ClaudeMd = Join-Path $ClaudeDir "CLAUDE.md"
-$NewVersion = "3.12.3"
+$NewVersion = "3.12.4"
 
 # --- Helpers ---
 
@@ -68,7 +68,8 @@ Print-Ok "Python found: $PythonCmd"
 
 # Check Node
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-    Print-Warn "Node.js not found. session-learner.js and injector.sh require it."
+    Print-Error "Node.js not found. Required on Windows for injector.js and session-learner.js."
+    exit 1
 }
 else { Print-Ok "Node.js found" }
 
@@ -315,7 +316,7 @@ cortex_hooks = {
     "PreToolUse": [
         {"matcher": "*", "hooks": [
             {"type": "command", "command": "python3 ~/.claude/hooks/cortex/observe.py pre", "timeout": 10000, "async": True},
-            {"type": "command", "command": "bash ~/.claude/hooks/cortex/injector.sh", "timeout": 3000}
+            {"type": "command", "command": "node ~/.claude/hooks/cortex/injector.js", "timeout": 3000}
         ]}
     ],
     "PostToolUse": [

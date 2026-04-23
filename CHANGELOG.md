@@ -4,6 +4,20 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.12.4] — 2026-04-22
+
+### Fixed
+- **Windows PreToolUse hook broken — all Claude Code tools blocked**: `install.ps1` registered `bash ~/.claude/hooks/cortex/injector.sh` on Windows, but `bash` is not in PATH by default (only with Git Bash/WSL). Every tool call triggered a broken hook, effectively blocking Claude Code. Reported by Adams Ayón after v3.12.3 installs still failed.
+
+### Added
+- **`hooks/injector.js`** — cross-platform Node.js wrapper equivalent to `injector.sh`. Reads stdin, writes payload to a 0600-mode tmp file, sets engine env vars (`_CX_INPUT_FILE`, `_CX_CORTEX_DIR`, `_CX_REFLEXES_FILE`, `_CX_GLOBAL_INSTINCTS_DIR`), and delegates to the existing `lib/injector-engine.js`. Same security model as the bash wrapper (tmp file avoids payload exposure via `/proc` or env). Safety timeout on stdin read, signal cleanup handlers.
+
+### Changed
+- **`install.ps1` PreToolUse hook**: registers `node ~/.claude/hooks/cortex/injector.js` instead of `bash ~/.claude/hooks/cortex/injector.sh`. Existing installs upgrade cleanly — the hook-merge Python block strips any prior `hooks/cortex/` entry before writing the new one.
+- **`install.ps1` Node.js check**: upgraded from warning to hard requirement (exit 1) on Windows, since the injector hook now requires it.
+- **`install.sh`**: unchanged behavior — Linux/Mac continue using `bash injector.sh`. The new `injector.js` file is copied by the existing `*.js` glob but not registered as a hook. Zero regression risk for existing Unix installs.
+- **`tests/test_install_ps1.ps1`**: expects `injector.js` in the hook file list and `node injector.js` in the PreToolUse config.
+
 ## [3.12.3] — 2026-04-21
 
 ### Fixed
