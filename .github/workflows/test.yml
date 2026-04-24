@@ -156,5 +156,5 @@ jobs:
           $payload = '{"tool_name":"Bash","tool_input":{"command":"ls"},"cwd":".","session_id":"ci-test"}'
           $result = $payload | node hooks/injector.js 2>&1
           $exit = $LASTEXITCODE
-          if ($exit -ne 0) { throw "injector.js exited with $exit: $result" }
+          if ($exit -ne 0) { throw "injector.js exited with ${exit}: $result" }
           Write-Host "injector.js OK (exit 0, no bash required)"

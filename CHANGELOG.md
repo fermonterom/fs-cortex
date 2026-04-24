@@ -4,6 +4,15 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.13.3] — 2026-04-24
+
+### Fixed
+- **CI `test-windows` rojo desde v3.12.4 (4 releases consecutivas)**: `.github/workflows/test.yml:159` lanzaba `throw "injector.js exited with $exit: $result"`, que PowerShell 7 interpreta como referencia a drive-provider (`$drive:path`) porque `:` sigue directamente al nombre de variable. Resultado: `ParserError: Variable reference is not valid. ':' was not followed by a valid variable name character` y job failure antes de ejecutar el test real. El injector.js en sí estaba correcto; el bug vivía solo en la sintaxis del workflow YAML. Fix: envolver `$exit` en braces → `${exit}` (PowerShell best practice para disambiguar variable adyacente a `:`).
+
+### Context
+- Release bloqueante para todo el plan v4.0 de refactor: sin CI verde no se puede empezar Sprint 0 (instrumentación) con confianza. Este hotfix desbloquea la rama main.
+- Detectado durante la auditoría multi-agente Opus 1M (docs/DEEP-AUDIT-2026-04-24.html) — la CI llevaba 4 releases (v3.12.4, v3.13.0, v3.13.1, v3.13.2) con test-windows rojo sin que ningún release lo diagnosticara. El fix es de 1 carácter y no toca hooks ni lógica.
+
 ## [3.13.2] — 2026-04-24
 
 ### Fixed
