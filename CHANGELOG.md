@@ -4,6 +4,22 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.13.2] — 2026-04-24
+
+### Fixed
+- **Dream Cycle contradiction detector produced 97% false positives**: `detect_contradictions()` flagged every instinct pair in the same domain whose action text happened to contain an antonym keyword (always/never, enable/disable, etc), regardless of whether the two instincts were about the same subject. On a 128-instinct corpus this surfaced 38 "contradictions" — all unrelated (e.g. "always include `-i ~/.ssh/hetzner-fersora`" vs "NEVER `--no-verify` on git push", flagged together because both live in the `gotcha` domain and contain the `always`/`never` keywords). The noise made `/cx-dream` output unusable for actual contradiction review.
+
+### Changed
+- **Added topic-overlap gate to `detect_contradictions()`**: after keyword antonym match, the function now computes Jaccard similarity of non-stopword, non-antonym tokens between the two action texts. Pairs with overlap below `min_action_overlap` (default `0.30`) are rejected as false positives. Live corpus result: 38 → 1 contradictions, the one survivor being a legitimate human-review case (two Stripe-related instincts sharing real vocabulary).
+- `detect_contradictions(instincts, min_action_overlap=0.30)` — threshold is parameterizable. Set to `0` to restore pre-3.13.2 keyword-only behavior (all existing tests continue to pass at default threshold because the shared subject/verb tokens in the test actions already clear 0.30).
+- New stopword and antonym-word lists exposed as `_STOPWORDS` and `_ANTONYM_WORDS` module constants (EN + ES).
+
+### Added
+- 3 new contradiction detection tests in `tests/test_dream_cycle.sh`:
+  - **12b**: topic-overlap gate rejects unrelated always/never pairs in the same domain
+  - **12c**: real contradiction with shared subject is still detected
+  - **12d**: `min_action_overlap=0` restores legacy keyword-only behavior (back-compat opt-out)
+
 ## [3.13.1] — 2026-04-24
 
 ### Fixed

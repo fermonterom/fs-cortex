@@ -1,4 +1,4 @@
-# fs-cortex v3.13.1 — Feature Reference
+# fs-cortex v3.13.2 — Feature Reference
 
 > Complete inventory of all features, commands, hooks, modules, and capabilities.
 > Last updated: 2026-04-24
@@ -129,7 +129,7 @@ Parallel systems (not part of the confidence pipeline):
 ### hooks/lib/dream_cycle.py — Knowledge Maintenance
 6 modules for knowledge hygiene:
 1. **Jaccard dedup**: Unicode-safe tokenization (word boundaries + CJK characters), configurable threshold (default 0.80), **full pairwise comparison** (checks against ALL kept items, not just first match)
-2. **Contradiction detection**: 7 antonym pairs (EN: must/must not, always/never, enable/disable, allow/block, require/forbid; ES: siempre/nunca, permitir/prohibir). Same-domain only. No false positives on "document"/"domain"
+2. **Contradiction detection**: 7 antonym pairs (EN: must/must not, always/never, enable/disable, allow/block, require/forbid; ES: siempre/nunca, permitir/prohibir). Same-domain + **topic-overlap gate** (v3.13.2): two actions must share Jaccard ≥ 0.30 of non-stopword, non-antonym tokens to be flagged. Without the gate, 38/38 contradictions on a real 128-instinct corpus were false positives (antonym keywords appearing in unrelated actions). With the gate: 1/38 survives — the legitimate human-review case. `min_action_overlap=0` restores legacy keyword-only detection. No false positives on "document"/"domain"
 3. **Staleness scoring**: 0-100 based on age since last_seen (7d=0, 30d=30, 60d=60, 90d+=90+). Auto-archive at threshold (default 90). **Linear confidence decay**: -0.05 per 30 days (matches cx-distill and documented config)
 4. **Regex validation**: length limit (100), nested quantifier ban (ReDoS), alternation limit (5), compile test
 5. **Health score**: 0-100 with penalties (staleness -2/instinct, contradictions -10/pair, duplicates -3) and bonuses (laws +2, confidence +5)
@@ -454,3 +454,4 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 | v3.12.4 | 2026-04-22 | Windows injector.js cross-platform hook (bash no longer required) |
 | v3.13.0 | 2026-04-23 | /cx-dashboard visual HTML report with Fersora brand + project dedup by root |
 | v3.13.1 | 2026-04-24 | Silent YAML parse repair: auto-fix invalid double-quoted regex escapes in instincts (18 files repaired); yaml_normalize.py runs on every SessionStart; cx-validate/cx-gotcha/cx-analyze templates enforce single-quote rule |
+| v3.13.2 | 2026-04-24 | Dream Cycle contradiction detector: topic-overlap Jaccard gate (default 0.30) eliminates 97% of false positives (38 → 1 on live corpus); parameterizable threshold with back-compat opt-out; 3 new tests |

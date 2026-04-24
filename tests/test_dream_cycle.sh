@@ -147,6 +147,43 @@ print(len(c))
 ")
 [ "$result" = "1" ] && pass "siempre/nunca detected" || fail "es_pair=$result"
 
+# Test 12b: topic-overlap gate rejects false positives (v3.13.2)
+# Same domain, both contain always/never, but about different subjects → NOT a contradiction
+result=$(python3 -c "
+from dream_cycle import detect_contradictions
+instincts = [
+    {'id': 'a', 'action': 'Always include -i ~/.ssh/hetzner-fersora when connecting', 'domain': 'gotcha'},
+    {'id': 'b', 'action': 'NEVER --no-verify on git push, bypasses pre-push hooks', 'domain': 'gotcha'},
+]
+c = detect_contradictions(instincts)
+print(len(c))
+")
+[ "$result" = "0" ] && pass "topic-overlap gate rejects unrelated always/never" || fail "false positive not filtered=$result"
+
+# Test 12c: real contradiction with shared subject is still detected
+result=$(python3 -c "
+from dream_cycle import detect_contradictions
+instincts = [
+    {'id': 'a', 'action': 'Always mock the Supabase client in unit tests', 'domain': 'testing'},
+    {'id': 'b', 'action': 'Never mock the Supabase client, use real integration tests', 'domain': 'testing'},
+]
+c = detect_contradictions(instincts)
+print(len(c))
+")
+[ "$result" = "1" ] && pass "real contradiction detected after gate" || fail "real contradiction missed=$result"
+
+# Test 12d: opt-out via threshold=0 preserves legacy behavior
+result=$(python3 -c "
+from dream_cycle import detect_contradictions
+instincts = [
+    {'id': 'a', 'action': 'Always use X for feature Y', 'domain': 'gotcha'},
+    {'id': 'b', 'action': 'Never touch unrelated file Z during deploy', 'domain': 'gotcha'},
+]
+c = detect_contradictions(instincts, min_action_overlap=0)
+print(len(c))
+")
+[ "$result" = "1" ] && pass "threshold=0 restores legacy keyword-only detection" || fail "opt-out broken=$result"
+
 echo ""
 
 # ── Staleness Tests ──────────────────────────────────────────────────

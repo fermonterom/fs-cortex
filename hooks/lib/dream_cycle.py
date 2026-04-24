@@ -77,9 +77,47 @@ CONTRADICTION_PAIRS = [
     (r'\bpermitir\b', r'\bprohibir\b'),
 ]
 
+# Words that are the antonym signal itself — remove before computing topic overlap
+_ANTONYM_WORDS = {
+    'must', 'always', 'never', 'enable', 'disable', 'allow', 'block',
+    'require', 'forbid', 'siempre', 'nunca', 'permitir', 'prohibir',
+    'not',
+}
 
-def detect_contradictions(instincts):
-    """Find instinct pairs that contradict each other within the same domain."""
+# Common EN+ES stopwords that add noise to topic-overlap Jaccard
+_STOPWORDS = _ANTONYM_WORDS | {
+    'the', 'a', 'an', 'and', 'or', 'but', 'of', 'to', 'in', 'on', 'at',
+    'for', 'with', 'by', 'as', 'is', 'are', 'was', 'were', 'be', 'been',
+    'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would',
+    'should', 'can', 'could', 'may', 'might', 'no', 'use', 'using', 'used',
+    'from', 'when', 'where', 'what', 'which', 'that', 'this', 'these',
+    'those', 'you', 'your', 'it', 'its', 'before', 'after', 'if', 'then',
+    'else', 'only', 'all', 'any', 'each', 'every', 'some',
+    'el', 'la', 'los', 'las', 'de', 'del', 'un', 'una', 'unos', 'unas',
+    'si', 'y', 'o', 'que', 'para', 'por', 'con', 'en', 'se', 'su', 'sus',
+    'es', 'son', 'ser', 'está', 'estar', 'esta', 'este', 'estos', 'estas',
+}
+
+
+def _topic_tokens(text):
+    """Return set of meaningful tokens for topic-overlap Jaccard.
+    Drops stopwords + antonym words. Keeps tokens of len >= 3."""
+    toks = re.findall(r'\b\w{3,}\b', str(text).lower(), re.UNICODE)
+    return {t for t in toks if t not in _STOPWORDS}
+
+
+def detect_contradictions(instincts, min_action_overlap=0.30):
+    """Find instinct pairs that contradict each other within the same domain.
+
+    Two-phase detection:
+      1. Keyword antonym match on action text (always/never, enable/disable, ...)
+      2. Topic-overlap gate: the two actions must share enough non-stopword
+         tokens for the contradiction to actually be about the same subject.
+         Default Jaccard threshold 0.30 — removes false positives where the
+         antonym words appear in actions about totally unrelated topics.
+
+    Set min_action_overlap=0 to restore pre-3.13.2 behavior (keyword-only).
+    """
     contradictions = []
     for i, a in enumerate(instincts):
         for j, b in enumerate(instincts):
@@ -89,14 +127,29 @@ def detect_contradictions(instincts):
                 continue
             a_action = a.get('action', '')
             b_action = b.get('action', '')
+            matched_pair = None
             for pos_re, neg_re in CONTRADICTION_PAIRS:
                 if (re.search(pos_re, a_action, re.I) and re.search(neg_re, b_action, re.I)) or \
                    (re.search(neg_re, a_action, re.I) and re.search(pos_re, b_action, re.I)):
-                    contradictions.append({
-                        'id_a': a.get('id', f'idx:{i}'),
-                        'id_b': b.get('id', f'idx:{j}'),
-                        'pair': (pos_re, neg_re),
-                    })
+                    matched_pair = (pos_re, neg_re)
+                    break
+            if not matched_pair:
+                continue
+            # Topic-overlap gate: skip if the two actions don't share enough
+            # non-stopword subject matter to plausibly contradict each other.
+            if min_action_overlap > 0:
+                ta, tb = _topic_tokens(a_action), _topic_tokens(b_action)
+                if not ta or not tb:
+                    overlap = 0.0
+                else:
+                    overlap = len(ta & tb) / len(ta | tb)
+                if overlap < min_action_overlap:
+                    continue
+            contradictions.append({
+                'id_a': a.get('id', f'idx:{i}'),
+                'id_b': b.get('id', f'idx:{j}'),
+                'pair': matched_pair,
+            })
     return contradictions
 
 
