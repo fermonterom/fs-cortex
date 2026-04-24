@@ -11,6 +11,12 @@ const path = require("path");
 const { execFileSync } = require("child_process");
 const crypto = require("crypto");
 
+// Optional impact funnel writer — never blocks injection if require fails.
+let impactLog = null;
+try {
+  impactLog = require("./impact_log.js");
+} catch {}
+
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 /** Sanitize text injected into context — strip instruction overrides, limit length */
@@ -287,6 +293,21 @@ function main() {
       const lastInstFile = path.join(CORTEX_DIR, ".last-instinct");
       fs.writeFileSync(lastInstFile, JSON.stringify({ ids, ts: new Date().toISOString() }));
     } catch {}
+  }
+
+  // ── 3d. Impact funnel — emit inject events (Sprint 0, v3.14.0) ──────
+  // Writes one "inject" event per matched instinct. session-learner.js
+  // later correlates against next tool call to emit follow/reject events.
+  if (impactLog && matchedInstincts.length > 0) {
+    try {
+      impactLog.logInjectBatch(matchedInstincts, {
+        tool: hookData.tool_name,
+        pid: projectId,
+        sid: hookData.session_id,
+      });
+    } catch (e) {
+      if (process.env.CORTEX_DEBUG) process.stderr.write("[cortex:injector] impact: " + e.message + "\n");
+    }
   }
 
   // ── 4. Token budget cap ──────────────────────────────────────────────

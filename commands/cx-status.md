@@ -194,6 +194,32 @@ Use clean ASCII box format:
 ================================================================
 ```
 
+## Flags
+
+### `--impact` — Sprint 0 funnel panel (v3.14.0+)
+
+Skip the full dashboard and show only the impact funnel from `impact.jsonl`.
+Invokes:
+
+```bash
+python3 ~/.claude/cortex/hooks/cortex/lib/impact_log.py stats --days 14
+```
+
+Output includes:
+- Event totals (inject / follow / reject / feedback / outcome)
+- `useful_ratio`, `noise_ratio`, `health_ratio` (see `docs/IMPACT-METRICS.md`)
+- Sprint 0.5 Go/No-Go Gate recommendation (`GO` / `PARTIAL` / `NO-GO`)
+- Top 10 useful instincts (candidates to promote)
+- Top 10 noisy instincts (candidates to deprecate)
+
+Supports `--days N` to change the lookback window (default 14). Pass
+`--json` for machine-readable output suitable for dashboards.
+
+### `--ascii` (default) vs `--html`
+
+Placeholder for v4.0 — `--html` will delegate to the dashboard generator
+(`hooks/lib/dashboard_gen.py`). Until Sprint 2, use `/cx-dashboard`.
+
 ## What NOT to do
 
 - Do not invent data that does not exist in the files

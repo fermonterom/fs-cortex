@@ -4,6 +4,88 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.14.0] — 2026-04-24
+
+### Added — Sprint 0 · Instrumentation (v4.0 plan)
+
+Esta release introduce el **funnel de impacto** que mide si Cortex realmente
+ayuda al desarrollador, no sólo cuántas cosas aprende. Origen: auditoría
+multi-agente Opus 1M (2026-04-24, score 5.8/10) + Devil's Advocate Opus 1M
+Max. La auditoría concluyó que Cortex medía uso, no impacto — y que sin
+esa señal ningún sprint del refactor v4.0 estaba empíricamente justificado.
+
+- **`hooks/lib/impact_log.py`** · writer + compute_metrics + CLI.
+  Schema `v:1` JSONL con cinco tipos de evento (`inject` / `follow` /
+  `reject` / `feedback` / `outcome`) en `~/.claude/cortex/impact.jsonl`.
+  CLI: `python3 impact_log.py stats [--days N] [--json]`, `tail`, `rotate`,
+  `log`. Rotación automática a los 30 días a `impact.archive/`.
+- **`hooks/lib/impact_log.js`** · writer JS que mirror al Python. Usado
+  por `injector-engine.js` (fast path: `fs.appendFileSync` directo sin
+  spawnear Python cada tool use).
+- **`hooks/lib/injector-engine.js`** · emite evento `inject` por cada
+  instinct que sobrevive los filtros (domain, dedup, token budget).
+  Carga `impact_log.js` con try/catch — si no existe el archivo (versión
+  vieja o migración a medias), el injector sigue funcionando igual.
+- **`hooks/session-learner.js`** · nueva función `correlateImpactEvents`
+  que, al final de cada sesión, lee `impact.jsonl`, busca `inject` events
+  del sid actual sin `follow` correlacionado, y emite uno por cada
+  localizando la siguiente observación del mismo sid. Heurística v1
+  conservadora: `followed=true` si next obs no es error; `err_after=true`
+  si alguna de las 10 siguientes tiene `is_error`.
+- **`/cx-feedback`** (nuevo comando) · cierra el loop humano. Modos
+  `useful | noise | ignore`, target explícito por instinct id o
+  implícito al último `.last-instinct`. Aplica soft nudge de confidence
+  (+0.02 / -0.05), escribe `feedback.jsonl` mirror, y registra en
+  `knowledge-log.md`. Shorthand consistente (`u/n/i`, `+/-`, `ok/bad`).
+- **`/cx-status --impact`** · nuevo flag que invoca
+  `impact_log.py stats --days 14` y muestra el funnel agregado + la
+  recomendación del Go/No-Go Gate (`GO` / `PARTIAL` / `NO-GO`).
+- **`docs/IMPACT-METRICS.md`** · canonical formulas, event schema v1,
+  umbrales del Sprint 0.5 Go/No-Go Gate, privacy notes, testing contract.
+- **`tests/test_impact.sh`** · 17 tests: schema v1, JS↔Python compat,
+  concurrent writes (10 parallel → 10 líneas, 0 pérdidas), rotation,
+  gate GO/NO-GO, formulas con fixtures, validación de inputs.
+
+### Changed
+
+- **`tests/test_integrity.sh`** · ahora valida 19 comandos (era 18)
+  incluyendo `cx-feedback`. Lista de `EXPECTED_COMMANDS` actualizada.
+- **`core/claudemd-section.md`** · añade `/cx-feedback` al listado de
+  comandos inyectado en la sección Cortex de CLAUDE.md del usuario.
+
+### Fórmulas canónicas (resumen — detalle en `docs/IMPACT-METRICS.md`)
+
+```
+useful_event = feedback.rating == "useful"
+             OR (follow.followed == true AND NOT follow.err_after)
+noise_event  = feedback.rating == "noise"
+             OR follow.followed == false
+useful_ratio = count(useful) / count(inject)
+noise_ratio  = count(noise)  / count(inject)
+health_ratio = useful_ratio / max(noise_ratio, 0.01)
+```
+
+Sprint 0.5 Go/No-Go Gate (umbrales moderados confirmados por el usuario):
+- `useful_ratio ≥ 0.25 AND health_ratio ≥ 1.5` → **GO** (continuar plan v4.0)
+- `0.10 ≤ useful_ratio < 0.25` o `1.0 ≤ health_ratio < 1.5` → **PARTIAL** (sólo sprints 2-4)
+- `< 0.10` o `< 1.0` → **NO-GO** (solo bugfixes + docs; considerar recorte)
+
+### Privacy
+
+`impact.jsonl` NO guarda código, file paths, tool inputs ni outputs. Sólo
+instinct ids, tool names, session ids, project id prefixes (sha256),
+domain, confidence. Free-text `note` de feedback sanitizado con las
+mismas reglas que injector (10 blocked keywords + strip control chars,
+cap 500 chars).
+
+### Why now
+
+El plan v4.0 arranca aquí. Próximo paso: dejar acumular 14 días de datos
+en `impact.jsonl`, correr `/cx-status --impact`, y decidir en el gate
+Sprint 0.5 si seguir con Sprint 1 (bugfixes P1), 2 (consolidation comandos),
+3 (docs auto-gen), 4 (installer Python), 5 (autonomy), 6 (privacy), 7
+(release v4.0) — o recortar a un v3.14.x de consolidación.
+
 ## [3.13.3] — 2026-04-24
 
 ### Fixed

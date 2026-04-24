@@ -13,6 +13,12 @@ const { parseYamlFrontmatter, updateYamlField, listYamlFiles: findYamlFiles } = 
   path.join(__dirname, 'lib', 'yaml-utils')
 );
 
+// Optional impact funnel writer — never blocks learner if require fails.
+let impactLog = null;
+try {
+  impactLog = require(path.join(__dirname, 'lib', 'impact_log.js'));
+} catch {}
+
 const HOME = process.env.HOME || process.env.USERPROFILE || '/tmp';
 const CORTEX_DIR = path.join(HOME, '.claude', 'cortex');
 const PROJECTS_DIR = path.join(CORTEX_DIR, 'projects');
@@ -777,6 +783,78 @@ Session observations: ${observations.length}
 // Main
 // -------------------------------------------------------------------
 
+// -------------------------------------------------------------------
+// Step 5c: Correlate impact funnel — emit follow/reject events
+// -------------------------------------------------------------------
+//
+// For each `inject` event in impact.jsonl that matches this session and
+// has no correlating `follow` yet, scan observations to emit one follow
+// event. Heuristic v1 (conservative):
+//   - followed=true  if next observation in same sid is NOT an error
+//   - followed=false if no observation after the inject timestamp
+//   - err_after=true if is_error=true within 10 events post-inject
+// A marker `impact-correlated-<sid>` lives in tmp to avoid double-write.
+
+function correlateImpactEvents(observations, sid) {
+  if (!impactLog || !sid || observations.length === 0) return 0;
+  const impactFile = impactLog.IMPACT_FILE;
+  let raw;
+  try {
+    raw = fs.readFileSync(impactFile, 'utf8');
+  } catch {
+    return 0;
+  }
+
+  // Parse jsonl, collect inject events for this sid and existing follow ids
+  const injects = [];
+  const correlatedIids = new Set();
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const ev = JSON.parse(line);
+      if (ev.sid !== sid) continue;
+      if (ev.ev === 'inject' && ev.iid) injects.push(ev);
+      else if (ev.ev === 'follow' && ev.iid) correlatedIids.add(ev.iid + '|' + (ev.inject_ts || ''));
+    } catch {
+      // skip malformed
+    }
+  }
+  if (injects.length === 0) return 0;
+
+  // Sort observations chronologically (they already are, but belt+braces)
+  const sortedObs = [...observations].sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
+
+  let emitted = 0;
+  for (const inj of injects) {
+    const key = inj.iid + '|' + inj.ts;
+    if (correlatedIids.has(key)) continue;
+
+    // Find first observation strictly after the inject timestamp
+    const idx = sortedObs.findIndex((o) => (o.ts || '') > inj.ts);
+    if (idx < 0) {
+      // No later obs yet — cannot correlate in this session
+      continue;
+    }
+
+    const next = sortedObs[idx];
+    const window = sortedObs.slice(idx, idx + 10);
+    const errAfter = window.some((o) => o.err === true || o.err === 'true');
+    const followed = next.err !== true && next.err !== 'true';
+
+    // Embed inject_ts in the emitted event so future runs dedupe correctly.
+    impactLog.logEvent('follow', {
+      iid: inj.iid,
+      sid,
+      followed,
+      err_after: errAfter,
+      win: window.length,
+      inject_ts: inj.ts,
+    });
+    emitted += 1;
+  }
+  return emitted;
+}
+
 async function main() {
   try {
     log('Session learner started');
@@ -829,6 +907,15 @@ async function main() {
 
     // Step 5b: Detect and log Cortex command usage
     detectCommandUsage(observations);
+
+    // Step 5c: Correlate impact funnel (Sprint 0, v3.14.0)
+    try {
+      const sid = (stdinData && stdinData.session_id) || observations[0]._sid || null;
+      const correlated = correlateImpactEvents(observations, sid);
+      if (correlated > 0) log(`Correlated ${correlated} impact follow event(s)`);
+    } catch (e) {
+      log(`Impact correlation failed: ${e.message}`);
+    }
 
     // Step 6: Combine all proposals with session_date for cross-day tracking
     const allProposals = [
