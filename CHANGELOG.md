@@ -4,6 +4,11 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.14.1] — 2026-04-24
+
+### Fixed
+- **`tests/test_install.sh` command count**: el test 1e aún esperaba 18 comandos hardcoded (`CMD_COUNT -eq 18`) tras el bump v3.14.0 que añadió `/cx-feedback`. Los 8 jobs Linux+macOS de CI quedaron rojos durante v3.14.0 aunque el release en sí era funcional. Fix: actualizar a 19. Ironía histórica: v3.14.0 solo rompió los tests que _no_ eran Windows (v3.13.3 rompió solo Windows durante 4 releases).
+
 ## [3.14.0] — 2026-04-24
 
 ### Added — Sprint 0 · Instrumentation (v4.0 plan)
