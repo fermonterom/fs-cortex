@@ -254,6 +254,16 @@ def main():
     except Exception:
         pass
 
+    # Silent YAML normalization pass — repairs instinct files whose regex triggers
+    # were written with invalid double-quote escapes (\., \s, \(). Idempotent.
+    try:
+        from yaml_normalize import normalize_all
+        repaired = normalize_all()
+        if repaired > 0:
+            print(f'[cortex:yaml-normalize] repaired {repaired} instinct YAML file(s)', file=sys.stderr)
+    except Exception:
+        pass  # never block session start on normalization
+
     # Read stdin for hook data
     try:
         input_json = json.loads(sys.stdin.read())

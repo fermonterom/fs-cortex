@@ -1,7 +1,7 @@
-# fs-cortex v3.13.0 — Feature Reference
+# fs-cortex v3.13.1 — Feature Reference
 
 > Complete inventory of all features, commands, hooks, modules, and capabilities.
-> Last updated: 2026-04-23
+> Last updated: 2026-04-24
 
 ---
 
@@ -94,6 +94,7 @@ Parallel systems (not part of the confidence pipeline):
 - `set -euo pipefail` strict mode (with safe fallbacks for optional variables)
 - `umask 077` for consistent file permissions
 - `CORTEX-MANAGED` marker
+- **Silent YAML normalization pass** (v3.13.1): invokes `yaml_normalize.normalize_all()` on every session start to auto-repair instinct files with invalid double-quoted regex escapes. Emits `[cortex:yaml-normalize] repaired N file(s)` only when repairs occurred; never blocks session start on failure
 
 ### session-learner.js — Pattern Detection at Session End
 - **5 pattern detectors**:
@@ -123,7 +124,7 @@ Parallel systems (not part of the confidence pipeline):
 
 ---
 
-## Library Modules (3 files)
+## Library Modules (4 files)
 
 ### hooks/lib/dream_cycle.py — Knowledge Maintenance
 6 modules for knowledge hygiene:
@@ -145,6 +146,16 @@ Parallel systems (not part of the confidence pipeline):
 - `updateYamlField()` for atomic YAML field updates
 - `listYamlFiles()` for directory scanning
 - Shared between injector.sh and session-learner.js (eliminates duplication)
+
+### hooks/lib/yaml_normalize.py — Instinct YAML Auto-Repair (v3.13.1)
+- Runs silently on every SessionStart via `session-start.py`
+- Scans `~/.claude/cortex/instincts/global/` and all `projects/*/instincts/` directories
+- Detects double-quoted regex fields (`trigger`, `condition`, `matcher`, `action`) with invalid YAML escape sequences (`\s`, `\.`, `\(`, `\d`, etc.) that strict `yaml.safe_load_all` rejects
+- Converts offending values to single-quoted literals (or block scalar `|-` if the value itself contains a `'`)
+- Idempotent — only touches files that currently fail strict parse; already-valid files untouched
+- Safety-checked — only writes when the rewrite re-parses cleanly
+- Callable as a Python module (`normalize_all(root)`) or standalone script
+- Emits `[cortex:yaml-normalize] repaired N file(s)` to stderr only when repairs occurred; never blocks session start on failure
 
 ---
 
@@ -442,3 +453,4 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 | v3.12.3 | 2026-04-21 | Fix 19 additional Join-Path 3+ arg calls in install.ps1 + tests (issue #16 continuation) |
 | v3.12.4 | 2026-04-22 | Windows injector.js cross-platform hook (bash no longer required) |
 | v3.13.0 | 2026-04-23 | /cx-dashboard visual HTML report with Fersora brand + project dedup by root |
+| v3.13.1 | 2026-04-24 | Silent YAML parse repair: auto-fix invalid double-quoted regex escapes in instincts (18 files repaired); yaml_normalize.py runs on every SessionStart; cx-validate/cx-gotcha/cx-analyze templates enforce single-quote rule |

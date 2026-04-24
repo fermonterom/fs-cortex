@@ -41,17 +41,21 @@ Captures an error-to-fix pattern as a gotcha instinct. Gotchas are high-priority
 
 ### Step 3: Generate Gotcha Instinct
 
+**QUOTING RULES (critical):**
+- `trigger`, `condition`, `matcher` and `action` fields MUST use **single quotes** `'...'` when the value may contain regex backslashes (`\s`, `\.`, `\(`). Double quotes reject those escapes.
+- If the value contains a `'`, use a block scalar: `trigger: |-\n  value`.
+
 ```yaml
 ---
 id: gotcha-[descriptive-name-kebab-case]
-trigger: "[when this error/situation occurs]"
+trigger: '[when this error/situation occurs]'
 confidence: 0.75
-domain: "[detected domain]"
+domain: '[detected domain]'
 type: gotcha
-source: "manual-capture"
+source: manual-capture
 scope: project
 severity: [low|medium|high|critical]
-created: "YYYY-MM-DDTHH:MM:SSZ"
+created: '[YYYY-MM-DDTHH:MM:SSZ]'
 ---
 
 # Gotcha: [Descriptive Title]

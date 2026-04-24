@@ -93,21 +93,28 @@ This step runs ONLY after the user explicitly confirmed in Step 4.
 - Accept proposal: create YAML file with confidence + 0.20. Write path depends on scope:
   - Global scope → `~/.claude/cortex/instincts/global/{id}.yaml`
   - Project scope → `~/.claude/cortex/projects/{project_hash}/instincts/{id}.yaml`
-  The YAML file written must follow this exact schema:
+  The YAML file written must follow this exact schema.
+
+  **CRITICAL — QUOTING RULES:**
+  - Fields that may contain regex backslashes (`trigger`, `condition`, `matcher`, `action`) MUST use **single quotes** `'...'`, NEVER double quotes `"..."`.
+  - Reason: YAML double-quoted strings interpret `\s`, `\.`, `\(` etc as escape sequences and reject them. Single-quoted strings are literal.
+  - If the value itself contains a `'`, use a block scalar: `trigger: |-\n  value with ' quote`.
+  - For regex values, prefer Python-style inline tools to dump via `yaml.safe_dump` rather than hand-writing strings.
+
   ```yaml
   ---
   id: {proposal.id}
-  trigger: "{proposal.trigger}"
-  action: "{proposal.action}"
+  trigger: '{proposal.trigger}'
+  action: '{proposal.action}'
   confidence: {proposal.confidence + 0.20}
   domain: {proposal.domain}
   tags: []
   scope: {proposal.scope}
-  project_id: "{proposal.project_id}"
-  project_name: "{proposal.project_name}"
-  source: "{proposal.source}"
-  first_seen: "{proposal.detected}"
-  last_seen: "{today}"
+  project_id: '{proposal.project_id}'
+  project_name: '{proposal.project_name}'
+  source: '{proposal.source}'
+  first_seen: '{proposal.detected}'
+  last_seen: '{today}'
   occurrences: 1
   evidence:
     - "{proposal.detected}: Detected by {proposal.source}"

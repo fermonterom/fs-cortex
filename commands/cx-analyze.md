@@ -132,6 +132,7 @@ Launch a SINGLE Opus 1M agent (`model: opus`) with:
 - Include evidence: how many times seen, which projects, what the actual error was
 - Maximum 15 proposals, quality over quantity
 - Output YAML instinct blocks with: id, trigger, action, confidence, domain, scope, projects_seen, tags
+- **YAML quoting rule**: wrap `trigger`, `condition`, `matcher` and `action` in **single quotes** (`'...'`), NOT double quotes. Regex escapes like `\.`, `\s`, `\(` break double-quoted YAML strings but are literal in single-quoted strings. If the value itself contains `'`, use a block scalar `|-`.
 
 ### Step 3c: Translate agent output → proposals.json format
 
@@ -142,13 +143,13 @@ For each YAML instinct returned by the agent, create a JSON proposal:
 
 Example:
 ```
-# Agent returns:
+# Agent returns (single quotes for regex-like fields):
 id: gotcha-husky-hook-not-executable
-trigger: "Write|.husky/"
-action: "After writing .husky/* files, run chmod +x — hooks fail silently"
+trigger: 'Write|\.husky/'
+action: 'After writing .husky/* files, run chmod +x — hooks fail silently'
 confidence: 0.50
 scope: global
-projects_seen: ["claude-testing-kit", "storyweaver", "LinkedIn"]
+projects_seen: ['claude-testing-kit', 'storyweaver', 'LinkedIn']
 
 # cx-analyze writes:
 {

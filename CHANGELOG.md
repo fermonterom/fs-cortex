@@ -4,6 +4,21 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.13.1] — 2026-04-24
+
+### Fixed
+- **Silent YAML parse failures across instinct files**: Claude (via `/cx-gotcha`, `/cx-analyze --accept`, `/cx-validate`, `/cx-promote`) was writing regex triggers in YAML double-quoted strings like `trigger: "Bash.*\.env"`. YAML double-quoted strings reject `\s`, `\.`, `\(` as invalid escape sequences, so strict `yaml.safe_load_all` crashed on 18 of 128 instinct files — which meant reflexes and instincts were silently missing from injection without any error surfaced.
+- **Repaired 18 existing broken instinct YAMLs** by converting invalid double-quoted regex fields to single-quoted literals.
+
+### Added
+- **`hooks/lib/yaml_normalize.py`** — silent auto-repair module. Scans `~/.claude/cortex/instincts/global/` and all `projects/*/instincts/` directories on every SessionStart. Only touches files that currently fail strict parse; converts offending `"..."` fields (`trigger`, `condition`, `matcher`, `action`) to `'...'` or a block scalar if the value contains a `'`. Idempotent, safety-checked (won't write unless the rewrite re-parses cleanly). Callable as a Python module (`normalize_all()`) or standalone script.
+- **SessionStart hook integration** — `session-start.py` now calls `normalize_all()` silently on every session start. If it repairs anything, emits `[cortex:yaml-normalize] repaired N file(s)` to stderr; never blocks session start on failure.
+
+### Changed
+- **`/cx-validate` template**: explicit single-quote rule for regex-carrying fields (`trigger`, `condition`, `matcher`, `action`) when Claude writes accepted proposals to disk. Prevents re-introduction of the bug.
+- **`/cx-gotcha` template**: same single-quote rule added to the gotcha instinct generator.
+- **`/cx-analyze` template**: single-quote rule added to the agent output contract + corrected the worked example.
+
 ## [3.13.0] — 2026-04-23
 
 ### Added
