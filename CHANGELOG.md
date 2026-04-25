@@ -16,6 +16,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Pre-existing inconsistency since v3.14.0 — fixed in 5 occurrences.
   No runtime change; the agent always discovered the correct path
   via shell, but the spec was misleading.
+- **`tests/test_install.sh`** · expected command count was hardcoded
+  to 19 from v3.14.0. v3.17.0 added `cx-feedback-auto.md` (20th .md
+  file) without updating the test, breaking CI on every matrix combo
+  (macOS/Ubuntu × Python 3.11/3.13 × Node 22/24) with `FAIL: commands:
+  20 (expected 19)`. Bumped to 20.
 
 ## [3.17.0] — 2026-04-25
 
