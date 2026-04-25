@@ -20,7 +20,7 @@ $CommandsDir = Join-Path $ClaudeDir "commands"
 $HooksDir = Join-Path (Join-Path $ClaudeDir "hooks") "cortex"
 $SettingsFile = Join-Path $ClaudeDir "settings.json"
 $ClaudeMd = Join-Path $ClaudeDir "CLAUDE.md"
-$NewVersion = "3.18.0"
+$NewVersion = "3.19.0"
 
 # --- Helpers ---
 
@@ -339,6 +339,15 @@ for event, handlers in cortex_hooks.items():
     existing_hooks[event] = cleaned + handlers
 
 settings["hooks"] = existing_hooks
+
+# v3.19.0 — Cortex env vars (auto-disable noisy reflexes by default)
+# Windows GUI apps don't inherit shell env, so we set
+# CORTEX_AGENT_DISABLE_REFLEXES in settings.json so the harness injects it
+# to every hook subprocess. Users can opt-out by deleting this entry or
+# setting it to "" / "0". See docs/AUTO-EVALUATION.md for rationale.
+settings.setdefault("env", {})
+if "CORTEX_AGENT_DISABLE_REFLEXES" not in settings["env"]:
+    settings["env"]["CORTEX_AGENT_DISABLE_REFLEXES"] = "1"
 
 fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(settings_file), suffix='.tmp')
 try:

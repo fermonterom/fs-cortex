@@ -134,6 +134,14 @@ perms = s.get("permissions", {})
 perms["allow"] = [p for p in perms.get("allow", []) if "cortex" not in p]
 perms["additionalDirectories"] = [d for d in perms.get("additionalDirectories", []) if "cortex" not in d]
 
+# v3.19.0 — Remove Cortex-managed env vars; preserve user's other env vars
+# Only the variables we set in install.sh are removed. If env block becomes
+# empty, drop the key entirely (don't leave a vestigial empty object).
+if "env" in s and isinstance(s["env"], dict):
+    s["env"].pop("CORTEX_AGENT_DISABLE_REFLEXES", None)
+    if not s["env"]:
+        del s["env"]
+
 import tempfile, stat
 fd, tmp = tempfile.mkstemp(dir=os.path.dirname(settings_file), suffix='.tmp')
 with os.fdopen(fd, 'w') as f:

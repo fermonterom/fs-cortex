@@ -202,9 +202,10 @@ simply produce zero new feedback events.
 
 ---
 
-## Auto-disable threshold (unchanged from v3.17.0)
+## Auto-disable threshold
 
-Same gate as before, still opt-in:
+Same gate, but as of v3.19.0 enabled by default via the installer
+(see "Activation" below):
 
 ```
 if (reflex.noiseCount >= 3 AND reflex.fireCount >= 10
@@ -214,10 +215,96 @@ if (reflex.noiseCount >= 3 AND reflex.fireCount >= 10
 }
 ```
 
-The opt-in remains — v3.18.0 adds the **mechanism** for organic
-`noiseCount` accumulation, but flipping the default to "on" stays a
-v3.19.0 decision after we see the heuristic behave on real data for
-one cycle.
+History:
+- **v3.17.0** added `noiseCount`/`usefulCount` fields and the env-flag
+  guard, but `noiseCount` had to be incremented manually via
+  `/cx-feedback-auto`.
+- **v3.18.0** automated `noiseCount` accumulation via the Stop-time
+  evaluator. The env flag was still opt-in, so the threshold was
+  tracked but the auto-disable never fired without manual export.
+- **v3.19.0** flips the default. The installer writes
+  `CORTEX_AGENT_DISABLE_REFLEXES=1` into `~/.claude/settings.json`'s
+  `env` block. Users who don't want auto-disable can delete that key
+  or set it to `"0"` / `""`. See "Activation".
+
+## Activation — why settings.json `env` and not `.zshrc`
+
+The auto-disable mechanism reads `process.env.CORTEX_AGENT_DISABLE_REFLEXES`
+inside `session-learner.js`, which is launched by the Claude Code
+harness as a `Stop` hook subprocess. The variable must be present in
+that subprocess's environment.
+
+**Naive approach: `~/.zshrc` / `~/.bashrc`.** This works for
+**interactive shell** sessions: when the user opens Terminal and runs
+`claude`, the shell sourced the rc file, the variable is exported, and
+`claude` (and therefore session-learner) inherits it.
+
+**The bug**: macOS and Windows GUI applications **do not source the
+shell's rc files**. They are launched directly by the OS. The Claude
+Code Desktop app, opened from Finder/Dock or the Start menu, never
+sees `~/.zshrc`. The variable is missing, the auto-disable never
+fires, the user thinks they activated it but nothing happens.
+
+This is a long-standing macOS/Windows env var gotcha and has bitten
+every CLI tool that tries to handoff config via shell rc files.
+
+**The fix: `settings.json` `env` block.** The Claude Code harness
+reads `~/.claude/settings.json` regardless of how it was launched
+(Terminal, Desktop, IDE plugin) and injects every key in the `env`
+object into every hook subprocess's environment. This works
+identically across:
+
+- macOS Terminal / iTerm
+- macOS Claude Code Desktop app
+- Windows Terminal / PowerShell
+- Windows Claude Code Desktop app
+- Linux any shell or DE
+
+The installer (`install.sh` / `install.ps1`) writes the variable
+during step 10 (configure hooks), idempotently — running the
+installer twice does not duplicate or change anything. The uninstaller
+(`uninstall.sh`) removes only the Cortex-managed keys; user-defined
+`env` entries are preserved. If the env block becomes empty after
+removal, the installer drops the `env` key entirely to keep
+`settings.json` clean.
+
+### How to opt out
+
+Edit `~/.claude/settings.json` and either delete the key:
+
+```json
+{
+  "env": {
+    /* CORTEX_AGENT_DISABLE_REFLEXES removed */
+  }
+}
+```
+
+Or set it to a falsy value:
+
+```json
+{
+  "env": {
+    "CORTEX_AGENT_DISABLE_REFLEXES": "0"
+  }
+}
+```
+
+Either form makes `correlateReflexFeedback` skip the auto-disable
+branch. `noiseCount` continues to accumulate (it's just diagnostic
+data) but reflexes never get `enabled: false` automatically.
+
+A future re-run of `bash install.sh` will see your existing key value
+and not overwrite it (idempotent), so your opt-out is durable across
+upgrades.
+
+### Co-existence with shell rc files
+
+If you have `export CORTEX_AGENT_DISABLE_REFLEXES=1` in your
+`~/.zshrc` it doesn't conflict — interactive shells will see it from
+the rc file, and GUI apps will see it from settings.json. Either path
+works. v3.19.0's installer just removes the gotcha by ensuring the
+GUI path is wired up automatically.
 
 ---
 

@@ -21,7 +21,7 @@ COMMANDS_DIR="$CLAUDE_DIR/commands"
 HOOKS_DIR="$CLAUDE_DIR/hooks/cortex"
 SETTINGS_FILE="$CLAUDE_DIR/settings.json"
 CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
-NEW_VERSION="3.18.0"
+NEW_VERSION="3.19.0"
 
 print_header() {
     echo ""
@@ -405,6 +405,15 @@ for event, handlers in cortex_hooks.items():
     existing_hooks[event] = cleaned + handlers
 
 settings["hooks"] = existing_hooks
+
+# v3.19.0 — Cortex env vars (auto-disable noisy reflexes by default)
+# macOS GUI apps don't read ~/.zshrc, so we set CORTEX_AGENT_DISABLE_REFLEXES
+# in settings.json so the harness injects it to every hook subprocess.
+# Users can opt-out by deleting this entry or setting it to "" / "0".
+# See docs/AUTO-EVALUATION.md for rationale.
+settings.setdefault("env", {})
+if "CORTEX_AGENT_DISABLE_REFLEXES" not in settings["env"]:
+    settings["env"]["CORTEX_AGENT_DISABLE_REFLEXES"] = "1"
 
 # Atomic write via tmp+rename
 import tempfile

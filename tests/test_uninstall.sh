@@ -198,6 +198,53 @@ echo "Test 11: Data preserved when DELETE not typed"
 printf 'y\nn\ny\nno\n' | HOME="$SANDBOX4" bash "$PROJECT_ROOT/uninstall.sh" > /dev/null 2>&1 || true
 [ -d "$SANDBOX4/.claude/cortex" ] && pass "safety guard preserved data" || fail "data was deleted without backup"
 
+# ── TEST 12+: v3.19.0 — env removal ────────────────────────────────
+
+echo ""
+echo "--- v3.19.0: settings.json env removal ---"
+
+# Test 12: uninstall removes Cortex env var, preserves user's other env vars
+SANDBOX5=$(mktemp -d)
+SANDBOXES+=("$SANDBOX5")
+mkdir -p "$SANDBOX5/.claude"
+printf '%s\n' '{"env":{"USER_VAR":"keep-me","ANOTHER":"x"},"model":"sonnet"}' > "$SANDBOX5/.claude/settings.json"
+printf '\n\n\n\n\n\n' | HOME="$SANDBOX5" bash "$PROJECT_ROOT/install.sh" > /dev/null 2>&1 || true
+# After install: env has USER_VAR + ANOTHER + CORTEX_AGENT_DISABLE_REFLEXES
+printf 'y\nn\nn\n' | HOME="$SANDBOX5" bash "$PROJECT_ROOT/uninstall.sh" > /dev/null 2>&1 || true
+
+echo "Test 12: uninstall removes Cortex env, preserves user vars"
+if python3 -c "
+import json
+d = json.load(open('$SANDBOX5/.claude/settings.json'))
+env = d.get('env', {})
+assert 'CORTEX_AGENT_DISABLE_REFLEXES' not in env, 'cortex env still present'
+assert env.get('USER_VAR') == 'keep-me', 'user var lost'
+assert env.get('ANOTHER') == 'x', 'second user var lost'
+" 2>/dev/null; then
+    pass "uninstall removes only Cortex env, preserves user vars"
+else
+    fail "uninstall damaged user env or did not remove Cortex env"
+fi
+
+# Test 13: uninstall drops empty env block when only Cortex var existed
+SANDBOX6=$(mktemp -d)
+SANDBOXES+=("$SANDBOX6")
+mkdir -p "$SANDBOX6/.claude"
+# Fresh install (no prior env) → only CORTEX_AGENT_DISABLE_REFLEXES will be in env
+printf '\n\n\n\n\n\n' | HOME="$SANDBOX6" bash "$PROJECT_ROOT/install.sh" > /dev/null 2>&1 || true
+printf 'y\nn\nn\n' | HOME="$SANDBOX6" bash "$PROJECT_ROOT/uninstall.sh" > /dev/null 2>&1 || true
+
+echo "Test 13: uninstall drops empty env block"
+if python3 -c "
+import json
+d = json.load(open('$SANDBOX6/.claude/settings.json'))
+assert 'env' not in d, 'empty env block left behind'
+" 2>/dev/null; then
+    pass "uninstall drops empty env block"
+else
+    fail "uninstall left empty env block (clutters settings.json)"
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

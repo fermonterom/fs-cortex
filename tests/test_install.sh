@@ -232,6 +232,59 @@ fi
 rm -rf "$SANDBOX" "$MALDIR"
 echo ""
 
+# --- v3.19.0 — env merge tests ---
+echo ""
+echo "--- v3.19.0: settings.json env merge ---"
+
+# Test: fresh install adds Cortex env var, preserves user's pre-existing env
+SANDBOX_ENV=$(mktemp -d)
+SANDBOXES+=("$SANDBOX_ENV")
+mkdir -p "$SANDBOX_ENV/.claude"
+printf '%s\n' '{"env":{"USER_VAR":"keep-me"},"model":"sonnet"}' > "$SANDBOX_ENV/.claude/settings.json"
+printf '\n\n\n\n\n\n' | HOME="$SANDBOX_ENV" bash "$PROJECT_ROOT/install.sh" > /dev/null 2>&1 || true
+
+if python3 -c "
+import json
+d = json.load(open('$SANDBOX_ENV/.claude/settings.json'))
+env = d.get('env', {})
+assert env.get('CORTEX_AGENT_DISABLE_REFLEXES') == '1', 'cortex env not set'
+assert env.get('USER_VAR') == 'keep-me', 'user env damaged'
+" 2>/dev/null; then
+    pass "env: install adds CORTEX_AGENT_DISABLE_REFLEXES + preserves USER_VAR"
+else
+    fail "env: install did not add cortex env or damaged user env"
+fi
+
+# Test: idempotency — second install does not duplicate or modify
+ENV_BEFORE=$(python3 -c "import json; print(json.dumps(json.load(open('$SANDBOX_ENV/.claude/settings.json'))['env'], sort_keys=True))" 2>/dev/null)
+printf '\n\n\n\n\n\n' | HOME="$SANDBOX_ENV" bash "$PROJECT_ROOT/install.sh" > /dev/null 2>&1 || true
+ENV_AFTER=$(python3 -c "import json; print(json.dumps(json.load(open('$SANDBOX_ENV/.claude/settings.json'))['env'], sort_keys=True))" 2>/dev/null)
+[ "$ENV_BEFORE" = "$ENV_AFTER" ] && pass "env: install is idempotent" || fail "env: 2nd install changed env (expected unchanged)"
+
+# Test: fresh install with NO pre-existing settings.json creates valid env block
+SANDBOX_ENV2=$(mktemp -d)
+SANDBOXES+=("$SANDBOX_ENV2")
+mkdir -p "$SANDBOX_ENV2/.claude"
+printf '\n\n\n\n\n\n' | HOME="$SANDBOX_ENV2" bash "$PROJECT_ROOT/install.sh" > /dev/null 2>&1 || true
+if python3 -c "
+import json
+d = json.load(open('$SANDBOX_ENV2/.claude/settings.json'))
+assert d.get('env', {}).get('CORTEX_AGENT_DISABLE_REFLEXES') == '1'
+" 2>/dev/null; then
+    pass "env: fresh install (no prior settings) adds env block"
+else
+    fail "env: fresh install did not produce expected env block"
+fi
+
+# Test: install respects user opt-out (existing CORTEX_AGENT_DISABLE_REFLEXES=0 stays)
+SANDBOX_ENV3=$(mktemp -d)
+SANDBOXES+=("$SANDBOX_ENV3")
+mkdir -p "$SANDBOX_ENV3/.claude"
+printf '%s\n' '{"env":{"CORTEX_AGENT_DISABLE_REFLEXES":"0"},"model":"sonnet"}' > "$SANDBOX_ENV3/.claude/settings.json"
+printf '\n\n\n\n\n\n' | HOME="$SANDBOX_ENV3" bash "$PROJECT_ROOT/install.sh" > /dev/null 2>&1 || true
+OPTOUT=$(python3 -c "import json; print(json.load(open('$SANDBOX_ENV3/.claude/settings.json'))['env']['CORTEX_AGENT_DISABLE_REFLEXES'])" 2>/dev/null)
+[ "$OPTOUT" = "0" ] && pass "env: user opt-out (=0) preserved" || fail "env: opt-out clobbered (got '$OPTOUT')"
+
 # --- Summary ---
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

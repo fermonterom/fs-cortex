@@ -4,6 +4,56 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.19.0] — 2026-04-25
+
+### Auto-disable activation — installer-managed default
+
+v3.18.0 shipped the auto-disable mechanism but kept it opt-in via
+`CORTEX_AGENT_DISABLE_REFLEXES=1`. Users were expected to add it to
+their shell rc file. **This is a known gotcha**: macOS and Windows
+GUI apps (including Claude Code Desktop) do not source `~/.zshrc` /
+`~/.bashrc`, so the variable was missing in GUI sessions and the
+auto-disable never fired in practice.
+
+v3.19.0 closes the gap. The installer writes the variable into
+`~/.claude/settings.json`'s `env` block, which the harness injects
+into every hook subprocess regardless of how Claude Code was
+launched (Terminal / Desktop / IDE / Linux DE).
+
+### Added
+
+- **`install.sh`** · step 10 now sets
+  `settings.env.CORTEX_AGENT_DISABLE_REFLEXES = "1"` if absent.
+  Idempotent — re-running install does not duplicate or overwrite.
+- **`install.ps1`** · same on Windows. Same Python merge logic.
+- **`uninstall.sh`** · removes only the Cortex-managed env key. User-
+  defined entries are preserved. If the `env` block becomes empty,
+  the key is dropped entirely to keep settings.json clean.
+- **`docs/AUTO-EVALUATION.md`** · new "Activation" section explains
+  why `settings.json` `env` is the right place (vs. `.zshrc`),
+  documents how to opt out, covers co-existence with shell rc files.
+
+### Changed
+
+- **Default behavior**: fresh installs of v3.19.0+ have auto-disable
+  active out of the box. Existing v3.17.x / v3.18.x installs are
+  unaffected until the user runs `bash install.sh` (the upgrade
+  path).
+
+### How to opt out
+
+Edit `~/.claude/settings.json` and delete the
+`env.CORTEX_AGENT_DISABLE_REFLEXES` key, or set it to `"0"` / `""`.
+See `docs/AUTO-EVALUATION.md` "Activation".
+
+### Smoke tests added
+
+- Fresh install: env var present, user vars preserved
+- Existing settings: env merged without touching user's other env vars
+- Idempotency: second install does not duplicate or overwrite
+- Uninstall preserves: only Cortex var removed, user env intact
+- Empty env cleanup: empty `env` block dropped on uninstall
+
 ## [3.18.0] — 2026-04-25
 
 ### Sprint 1 · Auto-evaluation — close the agent feedback loop

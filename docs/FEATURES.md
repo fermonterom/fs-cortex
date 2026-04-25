@@ -1,4 +1,4 @@
-# fs-cortex v3.18.0 — Feature Reference
+# fs-cortex v3.19.0 — Feature Reference
 
 > Complete inventory of all features, commands, hooks, modules, and capabilities.
 > Last updated: 2026-04-25
@@ -42,7 +42,7 @@ Parallel systems (not part of the confidence pipeline):
 | Session Learner | `session-learner.js` | Stop | Sync | 15s |
 | **PreCompact** | `precompact.py` | PreCompact (before /compact) | Sync, fire-and-forget | 8s |
 
-### Impact Funnel (v3.14.0+, source-split v3.17.0, auto-eval v3.18.0)
+### Impact Funnel (v3.14.0+, source-split v3.17.0, auto-eval v3.18.0, default-on v3.19.0)
 
 A separate, append-only event stream measures whether Cortex actually helps —
 not just how much it observes. See [`docs/IMPACT-METRICS.md`](IMPACT-METRICS.md)
@@ -133,7 +133,7 @@ or `python3 impact_log.py stats --json`.
   5. Agent patterns (recurring Agent tool usage with similar descriptions, Jaccard >= 0.40, 3+ uses → agent-evolution proposals)
 - **Cross-detector dedup by incident** (v3.15.0): `dedupProposalsByIncident()` groups proposals by `(sid, file, ±5 min)` between collection and write. Highest-confidence one survives; the rest become `merged_from` + `sub_detectors`. Reduces noise 4-5× when one incident triggered multiple detectors
 - **Impact correlation** (v3.14.0): `correlateImpactEvents()` reads `impact.jsonl`, finds `inject` events for the current sid without a `follow`, and emits one per inject by inspecting the next observation. Conservative v1 heuristic — `followed=true` if next obs is not an error; `err_after=true` if any of the next 10 has `is_error`
-- **Reflex auto-evaluation** (v3.18.0): `correlateReflexFeedback()` reads reflex inject events (`iid: reflex:*`), runs each reflex's evaluator (`tool-substitution` / `precondition-check` / `error-monitor`) against observations, and emits `feedback` events with `source: agent`. Updates `usefulCount` / `noiseCount` on the reflex entry. Auto-disable when `noiseCount >= 3 AND fireCount >= 10` only fires if `CORTEX_AGENT_DISABLE_REFLEXES=1` is set. Conservative semantics — `error-monitor` reflexes only emit `noise` (when failure observed) or `ignore` (no signal). See `docs/AUTO-EVALUATION.md`
+- **Reflex auto-evaluation** (v3.18.0): `correlateReflexFeedback()` reads reflex inject events (`iid: reflex:*`), runs each reflex's evaluator (`tool-substitution` / `precondition-check` / `error-monitor`) against observations, and emits `feedback` events with `source: agent`. Updates `usefulCount` / `noiseCount` on the reflex entry. Auto-disable when `noiseCount >= 3 AND fireCount >= 10` requires `CORTEX_AGENT_DISABLE_REFLEXES=1` — **now wired by the installer in v3.19.0** (added to `~/.claude/settings.json` `env` block, idempotent, removable via uninstall). Conservative semantics — `error-monitor` reflexes only emit `noise` (when failure observed) or `ignore` (no signal). See `docs/AUTO-EVALUATION.md`
 - **Tracking mirror to JSON** (v3.15.0): `_mirrorToTracking()` writes the same `last_seen`/`count` to `instinct-tracking.json` after updating any YAML. JSON becomes the operational source of truth (so the injector's inline staleness filter works); YAML stays for human readability. Resolves the legacy bug where tracking.json had 1 entry vs 61 YAMLs
 - **sanitizeProposalAction()**: sanitizes all proposal text against prompt injection
 - Auto-generates proposals with `session_date` for cross-day tracking
@@ -244,7 +244,7 @@ or `python3 impact_log.py stats --json`.
 | `/cx-eod` | End-of-day summary for next session | ~300 |
 | `/cx-gotcha` | Capture error→fix as high-priority instinct | ~200 |
 | `/cx-feedback` | **(v3.14.0, source-split v3.17.0)** Close the human loop on the impact funnel. Always writes `source: user`. Modes `useful \| noise \| ignore` (last-injected) or explicit `<instinct-id>`. Soft confidence nudge (+0.02 / -0.05). Writes `feedback.jsonl` mirror | ~100 |
-| `/cx-feedback-auto` | **(v3.17.0)** Agent-emitted feedback for tool-choice reflexes the user cannot evaluate. Always writes `source: agent`. No confidence nudge on instincts; tracks `noiseCount` on reflexes for opt-in auto-disable (`CORTEX_AGENT_DISABLE_REFLEXES=1`). See `docs/AGENT-FEEDBACK.md` | ~100 |
+| `/cx-feedback-auto` | **(v3.17.0)** Agent-emitted feedback for tool-choice reflexes the user cannot evaluate. Always writes `source: agent`. No confidence nudge on instincts; tracks `noiseCount` on reflexes for auto-disable (default-on via installer-managed `CORTEX_AGENT_DISABLE_REFLEXES=1` since v3.19.0). See `docs/AGENT-FEEDBACK.md` | ~100 |
 | `/cx-downvote` | Negative feedback on incorrect instinct injection (reduces confidence) | ~100 |
 | `/cx-retro` | Weekly retrospective: command usage, instinct activations, health trend | ~200 |
 | `/cx-timeline` | Knowledge event log: creations, promotions, decays, archives, evolutions | ~100 |
@@ -374,7 +374,7 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 
 ---
 
-## Tests (12 suites, 202 tests)
+## Tests (12 suites, 208 tests)
 
 | Suite | Tests | Coverage |
 |---|---|---|
@@ -384,9 +384,9 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 | `test_session_learner.sh` | 8 | Error-fix pairs, corrections, chains, proposals, command timeline |
 | `test_injector.sh` | 16 | Sanitization, ReDoS, limits, markers, yaml-utils, .last-instinct, engine |
 | `test_yaml_utils.sh` | 13 | Floats, ints, strings, colon values, update, list |
-| `test_install.sh` | 38 | Fresh install, upgrade, idempotency, **strict** path traversal (no fake-green) |
+| `test_install.sh` | 42 | Fresh install, upgrade, idempotency, **strict** path traversal (no fake-green), **v3.19.0 env merge** (CORTEX_AGENT_DISABLE_REFLEXES added, user vars preserved, idempotency, opt-out respected) |
 | `test_hooks_e2e.sh` | 14 | Full pipeline: observe→inject→learn, **token budget reset** |
-| `test_uninstall.sh` | 11 | Cleanup, backup creation, data preservation, **safety guard**, CLAUDE.md preservation |
+| `test_uninstall.sh` | 13 | Cleanup, backup creation, data preservation, **safety guard**, CLAUDE.md preservation, **v3.19.0 env removal** (Cortex var removed, user vars preserved, empty env block dropped) |
 | `test_integrity.sh` | 14 | observe.py direct, **20 commands** validated, core file schemas, **version consistency** |
 | `test_install_ps1.ps1` | 9 | PowerShell syntax, version consistency, security features, backup categories, hook config, **CI on windows-latest** |
 | `test_impact.sh` | 32 | **Sprint 0/1 funnel** — schema v1, JS↔Python compat, concurrent writes (10 parallel → 0 loss), rotation, gate GO/NO-GO, formulas, input validation, **v3.17.0 source split** (user/agent ratios, gate input, legacy default), **v3.18.0 auto-eval** (3 evaluator types, no-evaluator default, reflex iid prefix) |
