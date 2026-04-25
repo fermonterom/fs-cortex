@@ -107,7 +107,7 @@ already applied, run:
 ```bash
 /cx-status --impact --days 14
 # or directly
-python3 ~/.claude/cortex/hooks/cortex/lib/impact_log.py stats --days 14
+python3 ~/.claude/hooks/cortex/lib/impact_log.py stats --days 14
 ```
 
 The gate recommendation is deterministic:

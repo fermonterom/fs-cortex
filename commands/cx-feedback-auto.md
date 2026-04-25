@@ -56,7 +56,7 @@ Apply the same shortcut expansion as `/cx-feedback`:
 ### Step 3 · Emit feedback event
 
 ```bash
-python3 ~/.claude/cortex/hooks/cortex/lib/impact_log.py log \
+python3 ~/.claude/hooks/cortex/lib/impact_log.py log \
   --event feedback \
   --iid <id> \
   --sid <session-id> \

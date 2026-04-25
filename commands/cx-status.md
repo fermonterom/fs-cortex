@@ -202,7 +202,7 @@ Skip the full dashboard and show only the impact funnel from `impact.jsonl`.
 Invokes:
 
 ```bash
-python3 ~/.claude/cortex/hooks/cortex/lib/impact_log.py stats --days 14
+python3 ~/.claude/hooks/cortex/lib/impact_log.py stats --days 14
 ```
 
 Output includes:

@@ -4,6 +4,19 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.17.1] — 2026-04-25
+
+### Fixed
+
+- **Doc paths in 4 spec files** · `commands/cx-feedback.md`,
+  `commands/cx-feedback-auto.md`, `commands/cx-status.md`,
+  `docs/IMPACT-METRICS.md` referenced the impact_log.py writer at the
+  doubled-`cortex/` path `~/.claude/cortex/hooks/cortex/lib/impact_log.py`.
+  The actual install path is `~/.claude/hooks/cortex/lib/impact_log.py`.
+  Pre-existing inconsistency since v3.14.0 — fixed in 5 occurrences.
+  No runtime change; the agent always discovered the correct path
+  via shell, but the spec was misleading.
+
 ## [3.17.0] — 2026-04-25
 
 ### Sprint 0 · Instrumentation, follow-up — split user vs agent feedback

@@ -58,7 +58,7 @@ Use the current session id if exposed by the harness, otherwise omit.
 Invoke (always with `--source user` — the explicit value documents intent):
 
 ```bash
-python3 ~/.claude/cortex/hooks/cortex/lib/impact_log.py log \
+python3 ~/.claude/hooks/cortex/lib/impact_log.py log \
   --event feedback \
   --iid <instinct-id> \
   --sid <session-id> \
@@ -130,4 +130,4 @@ closes the loop, feeding the same `impact.jsonl` funnel that the
 Go/No-Go Gate reads to decide if the v4.0 refactor continues.
 
 See `docs/IMPACT-METRICS.md` for the canonical formulas and
-`~/.claude/cortex/hooks/cortex/lib/impact_log.py` for the writer.
+`~/.claude/hooks/cortex/lib/impact_log.py` for the writer.
