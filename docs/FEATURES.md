@@ -1,7 +1,7 @@
-# fs-cortex v3.16.0 — Feature Reference
+# fs-cortex v3.17.0 — Feature Reference
 
 > Complete inventory of all features, commands, hooks, modules, and capabilities.
-> Last updated: 2026-04-24
+> Last updated: 2026-04-25
 
 ---
 
@@ -42,19 +42,25 @@ Parallel systems (not part of the confidence pipeline):
 | Session Learner | `session-learner.js` | Stop | Sync | 15s |
 | **PreCompact** | `precompact.py` | PreCompact (before /compact) | Sync, fire-and-forget | 8s |
 
-### Impact Funnel (v3.14.0+)
+### Impact Funnel (v3.14.0+, source-split in v3.17.0)
 
 A separate, append-only event stream measures whether Cortex actually helps —
 not just how much it observes. See [`docs/IMPACT-METRICS.md`](IMPACT-METRICS.md)
-for the canonical formulas.
+for the canonical formulas and [`docs/AGENT-FEEDBACK.md`](AGENT-FEEDBACK.md)
+for the user/agent feedback split (v3.17.0).
 
 | Event | Emitted by | Meaning |
 |-------|------------|---------|
 | `inject` | `injector-engine.js` | An instinct was sent into PreToolUse context |
 | `follow` | `session-learner.js` | Next tool call respected (or not) the instinct |
 | `reject` | reserved (future) | Explicit non-match detector |
-| `feedback` | `/cx-feedback` | Human rated the injection useful / noise / ignore |
+| `feedback` | `/cx-feedback` (`source: user`) or `/cx-feedback-auto` (`source: agent`) | Rated the injection useful / noise / ignore |
 | `outcome` | reserved (Sprint 5) | Apply-rate of laws |
+
+The Sprint 0.5 Go/No-Go Gate reads `useful_ratio_user` and
+`health_ratio_user` exclusively. Agent self-ratings (`source: agent`)
+are diagnostic and surfaced separately in `/cx-status --impact` but do
+not flip the gate.
 
 Read with `/cx-status --impact` (calls `python3 impact_log.py stats --days 14`)
 or `python3 impact_log.py stats --json`.
@@ -188,11 +194,13 @@ or `python3 impact_log.py stats --json`.
 - Callable as a Python module (`normalize_all(root)`) or standalone script
 - Emits `[cortex:yaml-normalize] repaired N file(s)` to stderr only when repairs occurred; never blocks session start on failure
 
-### hooks/lib/impact_log.py — Impact Funnel Writer + Metrics (v3.14.0)
+### hooks/lib/impact_log.py — Impact Funnel Writer + Metrics (v3.14.0, source-split v3.17.0)
 - Canonical writer + reader for `~/.claude/cortex/impact.jsonl` (schema v:1)
-- API: `log_event(event, **fields)`, `log_feedback(iid, rating, sid, note)`, `compute_metrics(days)`, `gate_recommendation(metrics)`, `rotate(days)`
-- CLI: `python3 impact_log.py stats [--days N] [--json]`, `tail [-n N]`, `rotate`, `log --event ... --iid ...`
+- API: `log_event(event, **fields)`, `log_feedback(iid, rating, sid, note, source)`, `compute_metrics(days)`, `gate_recommendation(metrics)`, `rotate(days)`
+- CLI: `python3 impact_log.py stats [--days N] [--json]`, `tail [-n N]`, `rotate`, `log --event ... --iid ... [--source user|agent]`
 - Five event types: `inject` / `follow` / `reject` / `feedback` / `outcome`
+- v3.17.0 · feedback events carry `source: "user" | "agent"` (default `user`, optional, schema v:1 unchanged). `compute_metrics()` returns split ratios (`useful_ratio_user`, `useful_ratio_agent`, `noise_ratio_user`, `noise_ratio_agent`, `health_ratio_user`, `health_ratio_agent`) plus the legacy aggregates for back-compat
+- `gate_recommendation()` reads `useful_ratio_user` and `health_ratio_user` exclusively — agent self-ratings never flip the gate. See `docs/AGENT-FEEDBACK.md`
 - Canonical formulas (see `docs/IMPACT-METRICS.md`):
   - `useful_event = feedback.useful OR (follow.followed AND NOT err_after)`
   - `noise_event  = feedback.noise  OR follow.followed == false`
@@ -216,7 +224,7 @@ or `python3 impact_log.py stats --json`.
 
 ---
 
-## Commands (19)
+## Commands (20)
 
 | Command | Purpose | Token Cost |
 |---|---|---|
@@ -232,7 +240,8 @@ or `python3 impact_log.py stats --json`.
 | `/cx-audit` | Token overhead, duplicates, conflicts, cleanup | ~400 |
 | `/cx-eod` | End-of-day summary for next session | ~300 |
 | `/cx-gotcha` | Capture error→fix as high-priority instinct | ~200 |
-| `/cx-feedback` | **(v3.14.0)** Close the human loop on the impact funnel. Modes `useful \| noise \| ignore` (last-injected) or explicit `<instinct-id>`. Soft confidence nudge (+0.02 / -0.05). Writes `feedback.jsonl` mirror | ~100 |
+| `/cx-feedback` | **(v3.14.0, source-split v3.17.0)** Close the human loop on the impact funnel. Always writes `source: user`. Modes `useful \| noise \| ignore` (last-injected) or explicit `<instinct-id>`. Soft confidence nudge (+0.02 / -0.05). Writes `feedback.jsonl` mirror | ~100 |
+| `/cx-feedback-auto` | **(v3.17.0)** Agent-emitted feedback for tool-choice reflexes the user cannot evaluate. Always writes `source: agent`. No confidence nudge on instincts; tracks `noiseCount` on reflexes for opt-in auto-disable (`CORTEX_AGENT_DISABLE_REFLEXES=1`). See `docs/AGENT-FEEDBACK.md` | ~100 |
 | `/cx-downvote` | Negative feedback on incorrect instinct injection (reduces confidence) | ~100 |
 | `/cx-retro` | Weekly retrospective: command usage, instinct activations, health trend | ~200 |
 | `/cx-timeline` | Knowledge event log: creations, promotions, decays, archives, evolutions | ~100 |
@@ -353,7 +362,7 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 ### What Gets Updated
 - Hooks (6 files: observe.py, injector.sh, injector.js, session-start.py, session-learner.js, **precompact.py** new in v3.15.0)
 - `hooks/lib/` (8 files: dream_cycle.py, validate_instinct.py, yaml-utils.js, yaml_normalize.py, dashboard_gen.py, **impact_log.py**, **impact_log.js**, **fire_once.py**)
-- Commands (19 .md files, including `cx-feedback` since v3.14.0)
+- Commands (20 .md files, including `cx-feedback` since v3.14.0 and `cx-feedback-auto` since v3.17.0)
 - SKILL.md + 3 agents (cortex-observer, cortex-reviewer, cortex-planner)
 - Cortex section in CLAUDE.md
 - Version marker
@@ -362,7 +371,7 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 
 ---
 
-## Tests (12 suites, 187 tests)
+## Tests (12 suites, 193 tests)
 
 | Suite | Tests | Coverage |
 |---|---|---|
@@ -375,9 +384,9 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 | `test_install.sh` | 38 | Fresh install, upgrade, idempotency, **strict** path traversal (no fake-green) |
 | `test_hooks_e2e.sh` | 14 | Full pipeline: observe→inject→learn, **token budget reset** |
 | `test_uninstall.sh` | 11 | Cleanup, backup creation, data preservation, **safety guard**, CLAUDE.md preservation |
-| `test_integrity.sh` | 14 | observe.py direct, **19 commands** validated, core file schemas, **version consistency** |
+| `test_integrity.sh` | 14 | observe.py direct, **20 commands** validated, core file schemas, **version consistency** |
 | `test_install_ps1.ps1` | 9 | PowerShell syntax, version consistency, security features, backup categories, hook config, **CI on windows-latest** |
-| `test_impact.sh` | 17 | **Sprint 0 funnel** — schema v1, JS↔Python compat, concurrent writes (10 parallel → 0 loss), rotation, gate GO/NO-GO, formulas, input validation |
+| `test_impact.sh` | 23 | **Sprint 0 funnel** — schema v1, JS↔Python compat, concurrent writes (10 parallel → 0 loss), rotation, gate GO/NO-GO, formulas, input validation, **v3.17.0 source split** (user/agent ratios, gate input, legacy default) |
 
 ### CI
 - GitHub Actions: macOS + Linux × Python 3.11/3.13 × Node 22/24

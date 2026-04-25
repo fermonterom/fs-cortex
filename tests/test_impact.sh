@@ -274,6 +274,108 @@ else
 fi
 
 # -----------------------------------------------------------------------------
+echo "--- Test 14: feedback with --source user writes source field ---"
+rm -f "$SANDBOX/impact.jsonl" "$SANDBOX/feedback.jsonl"
+python3 "$IMPACT_PY" log --event feedback --iid src-test-1 --rating useful --source user
+LAST=$(tail -1 "$SANDBOX/impact.jsonl")
+if echo "$LAST" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); assert d.get('source')=='user'" 2>/dev/null; then
+  pass "source=user persisted in event"
+else
+  fail "source=user missing or wrong: $LAST"
+fi
+
+# -----------------------------------------------------------------------------
+echo "--- Test 15: feedback with --source agent writes source field ---"
+python3 "$IMPACT_PY" log --event feedback --iid src-test-2 --rating useful --source agent
+LAST=$(tail -1 "$SANDBOX/impact.jsonl")
+if echo "$LAST" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); assert d.get('source')=='agent'" 2>/dev/null; then
+  pass "source=agent persisted in event"
+else
+  fail "source=agent missing or wrong: $LAST"
+fi
+
+# -----------------------------------------------------------------------------
+echo "--- Test 16: legacy events without source default to user on read ---"
+# Write a legacy-shaped event manually (no source field)
+echo '{"v":1,"ts":"2026-04-01T00:00:00Z","ev":"feedback","iid":"legacy-1","rating":"useful"}' >> "$SANDBOX/impact.jsonl"
+# Also need an inject for it to count
+echo '{"v":1,"ts":"2026-04-01T00:00:00Z","ev":"inject","iid":"legacy-1","tool":"Bash"}' >> "$SANDBOX/impact.jsonl"
+STATS=$(python3 "$IMPACT_PY" stats --days 365 --json)
+if echo "$STATS" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+# legacy useful-feedback should count toward useful_ratio_user (default source)
+assert d['useful_ratio_user'] > 0, 'legacy event lost in user bucket'
+" 2>/dev/null; then
+  pass "missing source defaults to user"
+else
+  fail "legacy event handling broken"
+fi
+
+# -----------------------------------------------------------------------------
+echo "--- Test 17: split ratios — user vs agent — with controlled fixture ---"
+rm -f "$SANDBOX/impact.jsonl" "$SANDBOX/feedback.jsonl"
+# 4 injects, 1 user-useful, 1 user-noise, 1 agent-useful, 1 agent-noise
+for i in 1 2 3 4; do
+  python3 "$IMPACT_PY" log --event inject --iid "split-$i" --tool Bash --sid sid-S --conf 0.7
+done
+python3 "$IMPACT_PY" log --event feedback --iid split-1 --rating useful --source user
+python3 "$IMPACT_PY" log --event feedback --iid split-2 --rating noise  --source user
+python3 "$IMPACT_PY" log --event feedback --iid split-3 --rating useful --source agent
+python3 "$IMPACT_PY" log --event feedback --iid split-4 --rating noise  --source agent
+
+STATS=$(python3 "$IMPACT_PY" stats --days 1 --json)
+if echo "$STATS" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+# 4 injects, 1 user-useful, 1 user-noise → both = 0.25
+assert abs(d['useful_ratio_user']  - 0.25) < 0.001, f'user useful={d[\"useful_ratio_user\"]}'
+assert abs(d['noise_ratio_user']   - 0.25) < 0.001, f'user noise={d[\"noise_ratio_user\"]}'
+assert abs(d['useful_ratio_agent'] - 0.25) < 0.001, f'agent useful={d[\"useful_ratio_agent\"]}'
+assert abs(d['noise_ratio_agent']  - 0.25) < 0.001, f'agent noise={d[\"noise_ratio_agent\"]}'
+# Legacy aggregate sums both
+assert abs(d['useful_ratio'] - 0.50) < 0.001, f'legacy useful={d[\"useful_ratio\"]}'
+" 2>/dev/null; then
+  pass "split ratios correct (user 0.25/0.25, agent 0.25/0.25, legacy 0.50)"
+else
+  fail "split ratio mismatch"
+  echo "$STATS" | python3 -m json.tool 2>/dev/null | head -25
+fi
+
+# -----------------------------------------------------------------------------
+echo "--- Test 18: gate uses _user only (high agent should not flip to GO) ---"
+rm -f "$SANDBOX/impact.jsonl"
+# 10 injects, 9 agent-useful, 0 user-useful → useful_ratio_user = 0.0 → NO-GO despite agent at 0.9
+for i in 1 2 3 4 5 6 7 8 9 10; do
+  python3 "$IMPACT_PY" log --event inject --iid "agent-only-$i" --tool Bash --sid sid-G --conf 0.7
+done
+for i in 1 2 3 4 5 6 7 8 9; do
+  python3 "$IMPACT_PY" log --event feedback --iid "agent-only-$i" --rating useful --source agent
+done
+GATE=$(python3 "$IMPACT_PY" stats --days 1 --json | python3 -c "import json,sys; print(json.loads(sys.stdin.read())['gate'])")
+if [ "$GATE" = "NO-GO" ]; then
+  pass "agent-only useful does not flip gate (NO-GO as expected)"
+else
+  fail "expected NO-GO for agent-only useful, got $GATE"
+fi
+
+# -----------------------------------------------------------------------------
+echo "--- Test 19: invalid source raises ValueError ---"
+if python3 -c "
+import sys; sys.path.insert(0, '$REPO_ROOT/hooks/lib')
+import impact_log
+try:
+    impact_log.log_feedback('some-id', 'useful', source='hacker')
+    sys.exit(1)
+except ValueError:
+    sys.exit(0)
+"; then
+  pass "invalid source raises ValueError"
+else
+  fail "invalid source not rejected"
+fi
+
+# -----------------------------------------------------------------------------
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 exit $FAIL

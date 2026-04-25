@@ -4,6 +4,69 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.17.0] — 2026-04-25
+
+### Sprint 0 · Instrumentation, follow-up — split user vs agent feedback
+
+The Sprint 0 funnel (v3.14.0) introduced `/cx-feedback` with a single
+positive channel for human feedback. A follow-up audit (this release)
+showed that ~60% of injected items are tool-choice reflexes the user
+cannot meaningfully evaluate (e.g. `bash-find-use-glob`,
+`read-before-edit`). Forcing the user to rate them either inflates
+`useful_ratio` (false positives) or leaves the bucket empty (signal
+loss). Either way, the Sprint 0.5 Go/No-Go Gate stops measuring
+human value. v3.17.0 fixes this by splitting feedback by `source`
+(`user` vs `agent`) so the gate keeps measuring what it was designed
+to measure. Full design rationale in
+[`docs/AGENT-FEEDBACK.md`](docs/AGENT-FEEDBACK.md).
+
+### Added
+
+- **`docs/AGENT-FEEDBACK.md`** · architectural decision record. Defines
+  the `source` field, the user/agent split, the new gate input, and the
+  reflex auto-disable heuristic gated behind `CORTEX_AGENT_DISABLE_REFLEXES=1`.
+- **`commands/cx-feedback-auto.md`** · new command, agent-only. Emits
+  feedback events with `source: agent`. Applies confidence nudges to
+  neither instincts nor reflexes (agent self-rating must not bootstrap
+  confidence — that is reserved for human feedback or distillation).
+  Tracks `noiseCount` on reflexes for future opt-in auto-disable.
+- **`hooks/lib/impact_log.py:49`** · `VALID_SOURCES = {"user", "agent"}`
+  and `DEFAULT_SOURCE = "user"`. New `--source` CLI argument on
+  `log` subcommand. `log_feedback()` accepts `source` kwarg.
+- **`hooks/lib/impact_log.py:compute_metrics`** · returns six new keys
+  (`useful_ratio_user`, `noise_ratio_user`, `health_ratio_user`,
+  `useful_ratio_agent`, `noise_ratio_agent`, `health_ratio_agent`)
+  alongside the legacy aggregates (`useful_ratio`, etc.) for backward
+  compatibility with v3.14.x–v3.16.x readers.
+- **`tests/test_impact.sh`** · 6 new tests (14–19) cover source field
+  persistence, legacy-event default, split ratios, gate input,
+  invalid source rejection. Total now: 19 tests / 23 assertions, all green.
+
+### Changed
+
+- **`hooks/lib/impact_log.py:gate_recommendation`** · now reads
+  `useful_ratio_user` and `health_ratio_user`. The gate decision no
+  longer mixes agent and user signal. Backward compatible: falls back
+  to legacy keys when split keys are absent.
+- **`commands/cx-feedback.md`** · spec updated. Always writes
+  `source: user`. Accepts reflex ids explicitly with a warning, but no
+  confidence nudge (reflexes have no confidence).
+- **`hooks/lib/impact_log.py:_print_stats`** · `/cx-status --impact`
+  now prints two extra lines showing user vs agent ratios separately,
+  and labels the gate as "uses _user ratios only".
+
+### Schema
+
+- Schema stays at `v:1`. The new `source` field is optional with
+  default `"user"` on read. Pre-v3.17.0 events parse unchanged. No
+  migration script needed.
+
+### Documentation
+
+- `docs/IMPACT-METRICS.md` retains its formulas; `docs/AGENT-FEEDBACK.md`
+  layers the source split on top and is the new reference for any
+  consumer that needs the user/agent breakdown.
+
 ## [3.16.0] — 2026-04-25
 
 ### Sprint 1.X · session-learner threshold tuning

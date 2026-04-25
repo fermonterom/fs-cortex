@@ -47,6 +47,8 @@ ROTATION_DAYS = 30
 # the "did the next tool call respect the instinct?" signal.
 VALID_EVENTS = {"inject", "follow", "reject", "feedback", "outcome"}
 VALID_RATINGS = {"useful", "noise", "ignore"}
+VALID_SOURCES = {"user", "agent"}
+DEFAULT_SOURCE = "user"
 
 
 # ── writer ──────────────────────────────────────────────────────────────────
@@ -82,16 +84,36 @@ def log_event(event: str, **fields: Any) -> None:
     _atomic_append(IMPACT_FILE, json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
 
 
-def log_feedback(instinct_id: str, rating: str, sid: str | None = None, note: str | None = None) -> None:
-    """Convenience shortcut invoked by /cx-feedback."""
+def log_feedback(
+    instinct_id: str,
+    rating: str,
+    sid: str | None = None,
+    note: str | None = None,
+    source: str = DEFAULT_SOURCE,
+) -> None:
+    """Convenience shortcut invoked by /cx-feedback and /cx-feedback-auto.
+
+    `source` distinguishes human ratings (`user`, default) from agent self-ratings
+    (`agent`). Sprint 0.5 Gate uses only `useful_ratio_user`. See docs/AGENT-FEEDBACK.md.
+    """
     if rating not in VALID_RATINGS:
         raise ValueError(f"rating must be one of {VALID_RATINGS}")
-    log_event("feedback", iid=instinct_id, sid=sid, rating=rating, note=note)
+    if source not in VALID_SOURCES:
+        raise ValueError(f"source must be one of {VALID_SOURCES}")
+    log_event("feedback", iid=instinct_id, sid=sid, rating=rating, note=note, source=source)
     # Also mirror to feedback.jsonl for quick sampling (doesn't need mixing with funnel events).
     _atomic_append(
         FEEDBACK_FILE,
         json.dumps(
-            {"v": SCHEMA_VERSION, "ts": _now_iso(), "iid": instinct_id, "sid": sid, "rating": rating, "note": note},
+            {
+                "v": SCHEMA_VERSION,
+                "ts": _now_iso(),
+                "iid": instinct_id,
+                "sid": sid,
+                "rating": rating,
+                "note": note,
+                "source": source,
+            },
             ensure_ascii=False,
             separators=(",", ":"),
         ),
@@ -130,15 +152,25 @@ def compute_metrics(days: int = 14) -> dict[str, Any]:
     """
     Canonical metrics. Returns a dict ready to print or JSON-serialize.
 
+    Splits feedback events by `source` ("user" vs "agent"). Sprint 0.5 Gate
+    reads only the `_user` ratios; `_agent` ratios are diagnostic. See
+    docs/AGENT-FEEDBACK.md for rationale.
+
     Output shape:
       {
         "period_days": 14,
-        "totals": {"inject": N, "follow": M, "reject": K, "feedback": F},
-        "useful_events": X,
-        "noise_events": Y,
-        "useful_ratio": 0.00-1.00,
+        "totals": {"inject": N, "follow": M, ...},
+        "useful_events": X,           # legacy aggregate
+        "noise_events": Y,            # legacy aggregate
+        "useful_ratio": 0.00-1.00,    # legacy aggregate (user+agent)
         "noise_ratio":  0.00-1.00,
         "health_ratio": 0.00-inf,
+        "useful_ratio_user":  0.00-1.00,
+        "noise_ratio_user":   0.00-1.00,
+        "health_ratio_user":  0.00-inf,
+        "useful_ratio_agent": 0.00-1.00,
+        "noise_ratio_agent":  0.00-1.00,
+        "health_ratio_agent": 0.00-inf,
         "top_useful":   [(iid, count), ...],
         "top_noisy":    [(iid, count), ...],
       }
@@ -146,6 +178,13 @@ def compute_metrics(days: int = 14) -> dict[str, Any]:
     counts: dict[str, int] = {k: 0 for k in VALID_EVENTS}
     per_instinct_useful: dict[str, int] = {}
     per_instinct_noise: dict[str, int] = {}
+
+    # Split tallies by source. Implicit follow/reject events count as `user`
+    # because they reflect the user's actual next action.
+    useful_user = 0
+    useful_agent = 0
+    noise_user = 0
+    noise_agent = 0
 
     for ev in _iter_events(since_days=days):
         kind = ev.get("ev")
@@ -157,6 +196,10 @@ def compute_metrics(days: int = 14) -> dict[str, Any]:
 
         useful_hit = False
         noise_hit = False
+        # Pre-v3.17.0 events lack `source`; default to user for back-compat.
+        source = ev.get("source", DEFAULT_SOURCE)
+        if source not in VALID_SOURCES:
+            source = DEFAULT_SOURCE
 
         if kind == "feedback":
             rating = ev.get("rating")
@@ -165,25 +208,45 @@ def compute_metrics(days: int = 14) -> dict[str, Any]:
             elif rating == "noise":
                 noise_hit = True
         elif kind == "follow":
+            # Follow events are derived from the user's next tool call.
+            source = "user"
             if ev.get("followed") is True and not ev.get("err_after"):
                 useful_hit = True
             elif ev.get("followed") is False:
                 noise_hit = True
         elif kind == "reject":
+            source = "user"
             noise_hit = True
 
         if useful_hit:
             per_instinct_useful[iid] = per_instinct_useful.get(iid, 0) + 1
+            if source == "agent":
+                useful_agent += 1
+            else:
+                useful_user += 1
         if noise_hit:
             per_instinct_noise[iid] = per_instinct_noise.get(iid, 0) + 1
+            if source == "agent":
+                noise_agent += 1
+            else:
+                noise_user += 1
 
-    inject_total = counts["inject"] or 1  # avoid zero-division, show 0.00 when no data
+    inject_total = counts["inject"] or 1  # avoid zero-division
+    has_inject = bool(counts["inject"])
     useful_total = sum(per_instinct_useful.values())
     noise_total = sum(per_instinct_noise.values())
 
-    useful_ratio = useful_total / inject_total if counts["inject"] else 0.0
-    noise_ratio = noise_total / inject_total if counts["inject"] else 0.0
+    useful_ratio = useful_total / inject_total if has_inject else 0.0
+    noise_ratio = noise_total / inject_total if has_inject else 0.0
     health_ratio = useful_ratio / max(noise_ratio, 0.01)
+
+    useful_ratio_user = useful_user / inject_total if has_inject else 0.0
+    noise_ratio_user = noise_user / inject_total if has_inject else 0.0
+    health_ratio_user = useful_ratio_user / max(noise_ratio_user, 0.01)
+
+    useful_ratio_agent = useful_agent / inject_total if has_inject else 0.0
+    noise_ratio_agent = noise_agent / inject_total if has_inject else 0.0
+    health_ratio_agent = useful_ratio_agent / max(noise_ratio_agent, 0.01)
 
     top_useful = sorted(per_instinct_useful.items(), key=lambda kv: -kv[1])[:10]
     top_noisy = sorted(per_instinct_noise.items(), key=lambda kv: -kv[1])[:10]
@@ -196,15 +259,26 @@ def compute_metrics(days: int = 14) -> dict[str, Any]:
         "useful_ratio": round(useful_ratio, 4),
         "noise_ratio": round(noise_ratio, 4),
         "health_ratio": round(health_ratio, 4),
+        "useful_ratio_user": round(useful_ratio_user, 4),
+        "noise_ratio_user": round(noise_ratio_user, 4),
+        "health_ratio_user": round(health_ratio_user, 4),
+        "useful_ratio_agent": round(useful_ratio_agent, 4),
+        "noise_ratio_agent": round(noise_ratio_agent, 4),
+        "health_ratio_agent": round(health_ratio_agent, 4),
         "top_useful": top_useful,
         "top_noisy": top_noisy,
     }
 
 
 def gate_recommendation(metrics: dict[str, Any]) -> str:
-    """GO/PARTIAL/NO-GO per the Sprint 0.5 gate in the v4.0 plan."""
-    ur = metrics["useful_ratio"]
-    hr = metrics["health_ratio"]
+    """GO/PARTIAL/NO-GO per the Sprint 0.5 gate in the v4.0 plan.
+
+    Uses `useful_ratio_user` and `health_ratio_user` (v3.17.0+). Agent
+    self-ratings are excluded from gate input by design — see
+    docs/AGENT-FEEDBACK.md.
+    """
+    ur = metrics.get("useful_ratio_user", metrics["useful_ratio"])
+    hr = metrics.get("health_ratio_user", metrics["health_ratio"])
     if ur >= 0.25 and hr >= 1.5:
         return "GO"
     if ur >= 0.10 or hr >= 1.0:
@@ -276,7 +350,14 @@ def _print_stats(days: int, as_json: bool) -> None:
     print(f"  noise_ratio     : {metrics['noise_ratio']:.4f}")
     print(f"  health_ratio    : {metrics['health_ratio']:.4f}")
     print()
-    print(f"  Sprint 0.5 gate : {gate}")
+    print(f"  user  → useful_ratio: {metrics.get('useful_ratio_user', 0):.4f}  "
+          f"noise_ratio: {metrics.get('noise_ratio_user', 0):.4f}  "
+          f"health: {metrics.get('health_ratio_user', 0):.4f}")
+    print(f"  agent → useful_ratio: {metrics.get('useful_ratio_agent', 0):.4f}  "
+          f"noise_ratio: {metrics.get('noise_ratio_agent', 0):.4f}  "
+          f"health: {metrics.get('health_ratio_agent', 0):.4f}")
+    print()
+    print(f"  Sprint 0.5 gate : {gate}  (uses _user ratios only)")
     print(f"    criteria      : GO ≥0.25·1.5  PARTIAL ≥0.10·1.0  NO-GO <0.10 or <1.0")
     print()
     if metrics["top_useful"]:
@@ -334,6 +415,8 @@ def main(argv: list[str] | None = None) -> int:
     s_log.add_argument("--rating", choices=sorted(VALID_RATINGS))
     s_log.add_argument("--reason")
     s_log.add_argument("--note")
+    s_log.add_argument("--source", choices=sorted(VALID_SOURCES),
+                       help="Origin of the event (default: user; agent for /cx-feedback-auto)")
 
     args = parser.parse_args(argv)
 

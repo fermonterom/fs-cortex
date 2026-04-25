@@ -11,6 +11,7 @@ command: true
 Closes the human feedback loop on Cortex injections. Previously only `/cx-downvote` existed, which was one-way negative. `/cx-feedback` emits positive, negative, or neutral signal into `impact.jsonl`, where the Sprint 0.5 Go/No-Go Gate reads it.
 
 Introduced in **v3.14.0** as part of Sprint 0 · Instrumentation.
+Extended in **v3.17.0** with the `source` field — see [`docs/AGENT-FEEDBACK.md`](../docs/AGENT-FEEDBACK.md). This command always writes `source: user`. For agent self-ratings on tool-choice reflexes, see [`/cx-feedback-auto`](cx-feedback-auto.md).
 
 ## Usage
 
@@ -36,6 +37,10 @@ Read `~/.claude/cortex/.last-instinct`. It contains:
 ```
 
 - If argument looks like an instinct id (kebab-case, present in `instincts/global/` or `projects/*/instincts/`), target that one.
+- If argument matches a reflex id in `reflexes.json`, accept it but warn:
+  > "Reflexes are normally rated by the agent (see /cx-feedback-auto).
+  > Recording your rating without confidence nudge."
+  Then proceed; no nudge in Step 5.
 - Otherwise target the **first** id in `.last-instinct.ids` (the instinct of highest priority in the batch).
 - If the file does not exist, tell the user "No recent inyection found" and stop.
 
@@ -50,7 +55,7 @@ Use the current session id if exposed by the harness, otherwise omit.
 
 ### Step 4 · Emit feedback event
 
-Invoke:
+Invoke (always with `--source user` — the explicit value documents intent):
 
 ```bash
 python3 ~/.claude/cortex/hooks/cortex/lib/impact_log.py log \
@@ -58,6 +63,7 @@ python3 ~/.claude/cortex/hooks/cortex/lib/impact_log.py log \
   --iid <instinct-id> \
   --sid <session-id> \
   --rating <useful|noise|ignore> \
+  --source user \
   ${note:+--note "$note"}
 ```
 
