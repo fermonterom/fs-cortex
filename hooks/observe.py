@@ -447,25 +447,70 @@ def main():
     tool_output = data.get("tool_response", data.get("tool_output", data.get("output", "")))
     tool_input_raw = data.get("tool_input", data.get("input", {}))
 
-    # is_error: from Claude Code flag OR output pattern detection
-    is_error = data.get("is_error", False)
+    # ── v3.15.0 · robust PostToolUse parser ──────────────────────────────
+    # Claude Code actually sends tool_response as either a string (older tools)
+    # OR as `{"content": [{"type":"text","text":"..."}], "is_error": bool}`
+    # (Anthropic API v1 shape, recent release). Older observe.py only looked
+    # at top-level .error/.message — so err_msg NEVER persisted (corpus proof:
+    # 3 errors detected / 0 err_msg captured on 3730 obs). Fix:
+    #   1. Unwrap content[].text into a concatenated plain string when present.
+    #   2. Prefer the explicit is_error flag over heuristic detection.
+    #   3. Fall back to the heuristic for tools without structured responses.
+
+    def _flatten_tool_response(resp):
+        """Return (flat_text, is_error_flag, raw_for_input_logs).
+
+        flat_text — concatenated .text of content[type=text] blocks, or str(resp)
+        is_error_flag — resp.is_error if present, else None (caller falls back)
+        raw_for_input_logs — the original value (dict or str) for JSON truncation
+        """
+        if isinstance(resp, dict):
+            flag = resp.get("is_error")
+            content = resp.get("content")
+            if isinstance(content, list):
+                parts = []
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        txt = block.get("text", "")
+                        if isinstance(txt, str):
+                            parts.append(txt)
+                if parts:
+                    return ("\n".join(parts), flag, resp)
+            # Fallback to .error / .message / whole JSON
+            for key in ("error", "message", "output", "stderr", "stdout"):
+                val = resp.get(key)
+                if isinstance(val, str) and val:
+                    return (val, flag, resp)
+            return (json.dumps(resp)[:2000], flag, resp)
+        if isinstance(resp, list):
+            # rare: API may send content blocks at the top level
+            parts = [b.get("text", "") for b in resp if isinstance(b, dict) and b.get("type") == "text"]
+            return ("\n".join(parts) if parts else json.dumps(resp)[:2000], None, resp)
+        return (str(resp), None, resp)
+
+    flat_text, is_error_flag, _ = _flatten_tool_response(tool_output)
+
+    is_error = bool(data.get("is_error", False)) or bool(is_error_flag)
     if not is_error and event == "tc":
-        output_str = json.dumps(tool_output)[:2000] if isinstance(tool_output, dict) else str(tool_output)[:2000]
-        is_error = detect_is_error(output_str)
+        is_error = detect_is_error(flat_text[:2000])
 
     error_msg = None
     if is_error:
-        if isinstance(tool_output, dict):
+        # Prefer the flat_text we just extracted (handles content[].text properly)
+        if flat_text:
+            error_msg = flat_text[:500]
+        elif isinstance(tool_output, dict):
             error_msg = str(tool_output.get("error", tool_output.get("message", "")))[:500]
-        elif isinstance(tool_output, str):
-            error_msg = tool_output[:500]
 
     if isinstance(tool_input_raw, dict):
         input_truncated = json.dumps(tool_input_raw)[:2000]
     else:
         input_truncated = str(tool_input_raw)[:2000]
 
-    if isinstance(tool_output, dict):
+    # For output logging on tc events, prefer flat_text (readable) over raw dict JSON.
+    if flat_text and event == "tc":
+        output_truncated = flat_text[:1000]
+    elif isinstance(tool_output, dict):
         output_truncated = json.dumps(tool_output)[:1000]
     else:
         output_truncated = str(tool_output)[:1000]

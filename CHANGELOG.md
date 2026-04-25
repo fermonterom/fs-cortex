@@ -4,61 +4,174 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.15.0] — 2026-04-24
+
+### Sprint 1 · P1 bugfixes (v4.0 plan)
+
+This release attacks every P1 bug diagnosed by the multi-agent Opus 1M
+audit (2026-04-24): the observer with mutilated signal, the injector that
+ignored monorepos, desynchronised tracking, learner cross-detector noise,
+fake-green tests, install.ps1 silent-fail, and the missing PreCompact hook.
+No aspirational features — only sanitation.
+
+### Added
+
+- **`hooks/precompact.py`** (Sprint 1.9) — new `PreCompact` hook that
+  fires `session-learner.js` fire-and-forget before Claude Code compacts
+  the conversation. Timeout 8 s. Marker `.fire-once/precompact-flush-<sid>`
+  prevents double-flush. Registered in `install.sh` and `install.ps1`
+  as the fifth hook event.
+- **`hooks/lib/fire_once.py`** (Sprint 1.11) — reusable "execute once
+  per session_id with optional TTL + stale cleanup" primitive. API:
+  `not_fired()`, `mark()`, `unmark()`, `once()` (context manager),
+  `cleanup_stale()`. Adopted by `precompact.py`; available to other
+  hooks when they are next touched.
+- **`scripts/check-version-consistency.py`** (Sprint 1.6) — validates
+  that `install.sh`, `install.ps1`, `CHANGELOG.md` and
+  `docs/FEATURES.md` carry the same version. Blocks push if drift is
+  detected. Wired into the `pre-push` hook.
+- **`scripts/migrate-tracking-v4.py`** (Sprint 1.3) — idempotent
+  one-shot migration that merges every YAML's `occurrences:` +
+  `last_seen:` into `instinct-tracking.json`. Automatic backup to
+  `tracking.json.pre-v4.0`. **Result on the live corpus**:
+  tracking.json went from 1 entry to 110 entries — the root fix for
+  the inline-staleness filter (60 d) never firing on 98% of the corpus.
+
+### Fixed
+
+- **Observer PostToolUse parser broken** (Sprint 1.1) — `hooks/observe.py`
+  now unwraps `tool_response.content[type=text][text]` (Anthropic v1 API
+  shape) and prefers `tool_response.is_error` over the regex heuristic.
+  Materially shifts the live corpus's ts:tc ratio (diagnosed at 66:1)
+  and ensures `err_msg` actually persists when the data is present.
+- **Monorepo domain detection** (Sprint 1.2) — `hooks/lib/injector-engine.js`
+  now scans recursively up to depth 3 plus reads `pnpm-workspace.yaml`,
+  `turbo.json`, `nx.json`, `lerna.json`, `rush.json`, and the typical
+  monorepo folders (`apps/`, `packages/`, `libs/`, `services/`).
+  Detects more stacks (remix, gatsby, koa, hono, elysia, nestjs,
+  stripe, playwright, fastapi, django, flask). 5-min cache in
+  `.project-domains-cache`. Before: monorepos lost ALL their stack
+  instincts silently.
+- **Cross-detector dedup by incident** (Sprint 1.4) —
+  `hooks/session-learner.js` adds `dedupProposalsByIncident()` between
+  proposal collection and `writeProposals`. Groups proposals by
+  `(sid, file, 5-min window)`. The highest-confidence one survives;
+  the rest are recorded as `merged_from` + `sub_detectors`. Expected
+  noise reduction 4-5× when one incident triggered multiple detectors.
+- **Time-based sliding windows** (Sprint 1.7) — `detectErrorResolutions`
+  now also breaks the loop when `ts(candidate) - ts(error) > 300 s`,
+  not only by index. Before, a fix 10 events later but 20 min later
+  would slip through.
+- **Fake-green tests** (Sprint 1.5) — `tests/test_install.sh:215`
+  rewritten: it now verifies the malicious tar actually contains `..`
+  before running install, and FAILS if `install.sh` does not emit
+  "unsafe"/"abort". The old `|| pass "path traversal protection (tar
+  creation may differ)"` was an institutionalised false positive.
+- **`install.ps1` silent-fail** (Sprint 1.5) — `catch` at line 355
+  (settings.json merge) now terminates with `exit 1`. Previously the
+  installer reported success even when settings.json was left corrupt.
+  Also `catch {}` at line 166 (memory.json migration) now emits
+  `Write-Warning` instead of swallowing silently.
+- **`session-learner` mirrors to tracking.json** (Sprint 1.3) — after
+  updating a YAML's `last_seen`/`occurrences`, the learner now also
+  writes to `instinct-tracking.json` via the new `_mirrorToTracking()`
+  helper. The JSON becomes the operational source of truth; the YAML
+  remains for human readability. The injector (which already reads
+  JSON only) finally sees the complete corpus.
+
+### Changed
+
+- **`githooks/pre-push`** now runs `check-version-consistency.py`
+  before the test suite. Push is blocked if versions disagree.
+- **`scripts/`** is a new tracked folder containing the version
+  consistency and migration scripts.
+
+### Security
+
+- settings.json injection: `install.ps1` no longer continues when the
+  merge fails. Prevents silent corrupt states.
+
+### Testing
+
+- 11 suites, 97 tests green locally (security 7 + dream 35 + injector
+  16 + session-learner 8 + observe 8 + yaml-utils 13 + impact 17 +
+  install 38 + hooks_e2e 14 + uninstall 11 + integrity 14).
+- Explicit hardening: `tests/test_install.sh` path traversal no longer
+  accepts "pass either way" — it asserts the rejection produced
+  "unsafe" / "abort" in the installer output.
+
+### Notes on the impact funnel (Sprint 0)
+
+This release does NOT trigger the Sprint 0.5 Go/No-Go Gate — that
+still waits for 14 days of `impact.jsonl` data before deciding whether
+to continue with Sprints 2-7 of the v4.0 plan. However, the fixes
+shipped here (specifically 1.1 parser PostToolUse, 1.2 monorepo
+domain, 1.3 unified tracking) are exactly what improves the signal
+the gate will read. Without Sprint 1 applied, the gate would read
+biased data.
+
 ## [3.14.1] — 2026-04-24
 
 ### Fixed
-- **`tests/test_install.sh` command count**: el test 1e aún esperaba 18 comandos hardcoded (`CMD_COUNT -eq 18`) tras el bump v3.14.0 que añadió `/cx-feedback`. Los 8 jobs Linux+macOS de CI quedaron rojos durante v3.14.0 aunque el release en sí era funcional. Fix: actualizar a 19. Ironía histórica: v3.14.0 solo rompió los tests que _no_ eran Windows (v3.13.3 rompió solo Windows durante 4 releases).
+- **`tests/test_install.sh` command count**: test 1e was still hard-coded
+  to 18 commands (`CMD_COUNT -eq 18`) after the v3.14.0 bump that added
+  `/cx-feedback`. The 8 Linux+macOS CI jobs went red on v3.14.0 even
+  though the release itself was functional. Fix: bump to 19. Historical
+  irony: v3.14.0 only broke the tests that were _not_ Windows (v3.13.3
+  had broken only Windows for 4 releases).
 
 ## [3.14.0] — 2026-04-24
 
 ### Added — Sprint 0 · Instrumentation (v4.0 plan)
 
-Esta release introduce el **funnel de impacto** que mide si Cortex realmente
-ayuda al desarrollador, no sólo cuántas cosas aprende. Origen: auditoría
-multi-agente Opus 1M (2026-04-24, score 5.8/10) + Devil's Advocate Opus 1M
-Max. La auditoría concluyó que Cortex medía uso, no impacto — y que sin
-esa señal ningún sprint del refactor v4.0 estaba empíricamente justificado.
+This release introduces the **impact funnel** that measures whether
+Cortex actually helps the developer, not just how much it observes.
+Origin: multi-agent Opus 1M audit (2026-04-24, score 5.8/10) +
+Devil's Advocate Opus 1M Max. The audit concluded that Cortex was
+measuring use, not impact — and that without that signal no sprint
+of the v4.0 refactor was empirically justified.
 
 - **`hooks/lib/impact_log.py`** · writer + compute_metrics + CLI.
-  Schema `v:1` JSONL con cinco tipos de evento (`inject` / `follow` /
-  `reject` / `feedback` / `outcome`) en `~/.claude/cortex/impact.jsonl`.
-  CLI: `python3 impact_log.py stats [--days N] [--json]`, `tail`, `rotate`,
-  `log`. Rotación automática a los 30 días a `impact.archive/`.
-- **`hooks/lib/impact_log.js`** · writer JS que mirror al Python. Usado
-  por `injector-engine.js` (fast path: `fs.appendFileSync` directo sin
-  spawnear Python cada tool use).
-- **`hooks/lib/injector-engine.js`** · emite evento `inject` por cada
-  instinct que sobrevive los filtros (domain, dedup, token budget).
-  Carga `impact_log.js` con try/catch — si no existe el archivo (versión
-  vieja o migración a medias), el injector sigue funcionando igual.
-- **`hooks/session-learner.js`** · nueva función `correlateImpactEvents`
-  que, al final de cada sesión, lee `impact.jsonl`, busca `inject` events
-  del sid actual sin `follow` correlacionado, y emite uno por cada
-  localizando la siguiente observación del mismo sid. Heurística v1
-  conservadora: `followed=true` si next obs no es error; `err_after=true`
-  si alguna de las 10 siguientes tiene `is_error`.
-- **`/cx-feedback`** (nuevo comando) · cierra el loop humano. Modos
-  `useful | noise | ignore`, target explícito por instinct id o
-  implícito al último `.last-instinct`. Aplica soft nudge de confidence
-  (+0.02 / -0.05), escribe `feedback.jsonl` mirror, y registra en
-  `knowledge-log.md`. Shorthand consistente (`u/n/i`, `+/-`, `ok/bad`).
-- **`/cx-status --impact`** · nuevo flag que invoca
-  `impact_log.py stats --days 14` y muestra el funnel agregado + la
-  recomendación del Go/No-Go Gate (`GO` / `PARTIAL` / `NO-GO`).
+  Schema `v:1` JSONL with five event types (`inject` / `follow` /
+  `reject` / `feedback` / `outcome`) in `~/.claude/cortex/impact.jsonl`.
+  CLI: `python3 impact_log.py stats [--days N] [--json]`, `tail`,
+  `rotate`, `log`. Automatic 30-day rotation to `impact.archive/`.
+- **`hooks/lib/impact_log.js`** · JS writer mirroring the Python one.
+  Used by `injector-engine.js` (fast path: direct `fs.appendFileSync`
+  without spawning Python on every tool use).
+- **`hooks/lib/injector-engine.js`** · emits an `inject` event for
+  every instinct that survives the filters (domain, dedup, token
+  budget). `impact_log.js` is loaded with try/catch — if missing
+  (older install or partial migration), the injector keeps working.
+- **`hooks/session-learner.js`** · new `correlateImpactEvents`
+  function that, at session end, reads `impact.jsonl`, finds `inject`
+  events for the current sid without a correlated `follow`, and emits
+  one per inject by locating the next observation of the same sid.
+  Conservative v1 heuristic: `followed=true` if the next obs is not
+  an error; `err_after=true` if any of the next 10 has `is_error`.
+- **`/cx-feedback`** (new command) · closes the human loop. Modes
+  `useful | noise | ignore`, explicit instinct-id target or implicit
+  via `.last-instinct`. Applies soft confidence nudge (+0.02 / -0.05),
+  writes a `feedback.jsonl` mirror, and logs to `knowledge-log.md`.
+  Consistent shorthand (`u/n/i`, `+/-`, `ok/bad`).
+- **`/cx-status --impact`** · new flag that calls
+  `impact_log.py stats --days 14` and shows the aggregated funnel
+  plus the Go/No-Go Gate recommendation (`GO` / `PARTIAL` / `NO-GO`).
 - **`docs/IMPACT-METRICS.md`** · canonical formulas, event schema v1,
-  umbrales del Sprint 0.5 Go/No-Go Gate, privacy notes, testing contract.
-- **`tests/test_impact.sh`** · 17 tests: schema v1, JS↔Python compat,
-  concurrent writes (10 parallel → 10 líneas, 0 pérdidas), rotation,
-  gate GO/NO-GO, formulas con fixtures, validación de inputs.
+  Sprint 0.5 Go/No-Go Gate thresholds, privacy notes, testing contract.
+- **`tests/test_impact.sh`** · 17 tests: schema v1, JS↔Python
+  compatibility, concurrent writes (10 parallel → 10 lines, 0 loss),
+  rotation, gate GO/NO-GO, formulas against fixtures, input
+  validation.
 
 ### Changed
 
-- **`tests/test_integrity.sh`** · ahora valida 19 comandos (era 18)
-  incluyendo `cx-feedback`. Lista de `EXPECTED_COMMANDS` actualizada.
-- **`core/claudemd-section.md`** · añade `/cx-feedback` al listado de
-  comandos inyectado en la sección Cortex de CLAUDE.md del usuario.
+- **`tests/test_integrity.sh`** · now validates 19 commands (was 18)
+  including `cx-feedback`. `EXPECTED_COMMANDS` updated.
+- **`core/claudemd-section.md`** · adds `/cx-feedback` to the command
+  listing injected into the user's CLAUDE.md Cortex section.
 
-### Fórmulas canónicas (resumen — detalle en `docs/IMPACT-METRICS.md`)
+### Canonical formulas (summary — detail in `docs/IMPACT-METRICS.md`)
 
 ```
 useful_event = feedback.rating == "useful"
@@ -70,35 +183,52 @@ noise_ratio  = count(noise)  / count(inject)
 health_ratio = useful_ratio / max(noise_ratio, 0.01)
 ```
 
-Sprint 0.5 Go/No-Go Gate (umbrales moderados confirmados por el usuario):
-- `useful_ratio ≥ 0.25 AND health_ratio ≥ 1.5` → **GO** (continuar plan v4.0)
-- `0.10 ≤ useful_ratio < 0.25` o `1.0 ≤ health_ratio < 1.5` → **PARTIAL** (sólo sprints 2-4)
-- `< 0.10` o `< 1.0` → **NO-GO** (solo bugfixes + docs; considerar recorte)
+Sprint 0.5 Go/No-Go Gate (moderate thresholds confirmed by the user):
+- `useful_ratio ≥ 0.25 AND health_ratio ≥ 1.5` → **GO** (continue v4.0 plan)
+- `0.10 ≤ useful_ratio < 0.25` or `1.0 ≤ health_ratio < 1.5` → **PARTIAL** (sprints 2-4 only)
+- `< 0.10` or `< 1.0` → **NO-GO** (bugfixes + docs only; consider trimming)
 
 ### Privacy
 
-`impact.jsonl` NO guarda código, file paths, tool inputs ni outputs. Sólo
-instinct ids, tool names, session ids, project id prefixes (sha256),
-domain, confidence. Free-text `note` de feedback sanitizado con las
-mismas reglas que injector (10 blocked keywords + strip control chars,
-cap 500 chars).
+`impact.jsonl` does NOT store code, file paths, tool inputs or outputs.
+Only instinct ids, tool names, session ids, project id prefixes
+(sha256), domain, confidence. Free-text `note` from feedback is
+sanitised with the same rules as the injector (10 blocked keywords +
+strip control chars, 500-char cap).
 
 ### Why now
 
-El plan v4.0 arranca aquí. Próximo paso: dejar acumular 14 días de datos
-en `impact.jsonl`, correr `/cx-status --impact`, y decidir en el gate
-Sprint 0.5 si seguir con Sprint 1 (bugfixes P1), 2 (consolidation comandos),
-3 (docs auto-gen), 4 (installer Python), 5 (autonomy), 6 (privacy), 7
-(release v4.0) — o recortar a un v3.14.x de consolidación.
+The v4.0 plan starts here. Next step: let `impact.jsonl` accumulate
+14 days of data, run `/cx-status --impact`, and decide at the
+Sprint 0.5 gate whether to continue with Sprint 1 (P1 bugfixes), 2
+(commands consolidation), 3 (docs auto-gen), 4 (Python installer),
+5 (autonomy), 6 (privacy), 7 (release v4.0) — or scope down to a
+v3.14.x consolidation.
 
 ## [3.13.3] — 2026-04-24
 
 ### Fixed
-- **CI `test-windows` rojo desde v3.12.4 (4 releases consecutivas)**: `.github/workflows/test.yml:159` lanzaba `throw "injector.js exited with $exit: $result"`, que PowerShell 7 interpreta como referencia a drive-provider (`$drive:path`) porque `:` sigue directamente al nombre de variable. Resultado: `ParserError: Variable reference is not valid. ':' was not followed by a valid variable name character` y job failure antes de ejecutar el test real. El injector.js en sí estaba correcto; el bug vivía solo en la sintaxis del workflow YAML. Fix: envolver `$exit` en braces → `${exit}` (PowerShell best practice para disambiguar variable adyacente a `:`).
+- **CI `test-windows` red since v3.12.4 (4 consecutive releases)**:
+  `.github/workflows/test.yml:159` was throwing
+  `throw "injector.js exited with $exit: $result"`, which PowerShell 7
+  interprets as a drive-provider reference (`$drive:path` syntax)
+  because `:` immediately follows the variable name. Result:
+  `ParserError: Variable reference is not valid. ':' was not followed
+  by a valid variable name character` and the job failed before the
+  real test ran. `injector.js` itself was correct; the bug lived only
+  in the workflow YAML. Fix: wrap `$exit` in braces → `${exit}`
+  (PowerShell best practice for disambiguating a variable adjacent
+  to `:`).
 
 ### Context
-- Release bloqueante para todo el plan v4.0 de refactor: sin CI verde no se puede empezar Sprint 0 (instrumentación) con confianza. Este hotfix desbloquea la rama main.
-- Detectado durante la auditoría multi-agente Opus 1M (docs/DEEP-AUDIT-2026-04-24.html) — la CI llevaba 4 releases (v3.12.4, v3.13.0, v3.13.1, v3.13.2) con test-windows rojo sin que ningún release lo diagnosticara. El fix es de 1 carácter y no toca hooks ni lógica.
+- Blocking release for the entire v4.0 refactor plan: without green
+  CI you cannot start Sprint 0 (instrumentation) with confidence.
+  This hotfix unblocks `main`.
+- Detected during the multi-agent Opus 1M audit
+  (`docs/DEEP-AUDIT-2026-04-24.html`) — CI had been red for 4
+  releases (v3.12.4, v3.13.0, v3.13.1, v3.13.2) with no release
+  diagnosing it. The fix is a single character and touches no hooks
+  or logic.
 
 ## [3.13.2] — 2026-04-24
 

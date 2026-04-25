@@ -1,4 +1,4 @@
-# fs-cortex v3.14.1 — Feature Reference
+# fs-cortex v3.15.0 — Feature Reference
 
 > Complete inventory of all features, commands, hooks, modules, and capabilities.
 > Last updated: 2026-04-24
@@ -32,24 +32,43 @@ Parallel systems (not part of the confidence pipeline):
 | **SessionStart** | Laws + EOD resume + context bridge + skills hint + reminders | Once per session (+ on /compact) | ~550 |
 | **PreToolUse** | Instincts (max 3) + Reflexes (max 2) | Every tool use (if trigger matches) | ~200 max |
 
-### 4-Hook Pipeline
+### 5-Hook Pipeline (PreCompact added in v3.15.0)
 
 | Hook | File | Event | Mode | Timeout |
 |---|---|---|---|---|
 | Observer | `observe.py` | Pre/PostToolUse | Async (0 tokens) | 10s |
-| Injector | `injector.sh` | PreToolUse | Sync | 3s |
+| Injector | `injector.sh` / `injector.js` | PreToolUse | Sync | 3s |
 | Session Start | `session-start.py` | SessionStart + /compact | Sync | 5s |
 | Session Learner | `session-learner.js` | Stop | Sync | 15s |
+| **PreCompact** | `precompact.py` | PreCompact (before /compact) | Sync, fire-and-forget | 8s |
+
+### Impact Funnel (v3.14.0+)
+
+A separate, append-only event stream measures whether Cortex actually helps —
+not just how much it observes. See [`docs/IMPACT-METRICS.md`](IMPACT-METRICS.md)
+for the canonical formulas.
+
+| Event | Emitted by | Meaning |
+|-------|------------|---------|
+| `inject` | `injector-engine.js` | An instinct was sent into PreToolUse context |
+| `follow` | `session-learner.js` | Next tool call respected (or not) the instinct |
+| `reject` | reserved (future) | Explicit non-match detector |
+| `feedback` | `/cx-feedback` | Human rated the injection useful / noise / ignore |
+| `outcome` | reserved (Sprint 5) | Apply-rate of laws |
+
+Read with `/cx-status --impact` (calls `python3 impact_log.py stats --days 14`)
+or `python3 impact_log.py stats --json`.
 
 ---
 
-## Hooks (5 files)
+## Hooks (6 files)
 
 ### observe.py — Observation Capture
 - **Single Python process** replacing 11 shell spawns (~70ms vs ~800ms)
 - Captures ALL tool uses as JSONL with short field names (ts, ev, tool, err, sid, pid, pname)
 - **12 secret scrubbing patterns**: API keys, JWT, PEM, SSH, AWS, GitHub, Stripe, connection strings, Google, Slack, Anthropic, OpenAI
 - **9 error detection patterns** with context anchors: `error[:\s]` (not `ErrorBoundary`), `failed(?!\s*:\s*0)` (not `failed: 0`), exception, traceback, fatal, `panic[:(]` (not Go `panic()`), segfault, OOM, command not found
+- **Robust PostToolUse parser** (v3.15.0): unwraps `tool_response.content[type=text][text]` (Anthropic v1 API shape) and prefers `tool_response.is_error` over the regex heuristic. Fixes the live-corpus bug where `err_msg` never persisted (3 errors / 0 messages on 3 730 obs)
 - **is_error flag** on each observation for downstream pattern detection
 - Session ID truncated to 24 chars (not 16) for collision avoidance
 - File-based project ID cache (5min TTL) — avoids git subprocess per tool use
@@ -65,7 +84,8 @@ Parallel systems (not part of the confidence pipeline):
 
 ### injector.sh — Real-time Instinct Injection
 - **Imports shared `yaml-utils.js`** for YAML parsing (eliminates inline parser drift risk)
-- **Domain pre-filter**: detects project stack (React, Node, Supabase, Python, Rust, Go) from package.json/pyproject.toml/Cargo.toml/go.mod, skips irrelevant instincts
+- **Monorepo-aware domain pre-filter** (v3.15.0): scans recursively up to depth 3, reads `pnpm-workspace.yaml`, `turbo.json`, `nx.json`, `lerna.json`, `rush.json`, plus typical folders (`apps/`, `packages/`, `libs/`, `services/`). Detects more stacks (remix, gatsby, koa, hono, elysia, nestjs, stripe, playwright, fastapi, django, flask). Cached 5 min in `.project-domains-cache`. Before v3.15.0 only depth-0 — Turborepo/pnpm-workspace silently lost ALL stack instincts
+- **Impact funnel emit** (v3.14.0): for every instinct that survives all filters, appends an `inject` event to `~/.claude/cortex/impact.jsonl` via the `impact_log.js` fast path (no Python spawn). Try/catch wrapper — never blocks injection if the writer fails
 - **Domain dedup**: 1 instinct per domain per injection — higher confidence wins within the same domain. Prevents redundant advice from the same area saturating context
 - **Occurrence tracking**: writes `instinct-tracking.json` with per-instinct schema: `{ count, sessions[], projects_seen[], first_seen, last_seen }`. Tracks ALL matches including drafts (confidence < 0.30), not just injected instincts
 - **Session tracking**: stores last 20 session IDs per instinct (capped to prevent unbounded growth). Used for multi-session auto-promote gating
@@ -98,15 +118,18 @@ Parallel systems (not part of the confidence pipeline):
 
 ### session-learner.js — Pattern Detection at Session End
 - **5 pattern detectors**:
-  1. Error-fix pairs (is_error flag → Edit/Write within 10-event window)
+  1. Error-fix pairs (is_error flag → Edit/Write within 10-event AND ≤300 s window — v3.15.0 added the temporal guard)
   2. Repetitions (same tool+input 5+ times)
   3. User corrections (same file edited 3+ times with overlapping regions — reduces false positives)
   4. Workflow chains (3-tool trigrams repeated 3+ times)
   5. Agent patterns (recurring Agent tool usage with similar descriptions, Jaccard >= 0.40, 3+ uses → agent-evolution proposals)
+- **Cross-detector dedup by incident** (v3.15.0): `dedupProposalsByIncident()` groups proposals by `(sid, file, ±5 min)` between collection and write. Highest-confidence one survives; the rest become `merged_from` + `sub_detectors`. Reduces noise 4-5× when one incident triggered multiple detectors
+- **Impact correlation** (v3.14.0): `correlateImpactEvents()` reads `impact.jsonl`, finds `inject` events for the current sid without a `follow`, and emits one per inject by inspecting the next observation. Conservative v1 heuristic — `followed=true` if next obs is not an error; `err_after=true` if any of the next 10 has `is_error`
+- **Tracking mirror to JSON** (v3.15.0): `_mirrorToTracking()` writes the same `last_seen`/`count` to `instinct-tracking.json` after updating any YAML. JSON becomes the operational source of truth (so the injector's inline staleness filter works); YAML stays for human readability. Resolves the legacy bug where tracking.json had 1 entry vs 61 YAMLs
 - **sanitizeProposalAction()**: sanitizes all proposal text against prompt injection
 - Auto-generates proposals with `session_date` for cross-day tracking
 - Preserves user validation status (approved/rejected) on proposal dedup
-- Updates instinct `last_seen` and `occurrences` in YAML files
+- Updates instinct `last_seen` and `occurrences` in YAML files (and now also in `instinct-tracking.json`, see above)
 - Updates reflex `fireCount` and `lastFired`
 - Writes `context.md` per project for session bridge
 - Dynamic `now()` timestamps (not stale static NOW)
@@ -122,9 +145,17 @@ Parallel systems (not part of the confidence pipeline):
 - Detects python3/python automatically
 - Supports `CORTEX_PYTHON` env var override
 
+### precompact.py — PreCompact Flush (v3.15.0)
+- Fires before Claude Code compacts the conversation (`/compact`)
+- Spawns `node session-learner.js` as a detached subprocess (`start_new_session=True`) and exits immediately so the 8 s wrapper timeout never blocks compaction
+- Forwards the original stdin payload (session id, etc.) to the learner
+- Double-flush guard via `fire_once`: marker `precompact-flush-<sid>` (1-h TTL) prevents two consecutive `/compact` calls from running the learner twice
+- Best-effort throughout — every failure path returns `exit 0` so compaction is never blocked
+- Registered in `install.sh` and `install.ps1` as the fifth hook event
+
 ---
 
-## Library Modules (4 files)
+## Library Modules (6 files)
 
 ### hooks/lib/dream_cycle.py — Knowledge Maintenance
 6 modules for knowledge hygiene:
@@ -157,13 +188,39 @@ Parallel systems (not part of the confidence pipeline):
 - Callable as a Python module (`normalize_all(root)`) or standalone script
 - Emits `[cortex:yaml-normalize] repaired N file(s)` to stderr only when repairs occurred; never blocks session start on failure
 
+### hooks/lib/impact_log.py — Impact Funnel Writer + Metrics (v3.14.0)
+- Canonical writer + reader for `~/.claude/cortex/impact.jsonl` (schema v:1)
+- API: `log_event(event, **fields)`, `log_feedback(iid, rating, sid, note)`, `compute_metrics(days)`, `gate_recommendation(metrics)`, `rotate(days)`
+- CLI: `python3 impact_log.py stats [--days N] [--json]`, `tail [-n N]`, `rotate`, `log --event ... --iid ...`
+- Five event types: `inject` / `follow` / `reject` / `feedback` / `outcome`
+- Canonical formulas (see `docs/IMPACT-METRICS.md`):
+  - `useful_event = feedback.useful OR (follow.followed AND NOT err_after)`
+  - `noise_event  = feedback.noise  OR follow.followed == false`
+  - `useful_ratio = useful / inject`,  `health_ratio = useful_ratio / max(noise_ratio, 0.01)`
+- Sprint 0.5 Go/No-Go Gate: GO ≥ 0.25 / 1.5  ·  PARTIAL ≥ 0.10 / 1.0  ·  NO-GO < 0.10 / 1.0
+- Auto rotation at 30 days to `~/.claude/cortex/impact.archive/impact-<ts>.jsonl`
+- Writes never block calling hook — best-effort with retry + silent stderr fallback
+
+### hooks/lib/impact_log.js — JS Writer Mirror (v3.14.0)
+- Same schema as `impact_log.py`. Used by `injector-engine.js` and `session-learner.js` for the fast path (no Python spawn per tool use)
+- Public API: `logEvent(event, fields)`, `logInjectBatch(instincts, ctx)`, `logFollow(iid, followed, errAfter, sid, win)`, `logReject(iid, reason, sid)`
+- Direct `fs.appendFileSync` with mode 0o600 — atomic at the line level under POSIX append semantics
+- Validates event name against `VALID_EVENTS` set; bad names are dropped silently (with stderr warn under `CORTEX_DEBUG=1`)
+
+### hooks/lib/fire_once.py — Once-per-Session Primitive (v3.15.0)
+- Reusable "execute exactly once per session_id, with optional TTL + stale cleanup"
+- API: `not_fired(name, sid, ttl_hours=None)`, `mark()`, `unmark()`, `once(name, sid)` (context manager), `cleanup_stale(max_age_hours=24)`
+- Markers live under `~/.claude/cortex/.fire-once/<name>-<sid24>` with mode 0o600
+- Adopted by `precompact.py`; available to other hooks when they are next refactored
+- Names + sids are slug-safe (`[a-zA-Z0-9_-]` only, truncated to 32 / 24 chars)
+
 ---
 
-## Commands (18)
+## Commands (19)
 
 | Command | Purpose | Token Cost |
 |---|---|---|
-| `/cx-status` | Dashboard: laws, instincts, projects, reflexes, tracking, health, domain grouping | ~200 |
+| `/cx-status` | Dashboard: laws, instincts, projects, reflexes, tracking, health, domain grouping. **`--impact` flag** (v3.14.0): show the Sprint 0 funnel + Go/No-Go Gate recommendation | ~200 |
 | `/cx-dashboard` | Visual HTML report with Fersora brand — laws, instincts, reflexes, projects, health, timeline | ~150 |
 | `/cx-analyze` | Detect patterns in observations → proposals (Opus 1M agent) | ~5K |
 | `/cx-distill` | Promote instincts to laws (0.90+), apply decay, Jaccard promotions | ~800 |
@@ -175,6 +232,7 @@ Parallel systems (not part of the confidence pipeline):
 | `/cx-audit` | Token overhead, duplicates, conflicts, cleanup | ~400 |
 | `/cx-eod` | End-of-day summary for next session | ~300 |
 | `/cx-gotcha` | Capture error→fix as high-priority instinct | ~200 |
+| `/cx-feedback` | **(v3.14.0)** Close the human loop on the impact funnel. Modes `useful \| noise \| ignore` (last-injected) or explicit `<instinct-id>`. Soft confidence nudge (+0.02 / -0.05). Writes `feedback.jsonl` mirror | ~100 |
 | `/cx-downvote` | Negative feedback on incorrect instinct injection (reduces confidence) | ~100 |
 | `/cx-retro` | Weekly retrospective: command usage, instinct activations, health trend | ~200 |
 | `/cx-timeline` | Knowledge event log: creations, promotions, decays, archives, evolutions | ~100 |
@@ -293,30 +351,33 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 - Data directory preserved by default (opt-in deletion)
 
 ### What Gets Updated
-- Hooks (5 files + lib/ directory)
-- Commands (17 .md files)
-- SKILL.md + agents
+- Hooks (6 files: observe.py, injector.sh, injector.js, session-start.py, session-learner.js, **precompact.py** new in v3.15.0)
+- `hooks/lib/` (8 files: dream_cycle.py, validate_instinct.py, yaml-utils.js, yaml_normalize.py, dashboard_gen.py, **impact_log.py**, **impact_log.js**, **fire_once.py**)
+- Commands (19 .md files, including `cx-feedback` since v3.14.0)
+- SKILL.md + 3 agents (cortex-observer, cortex-reviewer, cortex-planner)
 - Cortex section in CLAUDE.md
 - Version marker
-- Git pre-push hook (in repo context)
+- `settings.json` registers 5 hook events (PreToolUse, PostToolUse, SessionStart + /compact, Stop, **PreCompact**)
+- Git pre-push hook (in repo context) — runs version-consistency check + security + dream tests
 
 ---
 
-## Tests (11 suites, 170 tests)
+## Tests (12 suites, 187 tests)
 
 | Suite | Tests | Coverage |
 |---|---|---|
 | `test_security.sh` | 7 | Injection, command injection, scrubbing, validation |
-| `test_dream_cycle.sh` | 32 | Jaccard, contradictions, staleness, regex, health, decay formula, **cleanup module 6** |
+| `test_dream_cycle.sh` | 35 | Jaccard, contradictions (incl. topic-overlap gate), staleness, regex, health, decay formula, **cleanup module 6** |
 | `test_observe.sh` | 8 | Scrubbing, is_error, dedup, atomic write, e2e, perf, subagent capture |
 | `test_session_learner.sh` | 8 | Error-fix pairs, corrections, chains, proposals, command timeline |
 | `test_injector.sh` | 16 | Sanitization, ReDoS, limits, markers, yaml-utils, .last-instinct, engine |
 | `test_yaml_utils.sh` | 13 | Floats, ints, strings, colon values, update, list |
-| `test_install.sh` | 38 | Fresh install, upgrade, idempotency, path traversal |
+| `test_install.sh` | 38 | Fresh install, upgrade, idempotency, **strict** path traversal (no fake-green) |
 | `test_hooks_e2e.sh` | 14 | Full pipeline: observe→inject→learn, **token budget reset** |
 | `test_uninstall.sh` | 11 | Cleanup, backup creation, data preservation, **safety guard**, CLAUDE.md preservation |
-| `test_integrity.sh` | 14 | observe.py direct, 18 commands validated, core file schemas, **version consistency** |
+| `test_integrity.sh` | 14 | observe.py direct, **19 commands** validated, core file schemas, **version consistency** |
 | `test_install_ps1.ps1` | 9 | PowerShell syntax, version consistency, security features, backup categories, hook config, **CI on windows-latest** |
+| `test_impact.sh` | 17 | **Sprint 0 funnel** — schema v1, JS↔Python compat, concurrent writes (10 parallel → 0 loss), rotation, gate GO/NO-GO, formulas, input validation |
 
 ### CI
 - GitHub Actions: macOS + Linux × Python 3.11/3.13 × Node 22/24
@@ -331,41 +392,59 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 
 ```
 ~/.claude/cortex/
-├── version                    # Installed version (e.g., "3.6.0")
-├── memory.json                # Config + stats (identity removed in v3.12.0)
-├── reflexes.json              # 10 deterministic rules
-├── proposals.json             # Pending proposals from learner + cx-analyze
-├── instinct-tracking.json     # Per-instinct: {count, sessions[20], projects_seen[], first_seen, last_seen}
-├── .session-token-budget      # Per-session token counter
-├── .obs-count                 # Observation counter (triggers at 50)
-├── .learn-pending             # Marker: run /cx-analyze
-├── .last-distill              # Timestamp of last cx-distill
-├── .last-audit                # Timestamp of last cx-audit
-├── .last-session-date         # Last session date
-├── .eod-last-read             # EOD read-once guard
-├── laws/                      # One-liners (max 10 active)
+├── version                       # Installed version (e.g., "3.15.0")
+├── memory.json                   # Config + stats (identity removed in v3.12.0)
+├── reflexes.json                 # 10 deterministic rules
+├── proposals.json                # Pending proposals from learner + cx-analyze
+├── instinct-tracking.json        # Operational source of truth (v3.15.0): {count, sessions[20], projects_seen[], first_seen, last_seen}
+├── instinct-tracking.json.pre-v4.0  # Backup created by migrate-tracking-v4.py
+├── impact.jsonl                  # Sprint 0 funnel — inject/follow/reject/feedback/outcome events (v3.14.0+)
+├── feedback.jsonl                # /cx-feedback mirror (sampled view of feedback events)
+├── impact.archive/               # Archived impact events older than 30 days
+├── .session-token-budget         # Per-session token counter
+├── .obs-count                    # Observation counter (triggers at 50)
+├── .learn-pending                # Marker: run /cx-analyze
+├── .last-distill                 # Timestamp of last cx-distill
+├── .last-audit                   # Timestamp of last cx-audit
+├── .last-session-date            # Last session date
+├── .last-instinct                # IDs of last batch injected (used by /cx-downvote and /cx-feedback)
+├── .eod-last-read                # EOD read-once guard
+├── .project-domains-cache        # Domain pre-filter cache (v3.15.0, 5-min TTL)
+├── .fire-once/                   # fire_once markers (v3.15.0): name-sid24 files
+│   └── precompact-flush-<sid>    # PreCompact double-flush guard (1-h TTL)
+├── laws/                         # One-liners (max 10 active)
 │   ├── *.txt
 │   └── archive/
 ├── instincts/
-│   ├── global/                # Cross-project instincts
-│   └── archive/               # Decayed/archived instincts
+│   ├── global/                   # Cross-project instincts
+│   └── archive/                  # Decayed/archived instincts
 ├── projects/
-│   ├── registry.json          # All known projects
+│   ├── registry.json             # All known projects
 │   └── {sha256hash}/
 │       ├── observations.jsonl
 │       ├── observations.archive/
-│       ├── context.md          # Session bridge (14d TTL)
-│       └── instincts/          # Project-scoped instincts
+│       ├── context.md             # Session bridge (14d TTL)
+│       └── instincts/             # Project-scoped instincts
 ├── evolved/
 │   ├── skills/
 │   ├── commands/
 │   ├── rules/
 │   └── agents/
-├── knowledge-log.md             # Append-only knowledge event timeline
-├── daily-summaries/            # EOD summaries (*.md)
-├── exports/                    # Portable skills
-└── log/                        # Session learner logs
+├── knowledge-log.md              # Append-only knowledge event timeline
+├── daily-summaries/              # EOD summaries (*.md)
+├── exports/                      # Portable skills
+└── log/                          # Session learner logs
 ```
+
+### Scripts (new in v3.15.0)
+
+The repo ships a `scripts/` folder with maintenance utilities that run
+locally (not installed to `~/.claude/`):
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/check-version-consistency.py` | Validates `install.sh` / `install.ps1` / `CHANGELOG.md` / `docs/FEATURES.md` agree on the same version. Run via `pre-push` hook; bocks push on drift |
+| `scripts/migrate-tracking-v4.py` | One-shot idempotent migration: merges YAML `occurrences:` + `last_seen:` into `instinct-tracking.json`. Backup to `tracking.json.pre-v4.0`. Default dry-run; pass `--apply` to persist |
 
 ---
 
@@ -455,3 +534,7 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 | v3.13.0 | 2026-04-23 | /cx-dashboard visual HTML report with Fersora brand + project dedup by root |
 | v3.13.1 | 2026-04-24 | Silent YAML parse repair: auto-fix invalid double-quoted regex escapes in instincts (18 files repaired); yaml_normalize.py runs on every SessionStart; cx-validate/cx-gotcha/cx-analyze templates enforce single-quote rule |
 | v3.13.2 | 2026-04-24 | Dream Cycle contradiction detector: topic-overlap Jaccard gate (default 0.30) eliminates 97% of false positives (38 → 1 on live corpus); parameterizable threshold with back-compat opt-out; 3 new tests |
+| v3.13.3 | 2026-04-24 | CI hotfix: `${exit}` braces in workflow YAML — unblocks `test-windows` after 4 consecutive red releases (PowerShell 7 was parsing `$exit:` as drive-provider) |
+| v3.14.0 | 2026-04-24 | **Sprint 0 · Instrumentation** — impact funnel (`impact.jsonl`, schema v:1) + `/cx-feedback` (closes the human loop) + `/cx-status --impact` (Go/No-Go Gate). New libs `impact_log.py` + `impact_log.js`. 17 tests in `test_impact.sh`. Origin: multi-agent Opus 1M audit (score 5.8/10) |
+| v3.14.1 | 2026-04-24 | Patch: `tests/test_install.sh` command count 18 → 19 (cx-feedback) so the Linux+macOS CI matrix recovers |
+| v3.15.0 | 2026-04-24 | **Sprint 1 · P1 bugfixes** — PostToolUse parser unwraps `tool_response.content[]`; monorepo-aware domain detection (recursive depth 3 + workspace configs); cross-detector dedup by incident; time-based sliding windows; tracking unified to JSON (live: 1 → 110 entries); PreCompact hook + `fire_once.py`; `install.ps1` `exit 1` on settings merge fail; fake-green path-traversal test rewritten; version-consistency check in pre-push |

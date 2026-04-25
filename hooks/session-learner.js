@@ -226,6 +226,7 @@ function sanitizeProposalAction(text) {
 function detectErrorResolutions(observations) {
   const proposals = [];
   const WINDOW = 10;
+  const MAX_WINDOW_SECONDS = 300; // v3.15.0 · 1.7 — also break if >5 min elapsed
 
   for (let i = 0; i < observations.length; i++) {
     const obs = observations[i];
@@ -234,16 +235,23 @@ function detectErrorResolutions(observations) {
 
     const errorTool = obs.tool;
     const errorSummary = String(obs.err_msg || obs.output || obs.input || '').slice(0, 200);
+    const errorTimeMs = obs.ts ? Date.parse(obs.ts) : NaN;
 
-    // Look ahead for the fix: Edit/Write after error, or same tool succeeding
+    // Look ahead for the fix: Edit/Write after error, or same tool succeeding.
+    // Break on either index-window OR time-window — whichever triggers first.
     for (let j = i + 1; j < Math.min(i + WINDOW + 1, observations.length); j++) {
       const candidate = observations[j];
+      if (!Number.isNaN(errorTimeMs) && candidate.ts) {
+        const candidateTimeMs = Date.parse(candidate.ts);
+        if (!Number.isNaN(candidateTimeMs) && (candidateTimeMs - errorTimeMs) / 1000 > MAX_WINDOW_SECONDS) break;
+      }
       const isFix = (candidate.tool === 'Edit' || candidate.tool === 'Write' || candidate.tool === errorTool)
         && !isError(candidate);
 
       if (isFix) {
         const fixSummary = String(candidate.input || '').slice(0, 200);
         const hash = shortHash(`${errorTool}-${obs.ts || i}`);
+        const fileMatch = extractFilePath(candidate);
         proposals.push({
           id: `gotcha-${errorTool}-${hash}`,
           trigger: errorTool,
@@ -254,6 +262,12 @@ function detectErrorResolutions(observations) {
           status: 'pending',
           detected: TODAY,
           session: obs._resolvedSession || obs.sid || 'unknown',
+          _incident: {
+            sid: obs._resolvedSession || obs.sid || null,
+            ts: obs.ts || null,
+            file: fileMatch || null,
+            detector: 'error-fix',
+          },
         });
         break;
       }
@@ -363,6 +377,12 @@ function detectUserCorrections(observations) {
         status: 'pending',
         detected: TODAY,
         session: edits[0]._resolvedSession || edits[0].sid || 'unknown',
+        _incident: {
+          sid: edits[0]._resolvedSession || edits[0].sid || null,
+          ts: edits[0].ts || null,
+          file: file,
+          detector: 'correction',
+        },
       });
     }
   }
@@ -559,6 +579,12 @@ function updateInstincts(observations) {
         fs.writeFileSync(tmp, newContent, { mode: 0o600 });
         fs.renameSync(tmp, yamlPath);
         updated++;
+
+        // v3.15.0 · 1.3 — also mirror to tracking.json so injector's inline
+        // staleness filter sees every instinct, not just the 1 it seeds.
+        // (YAML keeps its fields for human readability + backups; the JSON
+        // file becomes the operational source of truth for staleness.)
+        _mirrorToTracking(parsed.fields.id, TODAY, currentOccurrences + 1);
       }
     } catch (e) {
       log(`Failed to update instinct ${yamlPath}: ${e.message}`);
@@ -567,6 +593,35 @@ function updateInstincts(observations) {
 
   if (updated > 0) {
     log(`Updated ${updated} instinct(s)`);
+  }
+}
+
+const TRACKING_FILE_PATH = path.join(CORTEX_DIR, 'instinct-tracking.json');
+
+function _mirrorToTracking(instinctId, isoDate, count) {
+  if (!instinctId) return;
+  let tracking = {};
+  try { tracking = JSON.parse(fs.readFileSync(TRACKING_FILE_PATH, 'utf8')); } catch {}
+  if (!tracking || typeof tracking !== 'object') tracking = {};
+
+  const entry = tracking[instinctId] || {
+    count: 0,
+    sessions: [],
+    projects_seen: [],
+    first_seen: isoDate,
+  };
+  // Never regress the count (injector may have higher value from live PreToolUse)
+  if (count > (entry.count || 0)) entry.count = count;
+  entry.last_seen = new Date().toISOString();
+  if (!entry.first_seen) entry.first_seen = entry.last_seen;
+  tracking[instinctId] = entry;
+
+  try {
+    const tmp = TRACKING_FILE_PATH + '.tmp.' + process.pid;
+    fs.writeFileSync(tmp, JSON.stringify(tracking, null, 2), { mode: 0o600 });
+    fs.renameSync(tmp, TRACKING_FILE_PATH);
+  } catch (e) {
+    if (process.env.CORTEX_DEBUG) process.stderr.write('[cortex:learner] tracking mirror: ' + e.message + '\n');
   }
 }
 
@@ -784,6 +839,61 @@ Session observations: ${observations.length}
 // -------------------------------------------------------------------
 
 // -------------------------------------------------------------------
+// Cross-detector dedup by incident (Sprint 1.4, v3.15.0)
+// -------------------------------------------------------------------
+//
+// Previously an error → 3 edits on the same file generated 3-4 separate
+// proposals (one per detector). User saw noise. Now we cluster by
+// (session, file, ±5 min) and keep only the highest-confidence survivor,
+// attaching the displaced detector names as `merged_from`.
+//
+// Proposals without `_incident` metadata (repetitions, agent-patterns,
+// workflow chains) pass through unchanged — they describe session-wide
+// patterns, not file-bound incidents.
+
+function dedupProposalsByIncident(proposals) {
+  const INCIDENT_WINDOW_SECONDS = 300;
+  const grouped = new Map();
+  const passthrough = [];
+
+  for (const p of proposals) {
+    const inc = p._incident;
+    if (!inc || !inc.sid || !inc.file) {
+      passthrough.push(p);
+      continue;
+    }
+    const ts = inc.ts ? Date.parse(inc.ts) : 0;
+    const bucket = Math.floor((ts || 0) / (INCIDENT_WINDOW_SECONDS * 1000));
+    const key = `${inc.sid}|${inc.file}|${bucket}`;
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push(p);
+  }
+
+  const kept = [];
+  for (const [, bucket] of grouped) {
+    if (bucket.length === 1) {
+      const p = bucket[0];
+      delete p._incident;
+      kept.push(p);
+      continue;
+    }
+    // Pick highest-confidence, then longest action as tiebreaker.
+    bucket.sort((a, b) => {
+      if (b.confidence !== a.confidence) return b.confidence - a.confidence;
+      return (b.action || '').length - (a.action || '').length;
+    });
+    const primary = bucket[0];
+    const mergedFrom = bucket.slice(1).map(p => p.source || p.id);
+    primary.merged_from = mergedFrom;
+    primary.sub_detectors = Array.from(new Set(bucket.map(p => p._incident?.detector).filter(Boolean)));
+    delete primary._incident;
+    kept.push(primary);
+  }
+
+  return [...passthrough.map(p => { delete p._incident; return p; }), ...kept];
+}
+
+// -------------------------------------------------------------------
 // Step 5c: Correlate impact funnel — emit follow/reject events
 // -------------------------------------------------------------------
 //
@@ -918,7 +1028,7 @@ async function main() {
     }
 
     // Step 6: Combine all proposals with session_date for cross-day tracking
-    const allProposals = [
+    const rawProposals = [
       ...errorProposals,
       ...repetitionProposals,
       ...correctionProposals,
@@ -930,6 +1040,12 @@ async function main() {
       project_id: p.project_id || projectId,
       project_name: p.project_name || projectName,
     }));
+
+    // v3.15.0 · Step 6b — cross-detector dedup by incident
+    const allProposals = dedupProposalsByIncident(rawProposals);
+    const collapsed = rawProposals.length - allProposals.length;
+    if (collapsed > 0) log(`Collapsed ${collapsed} duplicate proposal(s) across detectors`);
+
     writeProposals(allProposals);
 
     // Step 7: Write context.md
@@ -959,6 +1075,6 @@ if (require.main === module) {
     isError, extractFilePath, sanitizeProposalAction,
     detectErrorResolutions, detectRepetitions,
     detectUserCorrections, detectWorkflowChains, detectAgentPatterns,
-    detectCommandUsage,
+    detectCommandUsage, dedupProposalsByIncident,
   };
 }

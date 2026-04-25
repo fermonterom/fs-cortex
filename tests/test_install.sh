@@ -206,14 +206,30 @@ echo ""
 echo "--- Path Traversal Protection ---"
 SANDBOX=$(mktemp -d)
 mkdir -p "$SANDBOX/.claude"
-# Create a malicious tar with ../ paths
-MALTAR=$(mktemp).tar.gz
-mkdir -p /tmp/cx-malicious
-echo "pwned" > /tmp/cx-malicious/laws.txt
-tar -czf "$MALTAR" -C /tmp ../cx-malicious/laws.txt 2>/dev/null || true
-# Try to import — should be rejected
-echo "$MALTAR" | HOME="$SANDBOX" bash "$PROJECT_ROOT/install.sh" 2>&1 | grep -qi "unsafe\|abort" && pass "path traversal rejected" || pass "path traversal protection (tar creation may differ)"
-rm -rf "$SANDBOX" "$MALTAR" /tmp/cx-malicious
+# Create a malicious tar containing an entry with '../' component
+MALDIR=$(mktemp -d)
+MALTAR="$MALDIR/evil.tar.gz"
+mkdir -p "$MALDIR/payload"
+echo "pwned" > "$MALDIR/payload/laws.txt"
+# Force relative ../ into the archive header (GNU+BSD tar syntax)
+if ! (cd "$MALDIR" && tar -czf "$MALTAR" --transform 's|^payload/|../cx-malicious/|' payload/laws.txt 2>/dev/null) \
+     && ! (cd "$MALDIR" && tar -czf "$MALTAR" -s '|^payload/|../cx-malicious/|' payload/laws.txt 2>/dev/null); then
+    fail "path traversal test: could not craft malicious tar (investigate — do NOT green-pass)"
+else
+    # Verify the archive really contains a '..' component before claiming the test ran
+    if ! tar -tzf "$MALTAR" 2>/dev/null | grep -q '\.\.'; then
+        fail "path traversal test: crafted tar has no '..' entry (test would have been vacuous)"
+    else
+        # Try to import — install.sh MUST reject with 'unsafe' or 'abort' in output
+        OUT=$(echo "$MALTAR" | HOME="$SANDBOX" bash "$PROJECT_ROOT/install.sh" 2>&1 || true)
+        if echo "$OUT" | grep -qi "unsafe\|abort"; then
+            pass "path traversal rejected (install.sh detected '..' in archive)"
+        else
+            fail "path traversal NOT rejected — install.sh accepted a '..' archive (security regression)"
+        fi
+    fi
+fi
+rm -rf "$SANDBOX" "$MALDIR"
 echo ""
 
 # --- Summary ---

@@ -21,7 +21,7 @@ COMMANDS_DIR="$CLAUDE_DIR/commands"
 HOOKS_DIR="$CLAUDE_DIR/hooks/cortex"
 SETTINGS_FILE="$CLAUDE_DIR/settings.json"
 CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
-NEW_VERSION="3.14.1"
+NEW_VERSION="3.15.0"
 
 print_header() {
     echo ""
@@ -377,6 +377,15 @@ cortex_hooks = {
                 "type": "command",
                 "command": "node ~/.claude/hooks/cortex/session-learner.js",
                 "timeout": 15000
+            }]
+        }
+    ],
+    "PreCompact": [
+        {
+            "hooks": [{
+                "type": "command",
+                "command": "python3 ~/.claude/hooks/cortex/precompact.py",
+                "timeout": 8000
             }]
         }
     ]

@@ -20,7 +20,7 @@ $CommandsDir = Join-Path $ClaudeDir "commands"
 $HooksDir = Join-Path (Join-Path $ClaudeDir "hooks") "cortex"
 $SettingsFile = Join-Path $ClaudeDir "settings.json"
 $ClaudeMd = Join-Path $ClaudeDir "CLAUDE.md"
-$NewVersion = "3.14.1"
+$NewVersion = "3.15.0"
 
 # --- Helpers ---
 
@@ -163,7 +163,9 @@ else {
             Move-Item $tmpPath $memoryDest -Force
             Write-Host "  Migrated memory.json (removed identity, updated version)"
         }
-    } catch {}
+    } catch {
+        Write-Warning "  memory.json migration skipped: $($_.Exception.Message)"
+    }
 }
 
 $reflexesDest = Join-Path $CortexDir "reflexes.json"
@@ -324,6 +326,9 @@ cortex_hooks = {
     ],
     "Stop": [
         {"hooks": [{"type": "command", "command": "node ~/.claude/hooks/cortex/session-learner.js", "timeout": 15000}]}
+    ],
+    "PreCompact": [
+        {"hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/cortex/precompact.py", "timeout": 8000}]}
     ]
 }
 
@@ -354,6 +359,8 @@ try {
 }
 catch {
     Print-Error "Failed to configure hooks. Check that settings.json is valid JSON."
+    Print-Error "  Inner error: $($_.Exception.Message)"
+    exit 1
 }
 
 # Step 11: Update CLAUDE.md

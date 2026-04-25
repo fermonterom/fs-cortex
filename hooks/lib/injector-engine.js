@@ -158,25 +158,119 @@ function main() {
     instinctFiles.push(...listYamlFiles(projectDir));
   }
 
-  // ── 2b. Domain pre-filter: detect project stack ─────────────────────
+  // ── 2b. Domain pre-filter: detect project stack (v3.15.0 — monorepo-aware) ──
+  //
+  // v3.13.x only read manifests at depth-0 → Turborepo / pnpm-workspace lost
+  // ALL instincts because detectProjectDomains returned {"general"}. Fix:
+  //   1. Read workspace configs (pnpm-workspace.yaml, turbo.json, nx.json,
+  //      lerna.json, rush.json) at project root.
+  //   2. Recurse into apps/**, packages/**, libs/**, services/** up to depth 3.
+  //   3. Inspect each package.json / pyproject.toml / Cargo.toml / go.mod.
+  //   4. Cached 5 min in ~/.claude/cortex/.project-domains-cache (JSON).
+  //
+  // Always short-circuits at depth 3 to avoid scanning node_modules / .venv.
+
+  const DOMAIN_CACHE_FILE = path.join(CORTEX_DIR, ".project-domains-cache");
+  const DOMAIN_CACHE_TTL_MS = 5 * 60 * 1000;
+  const WORKSPACE_MARKERS = ["pnpm-workspace.yaml", "turbo.json", "nx.json", "lerna.json", "rush.json", "workspace.json"];
+  const SKIP_DIRS = new Set(["node_modules", ".git", ".venv", "venv", "target", "dist", "build", ".next", ".nuxt", ".turbo", ".cache", "__pycache__"]);
+
+  function _inspectPackageJson(file, domains) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
+      const deps = Object.assign({}, pkg.dependencies, pkg.devDependencies, pkg.peerDependencies);
+      if (deps.react || deps.next || deps.preact || deps.remix || deps.gatsby) domains.add("react");
+      if (deps.express || deps.fastify || deps.koa || deps.hapi || deps.hono || deps.elysia || deps.nestjs) domains.add("node");
+      if (deps["@supabase/supabase-js"] || deps["@supabase/ssr"]) domains.add("supabase");
+      if (deps.stripe || deps["@stripe/stripe-js"]) domains.add("stripe");
+      if (deps.playwright || deps["@playwright/test"]) domains.add("e2e");
+      if (deps.typescript) domains.add("typescript");
+      if (deps.tailwindcss) domains.add("tailwind");
+    } catch {
+      // malformed package.json — ignore
+    }
+  }
+
+  function _inspectPyProject(file, domains) {
+    try {
+      const content = fs.readFileSync(file, "utf8");
+      domains.add("python");
+      if (/fastapi/i.test(content)) domains.add("fastapi");
+      if (/django/i.test(content)) domains.add("django");
+      if (/flask/i.test(content)) domains.add("flask");
+    } catch {}
+  }
+
+  function _scanDir(dir, depth, domains) {
+    if (depth > 3) return;
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    // Top-level workspace markers → flag and keep scanning
+    if (depth === 0) {
+      for (const marker of WORKSPACE_MARKERS) {
+        if (entries.some(e => e.isFile() && e.name === marker)) {
+          domains.add("monorepo");
+          break;
+        }
+      }
+    }
+
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (SKIP_DIRS.has(entry.name) || entry.name.startsWith(".")) continue;
+        // Only recurse into typical monorepo layout folders at depth 0
+        if (depth === 0 && !["apps", "packages", "libs", "services", "api", "web", "client", "server"].includes(entry.name)) {
+          continue;
+        }
+        _scanDir(path.join(dir, entry.name), depth + 1, domains);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const full = path.join(dir, entry.name);
+      if (entry.name === "package.json") _inspectPackageJson(full, domains);
+      else if (entry.name === "requirements.txt" || entry.name === "pyproject.toml") _inspectPyProject(full, domains);
+      else if (entry.name === "Cargo.toml") domains.add("rust");
+      else if (entry.name === "go.mod") domains.add("go");
+    }
+  }
 
   function detectProjectDomains(dir) {
     const domains = new Set(["general"]);
+    if (!dir) return domains;
+
+    // Cache check
     try {
-      const files = fs.readdirSync(dir);
-      if (files.includes("package.json")) {
-        try {
-          const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
-          const deps = Object.assign({}, pkg.dependencies, pkg.devDependencies);
-          if (deps.react || deps.next) domains.add("react");
-          if (deps.express || deps.fastify) domains.add("node");
-          if (deps["@supabase/supabase-js"]) domains.add("supabase");
-        } catch {}
+      const cache = JSON.parse(fs.readFileSync(DOMAIN_CACHE_FILE, "utf8"));
+      if (cache && cache[dir] && (Date.now() - cache[dir].ts) < DOMAIN_CACHE_TTL_MS) {
+        return new Set(cache[dir].domains);
       }
-      if (files.includes("requirements.txt") || files.includes("pyproject.toml")) domains.add("python");
-      if (files.includes("Cargo.toml")) domains.add("rust");
-      if (files.includes("go.mod")) domains.add("go");
     } catch {}
+
+    _scanDir(dir, 0, domains);
+
+    // Cache write (best-effort)
+    try {
+      let cache = {};
+      try { cache = JSON.parse(fs.readFileSync(DOMAIN_CACHE_FILE, "utf8")) || {}; } catch {}
+      cache[dir] = { ts: Date.now(), domains: Array.from(domains) };
+      // Prune cache if larger than 20 entries — keep newest 20.
+      const keys = Object.keys(cache);
+      if (keys.length > 20) {
+        const sorted = keys.sort((a, b) => cache[b].ts - cache[a].ts).slice(0, 20);
+        const pruned = {};
+        for (const k of sorted) pruned[k] = cache[k];
+        cache = pruned;
+      }
+      const tmp = DOMAIN_CACHE_FILE + ".tmp." + process.pid;
+      fs.writeFileSync(tmp, JSON.stringify(cache), { mode: 0o600 });
+      fs.renameSync(tmp, DOMAIN_CACHE_FILE);
+    } catch {}
+
     return domains;
   }
 
