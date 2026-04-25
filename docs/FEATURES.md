@@ -1,4 +1,4 @@
-# fs-cortex v3.17.1 — Feature Reference
+# fs-cortex v3.18.0 — Feature Reference
 
 > Complete inventory of all features, commands, hooks, modules, and capabilities.
 > Last updated: 2026-04-25
@@ -42,12 +42,14 @@ Parallel systems (not part of the confidence pipeline):
 | Session Learner | `session-learner.js` | Stop | Sync | 15s |
 | **PreCompact** | `precompact.py` | PreCompact (before /compact) | Sync, fire-and-forget | 8s |
 
-### Impact Funnel (v3.14.0+, source-split in v3.17.0)
+### Impact Funnel (v3.14.0+, source-split v3.17.0, auto-eval v3.18.0)
 
 A separate, append-only event stream measures whether Cortex actually helps —
 not just how much it observes. See [`docs/IMPACT-METRICS.md`](IMPACT-METRICS.md)
-for the canonical formulas and [`docs/AGENT-FEEDBACK.md`](AGENT-FEEDBACK.md)
-for the user/agent feedback split (v3.17.0).
+for the canonical formulas, [`docs/AGENT-FEEDBACK.md`](AGENT-FEEDBACK.md) for
+the user/agent feedback split (v3.17.0), and
+[`docs/AUTO-EVALUATION.md`](AUTO-EVALUATION.md) for Stop-time auto-rating of
+reflex injections (v3.18.0).
 
 | Event | Emitted by | Meaning |
 |-------|------------|---------|
@@ -131,6 +133,7 @@ or `python3 impact_log.py stats --json`.
   5. Agent patterns (recurring Agent tool usage with similar descriptions, Jaccard >= 0.40, 3+ uses → agent-evolution proposals)
 - **Cross-detector dedup by incident** (v3.15.0): `dedupProposalsByIncident()` groups proposals by `(sid, file, ±5 min)` between collection and write. Highest-confidence one survives; the rest become `merged_from` + `sub_detectors`. Reduces noise 4-5× when one incident triggered multiple detectors
 - **Impact correlation** (v3.14.0): `correlateImpactEvents()` reads `impact.jsonl`, finds `inject` events for the current sid without a `follow`, and emits one per inject by inspecting the next observation. Conservative v1 heuristic — `followed=true` if next obs is not an error; `err_after=true` if any of the next 10 has `is_error`
+- **Reflex auto-evaluation** (v3.18.0): `correlateReflexFeedback()` reads reflex inject events (`iid: reflex:*`), runs each reflex's evaluator (`tool-substitution` / `precondition-check` / `error-monitor`) against observations, and emits `feedback` events with `source: agent`. Updates `usefulCount` / `noiseCount` on the reflex entry. Auto-disable when `noiseCount >= 3 AND fireCount >= 10` only fires if `CORTEX_AGENT_DISABLE_REFLEXES=1` is set. Conservative semantics — `error-monitor` reflexes only emit `noise` (when failure observed) or `ignore` (no signal). See `docs/AUTO-EVALUATION.md`
 - **Tracking mirror to JSON** (v3.15.0): `_mirrorToTracking()` writes the same `last_seen`/`count` to `instinct-tracking.json` after updating any YAML. JSON becomes the operational source of truth (so the injector's inline staleness filter works); YAML stays for human readability. Resolves the legacy bug where tracking.json had 1 entry vs 61 YAMLs
 - **sanitizeProposalAction()**: sanitizes all proposal text against prompt injection
 - Auto-generates proposals with `session_date` for cross-day tracking
@@ -228,7 +231,7 @@ or `python3 impact_log.py stats --json`.
 
 | Command | Purpose | Token Cost |
 |---|---|---|
-| `/cx-status` | Dashboard: laws, instincts, projects, reflexes, tracking, health, domain grouping. **`--impact` flag** (v3.14.0): show the Sprint 0 funnel + Go/No-Go Gate recommendation | ~200 |
+| `/cx-status` | Dashboard: laws, instincts, projects, reflexes, tracking, health, domain grouping. **`--impact` flag** (v3.14.0): show the Sprint 0 funnel + Go/No-Go Gate recommendation. **`--reflexes` flag** (v3.18.0): per-reflex health table with healthy/borderline/NOISY/unknown status | ~200 |
 | `/cx-dashboard` | Visual HTML report with Fersora brand — laws, instincts, reflexes, projects, health, timeline | ~150 |
 | `/cx-analyze` | Detect patterns in observations → proposals (Opus 1M agent) | ~5K |
 | `/cx-distill` | Promote instincts to laws (0.90+), apply decay, Jaccard promotions | ~800 |
@@ -371,7 +374,7 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 
 ---
 
-## Tests (12 suites, 193 tests)
+## Tests (12 suites, 202 tests)
 
 | Suite | Tests | Coverage |
 |---|---|---|
@@ -386,7 +389,7 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 | `test_uninstall.sh` | 11 | Cleanup, backup creation, data preservation, **safety guard**, CLAUDE.md preservation |
 | `test_integrity.sh` | 14 | observe.py direct, **20 commands** validated, core file schemas, **version consistency** |
 | `test_install_ps1.ps1` | 9 | PowerShell syntax, version consistency, security features, backup categories, hook config, **CI on windows-latest** |
-| `test_impact.sh` | 23 | **Sprint 0 funnel** — schema v1, JS↔Python compat, concurrent writes (10 parallel → 0 loss), rotation, gate GO/NO-GO, formulas, input validation, **v3.17.0 source split** (user/agent ratios, gate input, legacy default) |
+| `test_impact.sh` | 32 | **Sprint 0/1 funnel** — schema v1, JS↔Python compat, concurrent writes (10 parallel → 0 loss), rotation, gate GO/NO-GO, formulas, input validation, **v3.17.0 source split** (user/agent ratios, gate input, legacy default), **v3.18.0 auto-eval** (3 evaluator types, no-evaluator default, reflex iid prefix) |
 
 ### CI
 - GitHub Actions: macOS + Linux × Python 3.11/3.13 × Node 22/24

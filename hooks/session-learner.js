@@ -971,6 +971,177 @@ function correlateImpactEvents(observations, sid) {
   return emitted;
 }
 
+// -------------------------------------------------------------------
+// Step 5d: Reflex auto-evaluation (v3.18.0)
+// -------------------------------------------------------------------
+//
+// For each `inject` event with iid prefixed `reflex:` in this session,
+// run the reflex's evaluator against observations.jsonl and emit a
+// feedback event with source: agent. Updates usefulCount/noiseCount
+// on the reflex and applies opt-in auto-disable threshold.
+// See docs/AUTO-EVALUATION.md.
+
+function evalToolSubstitution(ev, sortedObs, currentIdx) {
+  // Look at events AFTER the matched call (currentIdx is the anti-behavior).
+  const window = ev.window || 3;
+  const slice = sortedObs.slice(currentIdx + 1, currentIdx + 1 + window);
+  let antiPattern = null;
+  if (ev.anti_pattern) {
+    try { antiPattern = new RegExp(ev.anti_pattern, 'i'); } catch {}
+  }
+  for (const o of slice) {
+    if (o.tool === ev.expected_tool) return 'useful';
+    if (o.tool === ev.anti_tool && antiPattern && antiPattern.test(String(o.input || ''))) {
+      return 'noise';
+    }
+  }
+  return 'ignore';
+}
+
+function evalPreconditionCheck(ev, sortedObs, currentIdx) {
+  const matchedCall = sortedObs[currentIdx];
+  if (!matchedCall) return 'ignore';
+  const fieldName = ev.match_field || 'file_path';
+
+  let matchValue = null;
+  try {
+    const input = typeof matchedCall.input === 'string'
+      ? JSON.parse(matchedCall.input)
+      : (matchedCall.input || {});
+    matchValue = input[fieldName];
+  } catch {}
+  if (!matchValue) return 'ignore';
+
+  const lookback = ev.lookback || 10;
+  const start = Math.max(0, currentIdx - lookback);
+  for (let i = start; i < currentIdx; i++) {
+    const o = sortedObs[i];
+    if (o.tool !== ev.precondition_tool) continue;
+    try {
+      const input = typeof o.input === 'string'
+        ? JSON.parse(o.input)
+        : (o.input || {});
+      if (input[fieldName] === matchValue) return 'useful';
+    } catch {}
+  }
+  // Precondition NOT satisfied — only call it noise if an error followed.
+  if (matchedCall.err === true || matchedCall.err === 'true') return 'noise';
+  return 'ignore';
+}
+
+function evalErrorMonitor(ev, sortedObs, currentIdx) {
+  const window = ev.window || 10;
+  const slice = sortedObs.slice(currentIdx, currentIdx + window);
+  let pattern;
+  try { pattern = new RegExp(ev.error_pattern, 'i'); } catch { return 'ignore'; }
+  for (const o of slice) {
+    if ((o.err === true || o.err === 'true') && pattern.test(String(o.err_msg || ''))) {
+      return 'noise';
+    }
+  }
+  // Conservative: absence of error does NOT count as useful (insufficient signal).
+  return 'ignore';
+}
+
+function evaluateReflex(reflex, sortedObs, currentIdx) {
+  const evaluator = reflex && reflex.evaluator;
+  if (!evaluator || !evaluator.type) return 'ignore';
+  try {
+    if (evaluator.type === 'tool-substitution') return evalToolSubstitution(evaluator, sortedObs, currentIdx);
+    if (evaluator.type === 'precondition-check') return evalPreconditionCheck(evaluator, sortedObs, currentIdx);
+    if (evaluator.type === 'error-monitor')      return evalErrorMonitor(evaluator, sortedObs, currentIdx);
+  } catch (e) {
+    log(`Reflex evaluator threw for ${reflex.id}: ${e.message}`);
+  }
+  return 'ignore';
+}
+
+function correlateReflexFeedback(observations, sid) {
+  if (!impactLog || !sid || observations.length === 0) return 0;
+
+  const reflexData = readJsonFile(REFLEXES_PATH);
+  if (!reflexData || !Array.isArray(reflexData.reflexes)) return 0;
+
+  const reflexById = Object.create(null);
+  for (const r of reflexData.reflexes) reflexById[r.id] = r;
+
+  const impactFile = impactLog.IMPACT_FILE;
+  let raw;
+  try { raw = fs.readFileSync(impactFile, 'utf8'); } catch { return 0; }
+
+  const reflexInjects = [];
+  const alreadyRated = new Set();
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const ev = JSON.parse(line);
+      if (ev.sid !== sid) continue;
+      if (ev.ev === 'inject' && typeof ev.iid === 'string' && ev.iid.startsWith('reflex:')) {
+        reflexInjects.push(ev);
+      } else if (ev.ev === 'feedback' && ev.source === 'agent' && ev.inject_ts && typeof ev.iid === 'string' && ev.iid.startsWith('reflex:')) {
+        alreadyRated.add(ev.iid + '|' + ev.inject_ts);
+      }
+    } catch {}
+  }
+  if (reflexInjects.length === 0) return 0;
+
+  const sortedObs = [...observations].sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
+  let emitted = 0;
+  let reflexesChanged = false;
+  const autoDisable = process.env.CORTEX_AGENT_DISABLE_REFLEXES === '1';
+
+  for (const inj of reflexInjects) {
+    const key = inj.iid + '|' + inj.ts;
+    if (alreadyRated.has(key)) continue;
+
+    const reflexId = inj.iid.slice('reflex:'.length);
+    const reflex = reflexById[reflexId];
+    if (!reflex) continue;
+
+    // The inject is emitted in PreToolUse, so the matched observation is
+    // the first one with ts >= inject ts.
+    const idx = sortedObs.findIndex(o => (o.ts || '') >= inj.ts);
+    if (idx < 0) continue; // Cannot evaluate without follow-up data
+
+    const rating = evaluateReflex(reflex, sortedObs, idx);
+
+    impactLog.logEvent('feedback', {
+      iid: inj.iid,
+      sid,
+      rating,
+      source: 'agent',
+      inject_ts: inj.ts,
+    });
+    emitted += 1;
+
+    if (rating === 'useful') {
+      reflex.usefulCount = (reflex.usefulCount || 0) + 1;
+      reflexesChanged = true;
+    } else if (rating === 'noise') {
+      reflex.noiseCount = (reflex.noiseCount || 0) + 1;
+      reflexesChanged = true;
+
+      if (autoDisable) {
+        const fireCount = reflex.fireCount || 0;
+        if (reflex.noiseCount >= 3 && fireCount >= 10 && reflex.enabled !== false) {
+          reflex.enabled = false;
+          log(`Auto-disabled reflex ${reflexId} (noiseCount=${reflex.noiseCount} fireCount=${fireCount})`);
+          try {
+            const today = new Date().toISOString().slice(0, 10);
+            const klogLine = `${today} | reflex-auto-disable | ${reflexId} | noiseCount=${reflex.noiseCount} fireCount=${fireCount} | session-learner\n`;
+            fs.appendFileSync(path.join(CORTEX_DIR, 'knowledge-log.md'), klogLine);
+          } catch {}
+        }
+      }
+    }
+  }
+
+  if (reflexesChanged) {
+    writeJsonFile(REFLEXES_PATH, reflexData);
+  }
+  return emitted;
+}
+
 async function main() {
   try {
     log('Session learner started');
@@ -1033,6 +1204,15 @@ async function main() {
       log(`Impact correlation failed: ${e.message}`);
     }
 
+    // Step 5d: Reflex auto-evaluation (v3.18.0)
+    try {
+      const sid = (stdinData && stdinData.session_id) || observations[0]._sid || null;
+      const rated = correlateReflexFeedback(observations, sid);
+      if (rated > 0) log(`Auto-rated ${rated} reflex inject event(s)`);
+    } catch (e) {
+      log(`Reflex feedback failed: ${e.message}`);
+    }
+
     // Step 6: Combine all proposals with session_date for cross-day tracking
     const rawProposals = [
       ...errorProposals,
@@ -1082,5 +1262,8 @@ if (require.main === module) {
     detectErrorResolutions, detectRepetitions,
     detectUserCorrections, detectWorkflowChains, detectAgentPatterns,
     detectCommandUsage, dedupProposalsByIncident,
+    // v3.18.0 — reflex auto-evaluation
+    evalToolSubstitution, evalPreconditionCheck, evalErrorMonitor,
+    evaluateReflex, correlateReflexFeedback,
   };
 }

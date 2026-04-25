@@ -404,6 +404,29 @@ function main() {
     }
   }
 
+  // ── 3e. Impact funnel — emit reflex inject events (v3.18.0) ─────────
+  // Writes one "inject" event per matched reflex with iid prefix
+  // "reflex:". session-learner.js evaluates these at Stop and emits
+  // feedback events with source: agent. See docs/AUTO-EVALUATION.md.
+  if (impactLog && matchedReflexes.length > 0) {
+    try {
+      impactLog.logInjectBatch(
+        matchedReflexes.map(r => ({
+          id: `reflex:${r.id}`,
+          confidence: 0,
+          domain: 'reflex'
+        })),
+        {
+          tool: hookData.tool_name,
+          pid: projectId,
+          sid: hookData.session_id,
+        }
+      );
+    } catch (e) {
+      if (process.env.CORTEX_DEBUG) process.stderr.write("[cortex:injector] reflex impact: " + e.message + "\n");
+    }
+  }
+
   // ── 4. Token budget cap ──────────────────────────────────────────────
 
   const SESSION_BUDGET_FILE = path.join(CORTEX_DIR, ".session-token-budget");

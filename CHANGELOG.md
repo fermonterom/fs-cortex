@@ -4,6 +4,74 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.18.0] — 2026-04-25
+
+### Sprint 1 · Auto-evaluation — close the agent feedback loop
+
+v3.17.0 added `source: agent` to feedback events but agent-initiated
+feedback was manual via `/cx-feedback-auto`. v3.18.0 closes the loop:
+the injector emits inject events for every reflex fire, and
+`session-learner.js` evaluates them at Stop, emitting `feedback`
+events with `source: agent` automatically. This populates the
+`useful_ratio_agent` ratio organically and feeds the (still opt-in)
+auto-disable threshold introduced in v3.17.0.
+
+Full design rationale in
+[`docs/AUTO-EVALUATION.md`](docs/AUTO-EVALUATION.md).
+
+### Added
+
+- **`docs/AUTO-EVALUATION.md`** · architectural decision record. Defines
+  the three evaluator types (`tool-substitution`, `precondition-check`,
+  `error-monitor`), the `iid: reflex:*` convention, the Stop-time
+  evaluation flow, and the privacy guarantees.
+- **`hooks/lib/injector-engine.js:407`** · new step 3e emits
+  `ev: inject` events for matched reflexes with `iid` prefixed
+  `reflex:`. Same shape as instinct inject events (tool, pid, sid).
+- **`hooks/session-learner.js:correlateReflexFeedback`** · new function
+  reads reflex inject events for the current sid, runs each reflex's
+  evaluator against observations.jsonl, emits `ev: feedback` events
+  with `source: agent` and `inject_ts` for dedup. Updates
+  `usefulCount` / `noiseCount` on the reflex entry.
+- **`hooks/session-learner.js`** · three evaluator implementations:
+  `evalToolSubstitution`, `evalPreconditionCheck`, `evalErrorMonitor`.
+  Plus the dispatcher `evaluateReflex`. Conservative semantics —
+  absence of error never claims `useful` for `error-monitor` reflexes.
+- **`core/reflexes.default.json:v2.2.0`** · added `evaluator` field to
+  8 of 10 default reflexes. The two meta-reflexes
+  (`instinct-downvote`, `capture-decision`) remain unrated by design.
+  Also seeded `usefulCount: 0` / `noiseCount: 0` on every reflex.
+- **`commands/cx-status.md:--reflexes`** · new flag surfaces a per-reflex
+  health table with status `healthy` / `borderline` / `NOISY` / `unknown`
+  computed from `fireCount`, `usefulCount`, `noiseCount`.
+- **`tests/test_impact.sh`** · 9 new tests (20-28) cover the three
+  evaluators, the no-evaluator default, and the `reflex:` iid prefix.
+  Total: 32 passing assertions.
+
+### Changed
+
+- **`reflexes.json` schema** · gains optional `evaluator`,
+  `usefulCount`, `noiseCount` fields. Pre-v3.18 files are read with
+  defaults — no migration script required.
+
+### Privacy
+
+- Reflex inject events log the same minimal payload as instinct inject
+  events: `iid` (predefined, public), `tool` name, `pid`, `sid`.
+  Bash command text, file paths, and tool inputs are NOT logged.
+  Same guarantees as `IMPACT-METRICS.md`.
+
+### Stability
+
+- Schema `v:1` unchanged. The `iid: reflex:*` prefix is now a public
+  convention; evaluator types are frozen for v:1 — adding new types
+  does not require a schema bump as long as each returns
+  `useful` | `noise` | `ignore`.
+- Auto-disable still gated behind `CORTEX_AGENT_DISABLE_REFLEXES=1`.
+  v3.18 ships the **mechanism** for organic noise accumulation; the
+  decision to flip the default to "on" is deferred to v3.19+ after
+  one cycle of validation on real data.
+
 ## [3.17.1] — 2026-04-25
 
 ### Fixed

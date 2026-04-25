@@ -1,5 +1,5 @@
 {
-  "version": "2.1.0",
+  "version": "2.2.0",
   "reflexes": [
     {
       "id": "read-before-edit",
@@ -8,7 +8,15 @@
       "severity": "high",
       "enabled": true,
       "fireCount": 0,
-      "lastFired": null
+      "usefulCount": 0,
+      "noiseCount": 0,
+      "lastFired": null,
+      "evaluator": {
+        "type": "precondition-check",
+        "precondition_tool": "Read",
+        "match_field": "file_path",
+        "lookback": 10
+      }
     },
     {
       "id": "env-never-commit",
@@ -18,7 +26,14 @@
       "severity": "critical",
       "enabled": true,
       "fireCount": 0,
-      "lastFired": null
+      "usefulCount": 0,
+      "noiseCount": 0,
+      "lastFired": null,
+      "evaluator": {
+        "type": "error-monitor",
+        "error_pattern": "secret|api[_-]?key|token|password|credential|leaked|exposed",
+        "window": 10
+      }
     },
     {
       "id": "test-after-change",
@@ -28,7 +43,14 @@
       "severity": "medium",
       "enabled": true,
       "fireCount": 0,
-      "lastFired": null
+      "usefulCount": 0,
+      "noiseCount": 0,
+      "lastFired": null,
+      "evaluator": {
+        "type": "error-monitor",
+        "error_pattern": "test.*fail|FAIL|expect.*received|assertion",
+        "window": 15
+      }
     },
     {
       "id": "git-commit-quality",
@@ -38,7 +60,14 @@
       "severity": "high",
       "enabled": true,
       "fireCount": 0,
-      "lastFired": null
+      "usefulCount": 0,
+      "noiseCount": 0,
+      "lastFired": null,
+      "evaluator": {
+        "type": "error-monitor",
+        "error_pattern": "pre-commit hook failed|husky|lint-staged|commit aborted",
+        "window": 5
+      }
     },
     {
       "id": "git-push-safety",
@@ -48,7 +77,14 @@
       "severity": "high",
       "enabled": true,
       "fireCount": 0,
-      "lastFired": null
+      "usefulCount": 0,
+      "noiseCount": 0,
+      "lastFired": null,
+      "evaluator": {
+        "type": "error-monitor",
+        "error_pattern": "rejected|non-fast-forward|push declined|protected branch",
+        "window": 5
+      }
     },
     {
       "id": "git-merge-verify",
@@ -58,7 +94,14 @@
       "severity": "high",
       "enabled": true,
       "fireCount": 0,
-      "lastFired": null
+      "usefulCount": 0,
+      "noiseCount": 0,
+      "lastFired": null,
+      "evaluator": {
+        "type": "error-monitor",
+        "error_pattern": "merge conflict|cannot be merged|checks failing|required status",
+        "window": 5
+      }
     },
     {
       "id": "api-auth-check",
@@ -68,7 +111,14 @@
       "severity": "high",
       "enabled": true,
       "fireCount": 0,
-      "lastFired": null
+      "usefulCount": 0,
+      "noiseCount": 0,
+      "lastFired": null,
+      "evaluator": {
+        "type": "error-monitor",
+        "error_pattern": "401|403|unauthorized|forbidden|RLS|policy",
+        "window": 15
+      }
     },
     {
       "id": "security-headers",
@@ -78,7 +128,14 @@
       "severity": "high",
       "enabled": true,
       "fireCount": 0,
-      "lastFired": null
+      "usefulCount": 0,
+      "noiseCount": 0,
+      "lastFired": null,
+      "evaluator": {
+        "type": "error-monitor",
+        "error_pattern": "CSP violation|X-Frame|clickjacking|missing.*header",
+        "window": 15
+      }
     },
     {
       "id": "instinct-downvote",
@@ -88,6 +145,8 @@
       "severity": "low",
       "enabled": true,
       "fireCount": 0,
+      "usefulCount": 0,
+      "noiseCount": 0,
       "lastFired": null
     },
     {
@@ -98,6 +157,8 @@
       "severity": "low",
       "enabled": true,
       "fireCount": 0,
+      "usefulCount": 0,
+      "noiseCount": 0,
       "lastFired": null
     }
   ]

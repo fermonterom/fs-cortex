@@ -215,6 +215,44 @@ Output includes:
 Supports `--days N` to change the lookback window (default 14). Pass
 `--json` for machine-readable output suitable for dashboards.
 
+### `--reflexes` — Reflex health panel (v3.18.0+)
+
+Skip the full dashboard and show a per-reflex health table from
+`reflexes.json`. Reads `fireCount`, `usefulCount`, `noiseCount`, and
+`enabled` to surface candidates for auto-disable (and to show which
+reflexes are actually pulling their weight).
+
+Output (ASCII):
+
+```
+REFLEX HEALTH (v3.18.0+):
+  ID                    FIRES   USEFUL   NOISE   ENABLED   STATUS
+  ───────────────────────────────────────────────────────────────────
+  read-before-edit       1171    1100      45    yes       healthy
+  env-never-commit       1171    1170       0    yes       healthy
+  bash-find-use-glob       45      30      12    yes       borderline
+  bash-cat-use-read        67      10      48    yes       NOISY (auto-disable candidate)
+  ...
+
+  Healthy   : 7   (useful >= 10 AND noise < 3)
+  Borderline: 2   (noise == 1 OR noise == 2)
+  Noisy     : 1   (noise >= 3 AND fireCount >= 10 — auto-disable candidate)
+  Unknown   : 0   (fireCount < 10 — not enough data)
+```
+
+`STATUS` rules:
+- `healthy`     → `usefulCount >= 10 AND noiseCount < 3`
+- `borderline`  → `noiseCount == 1 OR noiseCount == 2`
+- `NOISY`       → `noiseCount >= 3 AND fireCount >= 10` (auto-disable candidate)
+- `unknown`     → `fireCount < 10` (insufficient data to judge)
+
+If `CORTEX_AGENT_DISABLE_REFLEXES=1` is set, NOISY reflexes are
+auto-disabled by `session-learner.js` at next Stop event. Without the
+flag, the threshold is tracked but no state change happens — see
+[`docs/AUTO-EVALUATION.md`](../docs/AUTO-EVALUATION.md).
+
+Pass `--json` for machine-readable output (same shape as ASCII data).
+
 ### `--ascii` (default) vs `--html`
 
 Placeholder for v4.0 — `--html` will delegate to the dashboard generator

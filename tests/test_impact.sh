@@ -376,6 +376,133 @@ else
 fi
 
 # -----------------------------------------------------------------------------
+# v3.18.0 — Reflex auto-evaluation (Alcance MAX)
+# -----------------------------------------------------------------------------
+echo "--- Test 20: evalToolSubstitution returns useful when expected_tool follows ---"
+RESULT=$(node -e "
+const sl = require('$REPO_ROOT/hooks/session-learner.js');
+const obs = [
+  { tool:'Bash', input:'find . -name x', ts:'2026-04-25T10:00:00Z' },
+  { tool:'Glob', input:'**/*.js',         ts:'2026-04-25T10:00:01Z' }
+];
+console.log(sl.evalToolSubstitution(
+  { type:'tool-substitution', expected_tool:'Glob', anti_tool:'Bash', anti_pattern:'find ', window:3 },
+  obs, 0
+));
+")
+[ "$RESULT" = "useful" ] && pass "tool-substitution useful" || fail "expected useful, got $RESULT"
+
+# -----------------------------------------------------------------------------
+echo "--- Test 21: evalToolSubstitution returns noise when anti_pattern repeats ---"
+RESULT=$(node -e "
+const sl = require('$REPO_ROOT/hooks/session-learner.js');
+const obs = [
+  { tool:'Bash', input:'find . -name x', ts:'t0' },
+  { tool:'Bash', input:'find . -type f', ts:'t1' }
+];
+console.log(sl.evalToolSubstitution(
+  { type:'tool-substitution', expected_tool:'Glob', anti_tool:'Bash', anti_pattern:'find ', window:3 },
+  obs, 0
+));
+")
+[ "$RESULT" = "noise" ] && pass "tool-substitution noise on repeat" || fail "expected noise, got $RESULT"
+
+# -----------------------------------------------------------------------------
+echo "--- Test 22: evalToolSubstitution returns ignore when neither path taken ---"
+RESULT=$(node -e "
+const sl = require('$REPO_ROOT/hooks/session-learner.js');
+const obs = [
+  { tool:'Bash', input:'find . -name x', ts:'t0' },
+  { tool:'Read', input:'/tmp/foo',       ts:'t1' }
+];
+console.log(sl.evalToolSubstitution(
+  { type:'tool-substitution', expected_tool:'Glob', anti_tool:'Bash', anti_pattern:'find ', window:3 },
+  obs, 0
+));
+")
+[ "$RESULT" = "ignore" ] && pass "tool-substitution ignore" || fail "expected ignore, got $RESULT"
+
+# -----------------------------------------------------------------------------
+echo "--- Test 23: evalPreconditionCheck returns useful when Read precedes Edit ---"
+RESULT=$(node -e "
+const sl = require('$REPO_ROOT/hooks/session-learner.js');
+const obs = [
+  { tool:'Read', input:JSON.stringify({file_path:'/tmp/x.ts'}), ts:'t0' },
+  { tool:'Edit', input:JSON.stringify({file_path:'/tmp/x.ts'}), ts:'t1', err:false }
+];
+console.log(sl.evalPreconditionCheck(
+  { type:'precondition-check', precondition_tool:'Read', match_field:'file_path', lookback:10 },
+  obs, 1
+));
+")
+[ "$RESULT" = "useful" ] && pass "precondition-check useful" || fail "expected useful, got $RESULT"
+
+# -----------------------------------------------------------------------------
+echo "--- Test 24: evalPreconditionCheck returns ignore when no error and no precondition ---"
+RESULT=$(node -e "
+const sl = require('$REPO_ROOT/hooks/session-learner.js');
+const obs = [
+  { tool:'Edit', input:JSON.stringify({file_path:'/tmp/new.ts'}), ts:'t0', err:false }
+];
+console.log(sl.evalPreconditionCheck(
+  { type:'precondition-check', precondition_tool:'Read', match_field:'file_path', lookback:10 },
+  obs, 0
+));
+")
+[ "$RESULT" = "ignore" ] && pass "precondition-check ignore (no error)" || fail "expected ignore, got $RESULT"
+
+# -----------------------------------------------------------------------------
+echo "--- Test 25: evalErrorMonitor returns noise when error matches pattern ---"
+RESULT=$(node -e "
+const sl = require('$REPO_ROOT/hooks/session-learner.js');
+const obs = [
+  { tool:'Bash', input:'git push', ts:'t0', err:false },
+  { tool:'Bash', input:'git push', ts:'t1', err:true, err_msg:'rejected: non-fast-forward' }
+];
+console.log(sl.evalErrorMonitor(
+  { type:'error-monitor', error_pattern:'rejected|non-fast-forward', window:5 },
+  obs, 0
+));
+")
+[ "$RESULT" = "noise" ] && pass "error-monitor noise" || fail "expected noise, got $RESULT"
+
+# -----------------------------------------------------------------------------
+echo "--- Test 26: evalErrorMonitor returns ignore when no matching error ---"
+RESULT=$(node -e "
+const sl = require('$REPO_ROOT/hooks/session-learner.js');
+const obs = [
+  { tool:'Bash', input:'git push', ts:'t0', err:false }
+];
+console.log(sl.evalErrorMonitor(
+  { type:'error-monitor', error_pattern:'rejected|non-fast-forward', window:5 },
+  obs, 0
+));
+")
+[ "$RESULT" = "ignore" ] && pass "error-monitor ignore (conservative)" || fail "expected ignore, got $RESULT"
+
+# -----------------------------------------------------------------------------
+echo "--- Test 27: evaluateReflex returns ignore for reflex without evaluator ---"
+RESULT=$(node -e "
+const sl = require('$REPO_ROOT/hooks/session-learner.js');
+console.log(sl.evaluateReflex(
+  { id:'meta-reflex', enabled:true /* no evaluator field */ },
+  [{tool:'Bash', input:'x', ts:'t0'}], 0
+));
+")
+[ "$RESULT" = "ignore" ] && pass "no-evaluator returns ignore" || fail "expected ignore, got $RESULT"
+
+# -----------------------------------------------------------------------------
+echo "--- Test 28: Reflex inject event uses 'reflex:' iid prefix ---"
+rm -f "$SANDBOX/impact.jsonl"
+python3 "$IMPACT_PY" log --event inject --iid "reflex:test-reflex" --tool Bash --sid sid-R --conf 0 || true
+LAST=$(tail -1 "$SANDBOX/impact.jsonl")
+if echo "$LAST" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); assert d['iid'].startswith('reflex:')" 2>/dev/null; then
+  pass "iid prefix 'reflex:' written"
+else
+  fail "iid prefix missing: $LAST"
+fi
+
+# -----------------------------------------------------------------------------
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 exit $FAIL

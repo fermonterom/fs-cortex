@@ -34,3 +34,4 @@ docs/*
 !docs/FEATURES-visual.html
 !docs/IMPACT-METRICS.md
 !docs/AGENT-FEEDBACK.md
+!docs/AUTO-EVALUATION.md
