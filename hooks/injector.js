@@ -19,7 +19,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 const HOOK_DIR = path.dirname(fs.realpathSync(__filename));
-const CORTEX_DIR = path.join(os.homedir(), '.claude', 'cortex');
+const CORTEX_DIR = process.env.CORTEX_DIR || path.join(os.homedir(), '.claude', 'cortex');
 const ENGINE = path.join(HOOK_DIR, 'lib', 'injector-engine.js');
 
 function debug(msg) {

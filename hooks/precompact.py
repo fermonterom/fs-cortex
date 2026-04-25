@@ -25,7 +25,7 @@ import sys
 from pathlib import Path
 
 HOME = Path(os.environ.get("HOME") or os.environ.get("USERPROFILE") or "/tmp")
-CORTEX_DIR = HOME / ".claude" / "cortex"
+CORTEX_DIR = Path(os.environ.get("CORTEX_DIR") or (HOME / ".claude" / "cortex"))
 LEARNER = HOME / ".claude" / "hooks" / "cortex" / "session-learner.js"
 
 # Optional fire_once helper (Sprint 1.11). Fallback to inline marker if missing.

@@ -4,6 +4,56 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.19.2] — 2026-04-26
+
+### Cleanup release — finishes the v3.19.1 hotfix coverage and surfaces auto-eval data
+
+v3.19.1 fixed `correlateImpactEvents` and `correlateReflexFeedback` in
+`session-learner.js` so the auto-eval pipeline finally emits feedback
+events. v3.19.2 propagates the same `CORTEX_DIR` env-var support to the
+remaining hooks/libs that hardcoded `~/.claude/cortex`, surfaces the
+new `usefulCount` / `noiseCount` / health classification in the HTML
+dashboard, and brings the docs (README, SKILL, claudemd-section,
+AUTO-EVALUATION, IMPACT-METRICS) up to date with the current state.
+
+### Changed
+
+- **`hooks/observe.py`, `hooks/session-start.py`, `hooks/precompact.py`** —
+  `CORTEX_DIR` now honors `os.environ.get("CORTEX_DIR")` (matches
+  `session-learner.js`, `impact_log.{py,js}`).
+- **`hooks/injector.sh`, `hooks/injector.js`, `hooks/lib/injector-engine.js`,
+  `hooks/lib/dashboard_gen.py`, `hooks/lib/yaml_normalize.py`** — same
+  env-var honor across the lib layer. `injector-engine.js` now accepts
+  either `_CX_CORTEX_DIR` (legacy, set by injector.sh) or `CORTEX_DIR`.
+- **`hooks/lib/dashboard_gen.py`** — reflex table renders 3 new columns:
+  `Useful`, `Noise`, `Health`. Health is computed per-reflex via the
+  v3.18.0 spec rules (`healthy`/`borderline`/`NOISY`/`unknown`/`no-data`).
+  Summary row shows aggregate counts per health bucket.
+- **`README.md`** — `Commands (17)` → `(20)`, `Hooks (4, …)` → `(5, …)`,
+  test counts `161` → `211`, token-budget total `~1,750` → `~2,400`,
+  added impact-funnel row.
+- **`skills/cortex/SKILL.md`** — header bumped from `v3.10` → `v3.19.2`,
+  description lists all 20 commands (was 16).
+- **`core/claudemd-section.md`** — added `/cx-feedback-auto`.
+- **`docs/AUTO-EVALUATION.md`** — header now warns that v3.18.0 → v3.19.0
+  were silently broken (links to v3.19.1 hotfix in CHANGELOG).
+- **`docs/IMPACT-METRICS.md`** — `(13 tests)` → `(38 tests)`.
+
+### Why
+
+The auditor pass on v3.19.1 (8 parallel Opus agents) flagged that the
+fix was correct but had not been propagated across siblings — Python
+hooks and several lib modules still hardcoded `~/.claude/cortex`,
+making sandbox testing inconsistent and breaking any non-default
+install. The dashboard, the user-visible surface for the v3.18.0
+auto-eval feature, never showed the very counters it was tracking.
+
+### Not changed
+
+- No new commands, no new hooks, no schema changes. SemVer-patch.
+- `install.ps1` git pre-push hook gap (auditor 3) — backlog for v3.20.x.
+- Project registry duplicate-hash entries (auditor 7) — user-data, requires `/cx-` cleanup tooling, backlog.
+
 ## [3.19.1] — 2026-04-26
 
 ### Reflex auto-evaluation fix — was silently broken since v3.18.0

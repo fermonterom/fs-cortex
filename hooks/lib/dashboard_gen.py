@@ -19,7 +19,8 @@ from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
 
-CORTEX_DIR = Path.home() / ".claude" / "cortex"
+import os as _os
+CORTEX_DIR = Path(_os.environ.get("CORTEX_DIR") or (Path.home() / ".claude" / "cortex"))
 
 
 # ─── Data readers ──────────────────────────────────────────────────────────
@@ -312,6 +313,19 @@ def _render_instincts(instincts: list[dict]) -> str:
     return "".join(html_parts)
 
 
+def _reflex_health(fires: int, useful: int, noise: int) -> str:
+    """v3.18.0+ health classification — see cx-status --reflexes spec."""
+    if fires < 10:
+        return "unknown"
+    if noise >= 3:
+        return "NOISY"
+    if noise in (1, 2):
+        return "borderline"
+    if useful >= 10:
+        return "healthy"
+    return "no-data"
+
+
 def _render_reflexes(reflexes: list[dict]) -> str:
     if not reflexes:
         return '<p class="empty">No reflexes configured.</p>'
@@ -319,34 +333,50 @@ def _render_reflexes(reflexes: list[dict]) -> str:
     active = 0
     total_fires = 0
     never = 0
+    health_counts = {"healthy": 0, "borderline": 0, "NOISY": 0, "unknown": 0, "no-data": 0}
     for r in reflexes:
         enabled = bool(r.get("enabled", False))
         if enabled:
             active += 1
         fires = int(r.get("fireCount", 0) or 0)
+        useful = int(r.get("usefulCount", 0) or 0)
+        noise = int(r.get("noiseCount", 0) or 0)
         total_fires += fires
         if fires == 0:
             never += 1
+        health = _reflex_health(fires, useful, noise)
+        health_counts[health] = health_counts.get(health, 0) + 1
         last = _human_date(r.get("lastFired", ""))
         sev = r.get("severity", "medium")
         badge = f'<span class="sev sev-{escape(sev)}">{escape(sev)}</span>'
         en_badge = '<span class="pill on">on</span>' if enabled else '<span class="pill off">off</span>'
         fires_cell = f"{fires}" if fires > 0 else '<span class="never">never</span>'
+        useful_cell = f"{useful}" if useful > 0 else '<span class="never">0</span>'
+        noise_cell = f"{noise}" if noise > 0 else '<span class="never">0</span>'
+        health_cell = f'<span class="health health-{escape(health)}">{escape(health)}</span>'
         rows.append(
             f"<tr><td><code>{escape(r.get('id', ''))}</code></td>"
             f"<td><code class='matcher'>{escape(str(r.get('matcher', ''))[:40])}</code></td>"
             f"<td>{badge}</td>"
             f"<td>{en_badge}</td>"
             f"<td>{fires_cell}</td>"
+            f"<td>{useful_cell}</td>"
+            f"<td>{noise_cell}</td>"
+            f"<td>{health_cell}</td>"
             f"<td>{escape(last)}</td></tr>"
         )
     summary = (
         f'<p class="summary">Active: <strong>{active}/{len(reflexes)}</strong> · '
-        f'Never fired: <strong>{never}</strong> · Total fires: <strong>{total_fires}</strong></p>'
+        f'Total fires: <strong>{total_fires}</strong> · '
+        f'Healthy: <strong>{health_counts["healthy"]}</strong> · '
+        f'Borderline: <strong>{health_counts["borderline"]}</strong> · '
+        f'<span class="health-NOISY-text">NOISY: <strong>{health_counts["NOISY"]}</strong></span> · '
+        f'Unknown: <strong>{health_counts["unknown"]}</strong></p>'
     )
     table = (
         '<table class="data"><thead><tr>'
-        "<th>ID</th><th>Matcher</th><th>Severity</th><th>Status</th><th>Fires</th><th>Last fired</th>"
+        "<th>ID</th><th>Matcher</th><th>Severity</th><th>Status</th>"
+        "<th>Fires</th><th>Useful</th><th>Noise</th><th>Health</th><th>Last fired</th>"
         "</tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
     )
     return summary + table
@@ -625,6 +655,13 @@ table.data code.matcher {{ color: var(--fersora-dark); }}
 .pill.on {{ background: rgba(30,155,80,0.14); color: var(--green); }}
 .pill.off {{ background: rgba(113,128,150,0.14); color: var(--muted); }}
 .never {{ color: var(--muted); font-style: italic; font-size: 12px; }}
+.health {{ display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 6px; font-weight: 600; text-transform: lowercase; }}
+.health-healthy {{ background: rgba(30,155,80,0.14); color: var(--green); }}
+.health-borderline {{ background: rgba(232,132,42,0.14); color: var(--orange); }}
+.health-NOISY {{ background: rgba(220,53,69,0.18); color: var(--red); text-transform: uppercase; font-weight: 700; }}
+.health-unknown {{ background: rgba(113,128,150,0.14); color: var(--muted); }}
+.health-no-data {{ background: rgba(113,128,150,0.10); color: var(--muted); font-style: italic; }}
+.health-NOISY-text {{ color: var(--red); font-weight: 600; }}
 .dup-badge {{
   display: inline-block; font-family: 'JetBrains Mono', monospace;
   font-size: 10px; padding: 2px 7px; border-radius: 10px;

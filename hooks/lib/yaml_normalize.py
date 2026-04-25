@@ -96,7 +96,7 @@ def normalize_all(root=None):
     """
     home = os.environ.get('HOME', '/tmp')
     if root is None:
-        root = os.path.join(home, '.claude', 'cortex')
+        root = os.environ.get('CORTEX_DIR') or os.path.join(home, '.claude', 'cortex')
     dirs = [os.path.join(root, 'instincts', 'global')]
     dirs.extend(glob.glob(os.path.join(root, 'projects', '*', 'instincts')))
     repaired = 0

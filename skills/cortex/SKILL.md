@@ -3,14 +3,15 @@ name: cortex
 description: |
   Continuous learning system for Claude Code. Observes sessions,
   crystallizes patterns as atomic instincts with confidence scoring,
-  distills proven knowledge into laws. Commands: /cx-status, /cx-analyze,
-  /cx-distill, /cx-validate, /cx-evolve, /cx-eod, /cx-gotcha, /cx-audit,
-  /cx-downvote, /cx-retro, /cx-timeline, /cx-export, /cx-backup, /cx-restore,
-  /cx-dream, /cx-router, /cx-promote.
+  distills proven knowledge into laws. Commands: /cx-status, /cx-dashboard,
+  /cx-analyze, /cx-distill, /cx-validate, /cx-evolve, /cx-eod, /cx-gotcha,
+  /cx-audit, /cx-downvote, /cx-retro, /cx-timeline, /cx-export, /cx-backup,
+  /cx-restore, /cx-dream, /cx-router, /cx-promote, /cx-feedback,
+  /cx-feedback-auto.
 auto_activate: true
 ---
 
-# Cortex v3.10 — Continuous Learning System
+# Cortex v3.19.2 — Continuous Learning System
 
 > Every session creates a connection. Cortex turns them into instinct.
 

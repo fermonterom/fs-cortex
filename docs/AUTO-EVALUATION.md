@@ -4,6 +4,11 @@
 > Implements the "Alcance MAX" left as future work in
 > [`AGENT-FEEDBACK.md`](AGENT-FEEDBACK.md).
 > Writers: `hooks/lib/injector-engine.js` (inject), `hooks/session-learner.js` (feedback).
+>
+> ⚠️ **v3.18.0 → v3.19.0 were silently broken.** Three latent bugs in
+> `session-learner.js` (`_sid` typo, hardcoded `CORTEX_DIR`, orphan-harness-sid
+> filter) prevented `correlateReflexFeedback` and `correlateImpactEvents` from
+> ever emitting agent-feedback events. **Fixed in v3.19.1** — see CHANGELOG.
 
 This document is the architectural decision record for **why and how
 the agent automatically rates reflex injections at session end**, and

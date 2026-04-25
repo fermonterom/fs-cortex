@@ -7,7 +7,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CORTEX_DIR="$HOME/.claude/cortex"
+CORTEX_DIR="${CORTEX_DIR:-$HOME/.claude/cortex}"
 REFLEXES_FILE="$CORTEX_DIR/reflexes.json"
 GLOBAL_INSTINCTS_DIR="$CORTEX_DIR/instincts/global"
 

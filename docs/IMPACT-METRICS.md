@@ -139,7 +139,7 @@ The decision remains human — the gate produces a number, the user signs off.
 
 ## Testing
 
-`tests/test_impact.sh` (13 tests) covers:
+`tests/test_impact.sh` (38 tests) covers:
 
 1. Python library imports cleanly
 2. JS library requires cleanly

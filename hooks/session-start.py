@@ -32,7 +32,7 @@ except ImportError:
 
 
 HOME = os.environ.get('HOME', os.environ.get('USERPROFILE', '/tmp'))
-CORTEX_DIR = Path(HOME) / '.claude' / 'cortex'
+CORTEX_DIR = Path(os.environ.get('CORTEX_DIR') or (Path(HOME) / '.claude' / 'cortex'))
 LAWS_DIR = CORTEX_DIR / 'laws'
 EOD_DIR = CORTEX_DIR / 'daily-summaries'
 PROJECTS_DIR = CORTEX_DIR / 'projects'

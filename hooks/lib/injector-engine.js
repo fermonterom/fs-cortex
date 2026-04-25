@@ -97,9 +97,9 @@ function detectProject(cwd) {
 // ── Main ─────────────────────────────────────────────────────────────────
 
 function main() {
-  const CORTEX_DIR = process.env._CX_CORTEX_DIR;
+  const CORTEX_DIR = process.env._CX_CORTEX_DIR || process.env.CORTEX_DIR;
   if (!CORTEX_DIR) {
-    if (process.env.CORTEX_DEBUG) process.stderr.write("[cortex:injector] _CX_CORTEX_DIR not set\n");
+    if (process.env.CORTEX_DEBUG) process.stderr.write("[cortex:injector] CORTEX_DIR not set\n");
     process.exit(0);
   }
 

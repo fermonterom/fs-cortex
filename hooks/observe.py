@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 # ── Configuration ────────────────────────────────────────────────────
 
 HOME = os.environ.get("HOME", os.environ.get("USERPROFILE", "/tmp"))
-CORTEX_DIR = Path(HOME) / ".claude" / "cortex"
+CORTEX_DIR = Path(os.environ.get("CORTEX_DIR") or (Path(HOME) / ".claude" / "cortex"))
 PROJECTS_DIR = CORTEX_DIR / "projects"
 
 # Load config from memory.json (dead code no more — Bug INC-9)

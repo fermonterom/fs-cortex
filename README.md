@@ -183,7 +183,7 @@ You work → Cortex observes → /cx-analyze detects patterns → /cx-validate y
 → unused knowledge decays (-0.05/month) → /cx-dream cleans up stale instincts
 ```
 
-## Commands (17)
+## Commands (20)
 
 | Command | What it does |
 |---------|-------------|
@@ -233,7 +233,7 @@ Claude provides a verdict with reasoning per item before you decide. All command
 
 ## Architecture
 
-### Hooks (4, always running)
+### Hooks (5, always running)
 
 | Hook | Event | Purpose | Blocking? |
 |------|-------|---------|-----------|
@@ -329,7 +329,8 @@ Backups include: laws, instincts, memory, reflexes, evolved content, proposals, 
 | Context bridge | ~100 | SessionStart (1x) |
 | Instincts (max 3) | ~120 | PreToolUse (if match) |
 | Reflexes (max 2) | ~40 | PreToolUse (if match) |
-| **Session total** | **~1,750** | **Estimated** |
+| Impact funnel (v3.14.0+) | 0 | async writes to `impact.jsonl` |
+| **Session total** | **~2,400** | **Estimated** |
 
 ## Uninstall
 
@@ -354,7 +355,7 @@ Key measures:
 ## Tests
 
 ```bash
-bash tests/run_all.sh              # Run 10 bash suites (161 tests) + 1 PS1 suite (9 tests)
+bash tests/run_all.sh              # Run 12 bash suites (211 tests) + 1 PS1 suite (9 tests)
 bash tests/test_security.sh        # 7 security regression tests
 bash tests/test_dream_cycle.sh     # 32 dream cycle tests (dedup, decay, health, cleanup)
 bash tests/test_observe.sh         # 8 observer tests (scrubbing, is_error, dedup, perf)
