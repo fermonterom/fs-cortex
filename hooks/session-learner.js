@@ -20,7 +20,7 @@ try {
 } catch {}
 
 const HOME = process.env.HOME || process.env.USERPROFILE || '/tmp';
-const CORTEX_DIR = path.join(HOME, '.claude', 'cortex');
+const CORTEX_DIR = process.env.CORTEX_DIR || path.join(HOME, '.claude', 'cortex');
 const PROJECTS_DIR = path.join(CORTEX_DIR, 'projects');
 const REGISTRY_PATH = path.join(PROJECTS_DIR, 'registry.json');
 const REFLEXES_PATH = path.join(CORTEX_DIR, 'reflexes.json');
@@ -911,8 +911,18 @@ function dedupProposalsByIncident(proposals) {
 //   - err_after=true if is_error=true within 10 events post-inject
 // A marker `impact-correlated-<sid>` lives in tmp to avoid double-write.
 
-function correlateImpactEvents(observations, sid) {
-  if (!impactLog || !sid || observations.length === 0) return 0;
+function correlateImpactEvents(observations, sidOrSids) {
+  if (!impactLog || observations.length === 0) return 0;
+
+  // Same orphan-sid rescue as correlateReflexFeedback (v3.19.1).
+  const candidateSids = new Set();
+  if (typeof sidOrSids === 'string' && sidOrSids) candidateSids.add(sidOrSids);
+  else if (sidOrSids && typeof sidOrSids[Symbol.iterator] === 'function') {
+    for (const s of sidOrSids) if (s) candidateSids.add(s);
+  }
+  for (const o of observations) if (o && o.sid) candidateSids.add(o.sid);
+  if (candidateSids.size === 0) return 0;
+
   const impactFile = impactLog.IMPACT_FILE;
   let raw;
   try {
@@ -921,14 +931,14 @@ function correlateImpactEvents(observations, sid) {
     return 0;
   }
 
-  // Parse jsonl, collect inject events for this sid and existing follow ids
+  // Parse jsonl, collect inject events for any candidate sid and existing follow ids
   const injects = [];
   const correlatedIids = new Set();
   for (const line of raw.split('\n')) {
     if (!line.trim()) continue;
     try {
       const ev = JSON.parse(line);
-      if (ev.sid !== sid) continue;
+      if (!candidateSids.has(ev.sid)) continue;
       if (ev.ev === 'inject' && ev.iid) injects.push(ev);
       else if (ev.ev === 'follow' && ev.iid) correlatedIids.add(ev.iid + '|' + (ev.inject_ts || ''));
     } catch {
@@ -960,7 +970,7 @@ function correlateImpactEvents(observations, sid) {
     // Embed inject_ts in the emitted event so future runs dedupe correctly.
     impactLog.logEvent('follow', {
       iid: inj.iid,
-      sid,
+      sid: inj.sid,
       followed,
       err_after: errAfter,
       win: window.length,
@@ -1056,8 +1066,21 @@ function evaluateReflex(reflex, sortedObs, currentIdx) {
   return 'ignore';
 }
 
-function correlateReflexFeedback(observations, sid) {
-  if (!impactLog || !sid || observations.length === 0) return 0;
+function correlateReflexFeedback(observations, sidOrSids) {
+  if (!impactLog || observations.length === 0) return 0;
+
+  // Accept either a single sid (legacy) or an array/Set of candidate sids.
+  // When the harness Stop event carries a sid that produced no observations
+  // (transient subagent / slash command sessions), the fallback observation
+  // window represents other real sessions whose injects we still want to
+  // auto-rate. Build a candidate set from both sources.
+  const candidateSids = new Set();
+  if (typeof sidOrSids === 'string' && sidOrSids) candidateSids.add(sidOrSids);
+  else if (sidOrSids && typeof sidOrSids[Symbol.iterator] === 'function') {
+    for (const s of sidOrSids) if (s) candidateSids.add(s);
+  }
+  for (const o of observations) if (o && o.sid) candidateSids.add(o.sid);
+  if (candidateSids.size === 0) return 0;
 
   const reflexData = readJsonFile(REFLEXES_PATH);
   if (!reflexData || !Array.isArray(reflexData.reflexes)) return 0;
@@ -1075,7 +1098,7 @@ function correlateReflexFeedback(observations, sid) {
     if (!line.trim()) continue;
     try {
       const ev = JSON.parse(line);
-      if (ev.sid !== sid) continue;
+      if (!candidateSids.has(ev.sid)) continue;
       if (ev.ev === 'inject' && typeof ev.iid === 'string' && ev.iid.startsWith('reflex:')) {
         reflexInjects.push(ev);
       } else if (ev.ev === 'feedback' && ev.source === 'agent' && ev.inject_ts && typeof ev.iid === 'string' && ev.iid.startsWith('reflex:')) {
@@ -1107,7 +1130,7 @@ function correlateReflexFeedback(observations, sid) {
 
     impactLog.logEvent('feedback', {
       iid: inj.iid,
-      sid,
+      sid: inj.sid,
       rating,
       source: 'agent',
       inject_ts: inj.ts,
@@ -1195,19 +1218,19 @@ async function main() {
     // Step 5b: Detect and log Cortex command usage
     detectCommandUsage(observations);
 
-    // Step 5c: Correlate impact funnel (Sprint 0, v3.14.0)
+    // Step 5c: Correlate impact funnel (Sprint 0, v3.14.0; orphan-sid fix v3.19.1)
     try {
-      const sid = (stdinData && stdinData.session_id) || observations[0]._sid || null;
-      const correlated = correlateImpactEvents(observations, sid);
+      const harnessSid = (stdinData && stdinData.session_id) || observations[0].sid || null;
+      const correlated = correlateImpactEvents(observations, harnessSid);
       if (correlated > 0) log(`Correlated ${correlated} impact follow event(s)`);
     } catch (e) {
       log(`Impact correlation failed: ${e.message}`);
     }
 
-    // Step 5d: Reflex auto-evaluation (v3.18.0)
+    // Step 5d: Reflex auto-evaluation (v3.18.0, fixed v3.19.1)
     try {
-      const sid = (stdinData && stdinData.session_id) || observations[0]._sid || null;
-      const rated = correlateReflexFeedback(observations, sid);
+      const harnessSid = (stdinData && stdinData.session_id) || observations[0].sid || null;
+      const rated = correlateReflexFeedback(observations, harnessSid);
       if (rated > 0) log(`Auto-rated ${rated} reflex inject event(s)`);
     } catch (e) {
       log(`Reflex feedback failed: ${e.message}`);
@@ -1262,6 +1285,8 @@ if (require.main === module) {
     detectErrorResolutions, detectRepetitions,
     detectUserCorrections, detectWorkflowChains, detectAgentPatterns,
     detectCommandUsage, dedupProposalsByIncident,
+    // v3.14.0 — impact funnel correlator (orphan-sid fix v3.19.1)
+    correlateImpactEvents,
     // v3.18.0 — reflex auto-evaluation
     evalToolSubstitution, evalPreconditionCheck, evalErrorMonitor,
     evaluateReflex, correlateReflexFeedback,

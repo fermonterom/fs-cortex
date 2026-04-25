@@ -1,7 +1,7 @@
-# fs-cortex v3.19.0 — Feature Reference
+# fs-cortex v3.19.1 — Feature Reference
 
 > Complete inventory of all features, commands, hooks, modules, and capabilities.
-> Last updated: 2026-04-25
+> Last updated: 2026-04-26
 
 ---
 
@@ -550,3 +550,9 @@ locally (not installed to `~/.claude/`):
 | v3.14.0 | 2026-04-24 | **Sprint 0 · Instrumentation** — impact funnel (`impact.jsonl`, schema v:1) + `/cx-feedback` (closes the human loop) + `/cx-status --impact` (Go/No-Go Gate). New libs `impact_log.py` + `impact_log.js`. 17 tests in `test_impact.sh`. Origin: multi-agent Opus 1M audit (score 5.8/10) |
 | v3.14.1 | 2026-04-24 | Patch: `tests/test_install.sh` command count 18 → 19 (cx-feedback) so the Linux+macOS CI matrix recovers |
 | v3.15.0 | 2026-04-24 | **Sprint 1 · P1 bugfixes** — PostToolUse parser unwraps `tool_response.content[]`; monorepo-aware domain detection (recursive depth 3 + workspace configs); cross-detector dedup by incident; time-based sliding windows; tracking unified to JSON (live: 1 → 110 entries); PreCompact hook + `fire_once.py`; `install.ps1` `exit 1` on settings merge fail; fake-green path-traversal test rewritten; version-consistency check in pre-push |
+| v3.16.0 | 2026-04-25 | session-learner: raise repetition+chain detection thresholds 5 → 8 (fewer noisy proposals on long sessions) |
+| v3.17.0 | 2026-04-25 | impact funnel: split user vs agent feedback; user counters drive the Go/No-Go gate, agent counters drive reflex auto-disable |
+| v3.17.1 | 2026-04-25 | Docs: fix doubled-cortex path in spec files; tests: bump expected command count to 20 |
+| v3.18.0 | 2026-04-25 | impact funnel: auto-evaluate reflex injections at Stop (`correlateReflexFeedback` + 3 evaluator types) — opt-in via `CORTEX_AGENT_DISABLE_REFLEXES=1` |
+| v3.19.0 | 2026-04-25 | installer: wire `CORTEX_AGENT_DISABLE_REFLEXES=1` into `~/.claude/settings.json` env block by default (idempotent) |
+| v3.19.1 | 2026-04-26 | **Hotfix** — reflex auto-evaluation was silently broken since v3.18.0: hardcoded `CORTEX_DIR` (no env-var honor), wrong `_sid` field name in fallback, orphan-harness-sid filter discarded all real injects. Both `correlateImpactEvents` and `correlateReflexFeedback` now union candidate sids from observations. New Test 29 + Test 30 in `test_impact.sh` (38/38 PASS). |

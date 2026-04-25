@@ -4,6 +4,60 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.19.1] — 2026-04-26
+
+### Reflex auto-evaluation fix — was silently broken since v3.18.0
+
+v3.18.0 shipped the reflex auto-rating pipeline (Stop event →
+`session-learner.js` → `correlateReflexFeedback` → `usefulCount` /
+`noiseCount` → auto-disable). In practice it never emitted a single
+`feedback` event with `source:agent`, so v3.19.0's auto-disable
+mechanism could never fire either.
+
+Three compounding bugs in `hooks/session-learner.js`:
+
+1. **Hardcoded path on line 23**: `CORTEX_DIR` did not honor the
+   `CORTEX_DIR` env var (only `HOME`-derived). Made the function
+   untestable against a sandbox and inconsistent with `impact_log.js`.
+2. **Wrong field name in fallback (line ~1213)**: `observations[0]._sid`
+   should be `observations[0].sid` (no underscore — `observe.py` writes
+   the field without it). When `stdinData.session_id` was missing, the
+   correlator received `null` and short-circuited.
+3. **Orphan harness sid filter (lines 949 + 1078)**: when Claude Code
+   emits a Stop with a session_id from a transient subagent /
+   slash-command runner that recorded no observations, the correlator
+   discarded all reflex injects from the *real* sessions whose
+   observations had been loaded by the fallback "last 200 lines" path.
+
+### Fixed
+
+- **`hooks/session-learner.js:23`** — `CORTEX_DIR` now honors
+  `process.env.CORTEX_DIR` (matches `impact_log.js` line 17).
+- **`hooks/session-learner.js`** — both `correlateImpactEvents` and
+  `correlateReflexFeedback` now accept either a single sid (legacy)
+  or any iterable of candidate sids, AND union with `o.sid` from the
+  loaded observations to rescue orphan-harness-sid runs. The emitted
+  `follow` / `feedback` event now uses `inj.sid` (the real session
+  that fired the reflex), not the harness sid passed in.
+- **`hooks/session-learner.js`** — call sites at the auto-rating step
+  use `observations[0].sid` (no underscore typo).
+
+### Added
+
+- **`tests/test_impact.sh`** — Test 29 covers the orphan-harness-sid
+  rescue: seeds an inject with `sid:'real-session'`, calls the
+  correlator with `'orphan-sid'` as the param, and asserts the
+  feedback event is emitted with `sid:'real-session'`, `rating:useful`,
+  `usefulCount` incremented to 1.
+
+### Impact
+
+Fresh installs (or reinstalls) will see `usefulCount` and `noiseCount`
+populate as the agent self-rates injections at each Stop. After enough
+data accumulates per reflex (`fireCount >= 10` AND `noiseCount >= 3`),
+the v3.19.0 auto-disable mechanism kicks in and silently disables noisy
+reflexes — the round trip the project was designed for since v3.18.0.
+
 ## [3.19.0] — 2026-04-25
 
 ### Auto-disable activation — installer-managed default

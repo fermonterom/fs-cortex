@@ -503,6 +503,106 @@ else
 fi
 
 # -----------------------------------------------------------------------------
+echo "--- Test 29: correlateReflexFeedback rescues orphan harness sid (v3.19.1 fix) ---"
+# When the harness Stop event passes a sid that has no observations (transient
+# subagent / slash command), the correlator must still rate reflex injects
+# whose sid appears in the loaded observations. Pre-v3.19.1 this returned 0.
+rm -f "$SANDBOX/impact.jsonl" "$SANDBOX/reflexes.json"
+cat > "$SANDBOX/reflexes.json" <<'JSON'
+{
+  "version": "2.0.0",
+  "reflexes": [
+    {
+      "id": "test-sub",
+      "matcher": "Bash",
+      "action": "Use Glob instead of find.",
+      "severity": "medium",
+      "enabled": true,
+      "fireCount": 5,
+      "evaluator": {
+        "type": "tool-substitution",
+        "expected_tool": "Glob",
+        "anti_tool": "Bash",
+        "anti_pattern": "find ",
+        "window": 3
+      }
+    }
+  ]
+}
+JSON
+# Seed an inject event for sid "real-session" (NOT the harness sid).
+python3 -c "
+import json, os
+ev = {'v':1,'ts':'2026-04-25T10:00:00Z','ev':'inject','iid':'reflex:test-sub','tool':'Bash','sid':'real-session','conf':0,'dom':'reflex'}
+with open(os.path.join('$SANDBOX','impact.jsonl'),'a') as f: f.write(json.dumps(ev)+'\n')
+"
+# Call correlator with harness sid "orphan-sid" + observations from real-session
+# where Glob follows the bash call → should rate as 'useful'.
+RATED=$(node -e "
+const sl = require('$REPO_ROOT/hooks/session-learner.js');
+const obs = [
+  { tool:'Bash', input:'find . -name foo', ts:'2026-04-25T10:00:01Z', sid:'real-session' },
+  { tool:'Glob', input:'**/foo', ts:'2026-04-25T10:00:02Z', sid:'real-session' },
+];
+console.log(sl.correlateReflexFeedback(obs, 'orphan-sid'));
+")
+if [ "$RATED" = "1" ]; then
+  pass "orphan harness sid rescued via observation sids"
+else
+  fail "expected 1 rated event, got '$RATED'"
+fi
+# Verify the emitted feedback uses inj.sid (real-session), not the orphan sid.
+LAST_FB=$(grep '"ev":"feedback"' "$SANDBOX/impact.jsonl" | tail -1)
+if echo "$LAST_FB" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); assert d['sid']=='real-session' and d['rating']=='useful' and d['source']=='agent'" 2>/dev/null; then
+  pass "feedback event carries inj.sid (not orphan)"
+else
+  fail "feedback event sid/rating mismatch: $LAST_FB"
+fi
+# Verify usefulCount incremented on the reflex.
+USEFUL=$(python3 -c "import json; print(json.load(open('$SANDBOX/reflexes.json'))['reflexes'][0].get('usefulCount',0))")
+[ "$USEFUL" = "1" ] && pass "usefulCount incremented to 1" || fail "expected usefulCount=1, got $USEFUL"
+
+# -----------------------------------------------------------------------------
+echo "--- Test 30: correlateImpactEvents rescues orphan harness sid (v3.19.1 fix) ---"
+# Twin of Test 29 for the impact-funnel correlator (emits 'follow' events).
+# Same orphan-sid scenario: harness passes a sid with no observations, but
+# observation sids carry real injects from impact.jsonl.
+rm -f "$SANDBOX/impact.jsonl"
+python3 -c "
+import json, os
+ev = {'v':1,'ts':'2026-04-26T10:00:00Z','ev':'inject','iid':'gotcha-test-impact','tool':'Bash','sid':'real-session','conf':0.75,'dom':'gotcha'}
+with open(os.path.join('$SANDBOX','impact.jsonl'),'a') as f: f.write(json.dumps(ev)+'\n')
+"
+RATED=$(node -e "
+const sl = require('$REPO_ROOT/hooks/session-learner.js');
+const obs = [
+  { tool:'Bash', input:'something', ts:'2026-04-26T10:00:01Z', sid:'real-session', err:false },
+  { tool:'Bash', input:'next call', ts:'2026-04-26T10:00:02Z', sid:'real-session', err:false },
+];
+console.log(sl.correlateImpactEvents(obs, 'orphan-sid'));
+")
+if [ "$RATED" = "1" ]; then
+  pass "orphan harness sid rescued via observation sids (impact funnel)"
+else
+  fail "expected 1 follow event, got '$RATED'"
+fi
+LAST_FOLLOW=$(grep '"ev":"follow"' "$SANDBOX/impact.jsonl" | tail -1)
+if echo "$LAST_FOLLOW" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); assert d['sid']=='real-session' and d['iid']=='gotcha-test-impact' and d.get('followed') is True" 2>/dev/null; then
+  pass "follow event carries inj.sid (not orphan) + followed=true"
+else
+  fail "follow event sid/followed mismatch: $LAST_FOLLOW"
+fi
+# Idempotency: re-running must not double-emit (dedup via inject_ts marker)
+RATED2=$(node -e "
+const sl = require('$REPO_ROOT/hooks/session-learner.js');
+const obs = [
+  { tool:'Bash', input:'something', ts:'2026-04-26T10:00:01Z', sid:'real-session', err:false },
+];
+console.log(sl.correlateImpactEvents(obs, 'orphan-sid'));
+")
+[ "$RATED2" = "0" ] && pass "second pass dedupes (no double emit)" || fail "expected 0 on dedup, got '$RATED2'"
+
+# -----------------------------------------------------------------------------
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 exit $FAIL
