@@ -4,6 +4,46 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.16.0] — 2026-04-25
+
+### Sprint 1.X · session-learner threshold tuning
+
+Closes the last open item from the Sprint 1 plan (`docs/IMPACT-RETROSPECTIVE-2026-04-25.html` action #3): the session-learner was producing
+51 duplicate `repeat-*` and `workflow-*` proposals over the past 12 days
+(same patterns rejected by `cx-validate` again and again). Empirical
+sweet-spot threshold raised so normal exploration no longer trips the
+detectors.
+
+### Changed
+
+- **`hooks/session-learner.js:309`** · `detectRepetitions` threshold
+  raised from `count >= 5` to `count >= 8`. Real exploration of the same
+  file/tool 5-7 times no longer files a noise proposal; only sustained
+  repetition (8+) does.
+- **`hooks/session-learner.js:397`** · `detectWorkflowChains` default
+  `minCount` raised from `5` to `8`. Test fixtures pass `minCount`
+  explicitly, so they are unaffected.
+
+### Why
+
+The 2026-04-25 retrospective gate report measured the 3-week corpus and
+found that the learner's proposal stream was the second largest source
+of noise after the 3 OR-soup triggers (now fixed). Of the 51 historic
+rejections in `knowledge-log.md`, 100% had `count` between 5 and 7 —
+these are typical exploration patterns, not workflows worth memorising.
+At 8+ the noise drops drastically while the genuine "you keep doing
+this" signal survives.
+
+### Verification
+
+Local test run after the change:
+- `test_session_learner.sh` — 8/8 green (tests pass `minCount` directly,
+  not the default).
+- All other suites unaffected (security, dream, injector, observe,
+  yaml-utils, integrity, install, hooks_e2e, uninstall, impact).
+
+This release does not touch any data in `~/.claude/cortex/`.
+
 ## [3.15.0] — 2026-04-24
 
 ### Sprint 1 · P1 bugfixes (v4.0 plan)

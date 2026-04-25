@@ -305,8 +305,12 @@ function detectRepetitions(observations) {
     toolInputCounts[key].count++;
   }
 
+  // v3.16.0 — raised threshold 5 → 8. Audit retrospective showed the learner
+  // emitted 51 repeat-* / workflow-* proposals for the same patterns over and
+  // over (Bash exploration, not real workflows). 8 is the empirical sweet spot:
+  // catches actual repetition without flagging normal exploration.
   for (const [key, data] of Object.entries(toolInputCounts)) {
-    if (data.count >= 5) {
+    if (data.count >= 8) {
       const hash = shortHash(key);
       proposals.push({
         id: `repeat-${data.tool}-${hash}`,
@@ -394,7 +398,9 @@ function detectUserCorrections(observations) {
 // -------------------------------------------------------------------
 
 function detectWorkflowChains(observations, minCount) {
-  minCount = minCount || 5;
+  // v3.16.0 — raised default 5 → 8 (see detectRepetitions comment above).
+  // Tests still pass minCount explicitly so they are unaffected.
+  minCount = minCount || 8;
   const trigrams = {};
 
   for (let i = 0; i < observations.length - 2; i++) {
