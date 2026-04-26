@@ -98,9 +98,18 @@ Used by: `read-before-edit`.
 
 ### Type C — `error-monitor`
 The reflex reminds about a class of risks (env commit, missing tests,
-security headers). Useful if no error within next 10 events AND the
-reminded action visible in observations. Noise if an error correlated
-with the reminded class fires within 10 events. Otherwise ignore.
+security headers). The semantics shipped in v3.19.4 are:
+
+- **`useful`** — at least one follow-up observation exists in the window
+  AND no observation matches `error_pattern`. The reminder either
+  prevented the failure or was redundant-but-aligned.
+- **`noise`** — an observation matching `error_pattern` fires within the
+  window. The reminder did not prevent the failure.
+- **`ignore`** — no follow-up observations at all (no signal either way).
+
+Pre-v3.19.4 the evaluator only ever returned `noise` or `ignore`, which
+condemned 16 of 21 reflexes with this type to `useful: 0` and
+structurally biased the agent funnel toward noise. See CHANGELOG v3.19.4.
 
 ```json
 {

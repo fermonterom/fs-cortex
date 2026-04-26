@@ -50,7 +50,7 @@ Every line in `impact.jsonl` is a JSON object with these fields:
 | `reason` | string | `reject` | why the next call did not match (e.g., `unrelated`) |
 | `rating` | string enum | `feedback` | `useful` \| `noise` \| `ignore` |
 | `note` | string | `feedback` | optional human rationale, ≤500 chars |
-| `error_within_10` | bool | `outcome` | whether an error happened within 10 tool uses (future) |
+| `error_within_10` | bool | `outcome` | whether any tool reported `is_error` within the next 10 events after the inject (used by Sprint 5 outcome auto-ranking) |
 
 ### Event semantics
 
@@ -64,7 +64,11 @@ Every line in `impact.jsonl` is a JSON object with these fields:
   "not followed" case is encoded as `follow` with `followed:false`.
 - **`feedback`** — Emitted by `/cx-feedback` when the human rates the
   last injection as useful / noise / ignore.
-- **`outcome`** — Reserved for Sprint 5 (auto-ranking by apply-rate).
+- **`outcome`** — Emitted by `hooks/session-learner.js` (since **v3.19.4**)
+  alongside the `follow` event for each inject. Carries `error_within_10`
+  computed against the same 10-event window. Consumed by Sprint 5 outcome
+  auto-ranking (`compute_outcome_ranking()` — see `docs/OUTCOME-RANKING.md`)
+  to nudge instinct confidence based on observed clean-vs-error ratios.
 
 ---
 

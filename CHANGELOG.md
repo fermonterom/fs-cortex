@@ -4,6 +4,71 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.19.5] — 2026-04-26
+
+### Data hygiene + docs sync after the v3.19.4 outcome/agent-feedback unblock
+
+The v3.19.4 fix normalized new feedback events on write but left stale
+legacy events in `~/.claude/cortex/impact.jsonl` untouched, so
+`/cx-status --impact` still showed split phantom rows for any reflex that
+had received feedback before v3.19.4. Two docs (`AUTO-EVALUATION.md`,
+`IMPACT-METRICS.md`) also lagged the new evaluator semantics and the
+fact that `outcome` events are no longer "Reserved for Sprint 5".
+
+### Added
+
+- **`scripts/migrate-legacy-reflex-iid.py`** — one-shot, idempotent
+  migration that rewrites historical `iid: reflex-<id>` (hyphen) events
+  to the canonical `reflex:<id>` (colon) form. Whitelisted against
+  `reflexes.json` so unknown ids are passed through unchanged. Atomic
+  rewrite (tmp + rename), backs up to `impact.jsonl.pre-v3.19.5.bak`
+  on first run, no-op on subsequent runs. Supports `--apply` (default
+  is dry-run), `--stats`, `--quiet`. Production run on
+  `~/.claude/cortex/impact.jsonl` rewrote 5 events across 3 reflex ids
+  (`reflex-bash-cat-use-read` ×2, `reflex-read-before-edit` ×2,
+  `reflex-bash-find-use-glob` ×1), restoring single-row aggregation in
+  TOP USEFUL / TOP NOISY rankings.
+- **`tests/test_migrate_legacy_iid.sh`** — 12-test suite covering
+  dry-run safety, apply correctness, backup creation, payload
+  preservation, idempotency, missing-file handling, missing-whitelist
+  safety, and `--stats` output. Sandbox-isolated via `CORTEX_DIR`.
+
+### Changed
+
+- **`docs/AUTO-EVALUATION.md` Type C semantics** — rewrote the
+  `error-monitor` description to match the v3.19.4 `evalErrorMonitor`
+  contract: `useful` when follow-up observations exist AND no matching
+  error fires; `noise` when matching error fires; `ignore` only when
+  there is no follow-up evidence. Pre-v3.19.4 the doc still claimed
+  "useful if no error within next 10 events AND the reminded action
+  visible in observations", which never matched the implementation.
+- **`docs/IMPACT-METRICS.md` `outcome` event** — removed "Reserved for
+  Sprint 5" placeholder. Documented the v3.19.4 emission path
+  (`session-learner.js` writes one outcome event per inject alongside
+  the follow event, carrying `error_within_10`) and forward-references
+  Sprint 5 outcome auto-ranking. Field table updated to describe
+  `error_within_10` as actually emitted, not "(future)".
+
+### Known issues (deferred to Sprint 5)
+
+- **`fireCount` under-count** observed for several reflexes in
+  `reflexes.json` (e.g. `react-hydration-guard` at `fireCount: 1` /
+  `usefulCount: 2`; `test-after-change` at `fireCount: 15` /
+  `usefulCount: 32` against 52 inject events in `impact.jsonl`).
+  `fireCount` is incremented only inside `session-learner.js`'s
+  reflex correlator (line 669), so any inject whose sid was rejected
+  by the correlator filter (the v3.19.3 sid-truncation bug) never
+  bumped `fireCount` even though the reflex actually fired.
+  `usefulCount` is correct from v3.19.3 forward; the historical
+  `fireCount` gap will be reconciled by a Sprint 5
+  `--reconcile-counters` extension to this migration script.
+
+### Tests
+
+- `test_migrate_legacy_iid.sh` — **12/12 PASS** (new suite).
+- Suite (unchanged): **40/40** (impact), **9/9** (observe),
+  **8/8** (learner), **7/7** (security), **35/35** (dream).
+
 ## [3.19.4] — 2026-04-26
 
 ### Three independent bugs left over after the v3.19.3 sid fix
