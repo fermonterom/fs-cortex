@@ -360,6 +360,23 @@ else
 fi
 
 # -----------------------------------------------------------------------------
+echo "--- Test 19a: _normalize_iid auto-corrects reflex- to reflex: (v3.19.4) ---"
+NORM_OUT=$(python3 -c "
+import sys; sys.path.insert(0, '$REPO_ROOT/hooks/lib')
+import impact_log
+print(impact_log._normalize_iid('reflex-bash-cat-use-read'))
+print(impact_log._normalize_iid('reflex:read-before-edit'))
+print(impact_log._normalize_iid('gotcha-agent-spawn-preflight'))
+" 2>/dev/null)
+EXPECTED="reflex:bash-cat-use-read
+reflex:read-before-edit
+gotcha-agent-spawn-preflight"
+if [ "$NORM_OUT" = "$EXPECTED" ]; then
+  pass "_normalize_iid corrects reflex- → reflex:"
+else
+  fail "_normalize_iid output unexpected: $NORM_OUT"
+fi
+
 echo "--- Test 19: invalid source raises ValueError ---"
 if python3 -c "
 import sys; sys.path.insert(0, '$REPO_ROOT/hooks/lib')
@@ -467,7 +484,7 @@ console.log(sl.evalErrorMonitor(
 [ "$RESULT" = "noise" ] && pass "error-monitor noise" || fail "expected noise, got $RESULT"
 
 # -----------------------------------------------------------------------------
-echo "--- Test 26: evalErrorMonitor returns ignore when no matching error ---"
+echo "--- Test 26: evalErrorMonitor returns ignore when no follow-up observations ---"
 RESULT=$(node -e "
 const sl = require('$REPO_ROOT/hooks/session-learner.js');
 const obs = [
@@ -478,7 +495,23 @@ console.log(sl.evalErrorMonitor(
   obs, 0
 ));
 ")
-[ "$RESULT" = "ignore" ] && pass "error-monitor ignore (conservative)" || fail "expected ignore, got $RESULT"
+[ "$RESULT" = "ignore" ] && pass "error-monitor ignore when no follow-up" || fail "expected ignore, got $RESULT"
+
+# -----------------------------------------------------------------------------
+echo "--- Test 26b: evalErrorMonitor returns useful when follow-up + no matching error (v3.19.4) ---"
+RESULT=$(node -e "
+const sl = require('$REPO_ROOT/hooks/session-learner.js');
+const obs = [
+  { tool:'Bash', input:'git push', ts:'t0', err:false },
+  { tool:'Bash', input:'git status', ts:'t1', err:false },
+  { tool:'Read', input:'foo.md',    ts:'t2', err:false }
+];
+console.log(sl.evalErrorMonitor(
+  { type:'error-monitor', error_pattern:'rejected|non-fast-forward', window:5 },
+  obs, 0
+));
+")
+[ "$RESULT" = "useful" ] && pass "error-monitor useful when follow-up + clean" || fail "expected useful, got $RESULT"
 
 # -----------------------------------------------------------------------------
 echo "--- Test 27: evaluateReflex returns ignore for reflex without evaluator ---"

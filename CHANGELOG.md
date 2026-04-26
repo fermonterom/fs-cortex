@@ -4,6 +4,51 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.19.4] — 2026-04-26
+
+### Three independent bugs left over after the v3.19.3 sid fix
+
+The Sprint 0 impact funnel was reporting a clean GO at 29.5% useful_ratio,
+but three subtle defects were polluting the dashboard and hiding agent
+signal. Detected via real-data inspection of `/cx-status --impact`.
+
+### Fixed
+
+- **`hooks/lib/impact_log.py`** — new `_normalize_iid()` auto-corrects
+  `reflex-<id>` (hyphen) to `reflex:<id>` (colon) in `log_feedback`.
+  Pre-fix, ad-hoc invocations of `/cx-feedback-auto` and stray manual
+  events were splitting the dashboard into two phantom rows per reflex
+  (`reflex:bash-cat-use-read` vs `reflex-bash-cat-use-read`) so
+  top-useful / top-noise rankings did not aggregate. Stderr warning
+  emitted on every rewrite for visibility.
+- **`commands/cx-feedback-auto.md`** — Step 1 rewritten to strip and
+  normalize `<id>` against reflexes/instincts and explicitly add the
+  `reflex:` prefix when the bare id matches a reflex. Step 3 now
+  references the normalized id.
+- **`hooks/session-learner.js` — outcome events implemented.** Pre-fix,
+  the schema accepted `outcome` events but no code path emitted them, so
+  `/cx-status --impact` always reported `outcome: 0`. Now
+  `correlateImpactEvents` writes one outcome event per inject alongside
+  the follow event, carrying `error_within_10` for the same 10-event
+  window already used for follow.
+- **`hooks/session-learner.js` — `evalErrorMonitor` no longer
+  structurally biased to noise.** Pre-fix the function only emitted
+  `noise` (when matching error fired in window) or `ignore` (any other
+  case), which condemned 16 of 21 reflexes with this evaluator type to
+  agent → useful: 0.0000. New semantics: if the inject was followed by
+  any observation in the window AND no matching error fired, the
+  reflex is `useful` (the reminder either prevented the error or was
+  redundant-but-aligned). An empty follow-up window still emits
+  `ignore` — we keep the conservative bias when there is no evidence.
+
+### Tests
+
+- `test_impact.sh` Test 19a — `_normalize_iid` rewrites hyphen to colon
+- `test_impact.sh` Test 26 — `error-monitor` `ignore` when no follow-up
+- `test_impact.sh` Test 26b — `error-monitor` `useful` when follow-up + clean
+- Suite: **40/40 PASS** (impact), **9/9** (observe), **8/8** (learner),
+  **7/7** (security), **35/35** (dream).
+
 ## [3.19.3] — 2026-04-26
 
 ### Critical bug — auto-evaluation pipeline silently broken since v3.18.0

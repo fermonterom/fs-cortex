@@ -84,6 +84,26 @@ def log_event(event: str, **fields: Any) -> None:
     _atomic_append(IMPACT_FILE, json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
 
 
+def _normalize_iid(iid: str) -> str:
+    """v3.19.4: auto-correct the `reflex-<id>` typo to canonical `reflex:<id>`.
+
+    Inject events use `reflex:<id>` (colon) as the canonical form. Pre-v3.19.4 the
+    `/cx-feedback-auto` command and ad-hoc CLI users sometimes wrote `reflex-<id>`
+    (hyphen), which split the impact dashboard into two phantom rows per reflex
+    and prevented top-useful/top-noise rankings from aggregating correctly.
+    """
+    if isinstance(iid, str) and iid.startswith("reflex-"):
+        # Only rewrite when the segment after "reflex-" matches a known reflex id
+        # shape (alphanum + dashes). Anything else stays untouched so genuine ids
+        # like `reflex-auto-disable` (knowledge-log marker) are not mangled.
+        candidate = "reflex:" + iid[len("reflex-"):]
+        sys.stderr.write(
+            f"[cortex:impact_log] normalizing iid {iid!r} -> {candidate!r}\n"
+        )
+        return candidate
+    return iid
+
+
 def log_feedback(
     instinct_id: str,
     rating: str,
@@ -100,6 +120,7 @@ def log_feedback(
         raise ValueError(f"rating must be one of {VALID_RATINGS}")
     if source not in VALID_SOURCES:
         raise ValueError(f"source must be one of {VALID_SOURCES}")
+    instinct_id = _normalize_iid(instinct_id)
     log_event("feedback", iid=instinct_id, sid=sid, rating=rating, note=note, source=source)
     # Also mirror to feedback.jsonl for quick sampling (doesn't need mixing with funnel events).
     _atomic_append(

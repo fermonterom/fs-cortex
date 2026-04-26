@@ -999,6 +999,19 @@ function correlateImpactEvents(observations, sidOrSids) {
       inject_ts: inj.ts,
     });
     emitted += 1;
+
+    // v3.19.4: emit `outcome` event so the impact funnel closes the loop.
+    // Pre-v3.19.4 the schema accepted outcome events but no code path
+    // produced them, so /cx-status --impact always reported "outcome: 0".
+    // The funnel definition treats `error_within_10` as the diagnostic
+    // signal (was the inject followed by a downstream error?). Same
+    // 10-event window already used for follow.
+    impactLog.logEvent('outcome', {
+      iid: inj.iid,
+      sid: inj.sid,
+      error_within_10: errAfter,
+      inject_ts: inj.ts,
+    });
   }
   return emitted;
 }
@@ -1062,6 +1075,14 @@ function evalPreconditionCheck(ev, sortedObs, currentIdx) {
 }
 
 function evalErrorMonitor(ev, sortedObs, currentIdx) {
+  // v3.19.4: pre-release this only emitted 'noise' or 'ignore' (never 'useful'),
+  // condemning the 16/21 reflexes with this evaluator type to a structural bias
+  // toward noise in the impact funnel (`agent → useful: 0.0000`). The new
+  // semantics: if the reminder fired AND the user/agent took a follow-up action
+  // AND no matching error occurred in the window, that IS a useful outcome —
+  // the reminder either prevented the error or was redundant-but-aligned.
+  // Bias remains conservative: an empty window (no follow-up) still emits
+  // 'ignore' because we have no evidence either way.
   const window = ev.window || 10;
   const slice = sortedObs.slice(currentIdx, currentIdx + window);
   let pattern;
@@ -1071,8 +1092,11 @@ function evalErrorMonitor(ev, sortedObs, currentIdx) {
       return 'noise';
     }
   }
-  // Conservative: absence of error does NOT count as useful (insufficient signal).
-  return 'ignore';
+  // Need at least one follow-up observation strictly after the inject to claim
+  // useful; otherwise the reminder went into the void and we can't judge.
+  const followUp = sortedObs.slice(currentIdx + 1, currentIdx + 1 + window);
+  if (followUp.length === 0) return 'ignore';
+  return 'useful';
 }
 
 function evaluateReflex(reflex, sortedObs, currentIdx) {

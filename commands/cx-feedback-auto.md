@@ -39,9 +39,23 @@ event is unambiguous.
 
 ## Implementation
 
-### Step 1 · Validate id
+### Step 1 · Validate and normalize id
 
-Verify `<id>` exists either in `~/.claude/cortex/reflexes.json` (`.reflexes[*].id`) or in any `~/.claude/cortex/instincts/global/*.yaml` / `~/.claude/cortex/projects/*/instincts/*.yaml`. Reject unknown ids with a clear error.
+Strip any `reflex:` or `reflex-` prefix the caller may have included. Match the
+bare id against `~/.claude/cortex/reflexes.json` (`.reflexes[*].id`) and the
+instinct YAML files in `~/.claude/cortex/instincts/global/*.yaml` and
+`~/.claude/cortex/projects/*/instincts/*.yaml`. Reject unknown ids with a clear
+error.
+
+If the bare id matches a **reflex**, the canonical iid for the impact event is
+`reflex:<bare-id>` (colon). This is the same form the injector writes for
+`inject` events and is what `correlateReflexFeedback` matches against. Inject
+events for instincts use the bare id (no prefix), so do not prefix instinct ids.
+
+> v3.19.4 fix: pre-v3.19.4, ad-hoc invocations sometimes wrote `reflex-<id>`
+> (hyphen), splitting the impact dashboard into two phantom rows per reflex.
+> `impact_log.log_feedback` now auto-corrects `reflex-` → `reflex:` and emits a
+> stderr warning. Always pass the bare id and let this command add the prefix.
 
 ### Step 2 · Validate rating
 
@@ -55,10 +69,13 @@ Apply the same shortcut expansion as `/cx-feedback`:
 
 ### Step 3 · Emit feedback event
 
+Use the normalized iid from Step 1 (`reflex:<bare-id>` for reflexes, bare id
+for instincts):
+
 ```bash
 python3 ~/.claude/hooks/cortex/lib/impact_log.py log \
   --event feedback \
-  --iid <id> \
+  --iid <normalized-id> \
   --sid <session-id> \
   --rating <useful|noise|ignore> \
   --source agent \
