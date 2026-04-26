@@ -4,6 +4,104 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.21.0] — 2026-04-27
+
+### Cohort-based outcome nudging — the definitive fix
+
+v3.20.2 closed the visible saturation symptom (`gotcha-agent-spawn-preflight`
+racing `0.77 → 0.99` in five Stop hooks on identical evidence) by gating
+on `outcome_total > prev_seen`. An internal Six-Hat review + independent
+sub-agent audit on 2026-04-27 confirmed that this was a pragmatic
+mitigation, not a definitive fix — four latent defects remained:
+
+1. **Aggregate-ratio drift** — the 14-day window could stay >0.85 even
+   when the recent cohort was 80% errors, so a degrading instinct kept
+   gaining `+0.05` boosts.
+2. **Archive decrement** — `rotate()` archives outcome events >30 days
+   old, so `outcome_total` could fall below `prev_seen` and skip
+   silently, blocking legitimate decay.
+3. **Race condition** in parallel Stop hooks — two sessions reading the
+   same `nudge-state.json` could both apply `+0.05`, last-writer-wins.
+4. **No clawback** — confidence saturated by historic boosts could not
+   be recovered when subsequent data turned sour.
+
+v3.21.0 closes all four by reframing the apply path around the
+**marginal cohort**: only outcomes with `ts > last_event_ts` count. The
+ratio answers "did the evidence that arrived since the last decision
+point up or down?" instead of "what does the rolling 14-day average
+say?".
+
+### Added
+
+- **`hooks/lib/impact_log.py:compute_outcome_decisions(state)`** — new
+  helper that returns the cohort-based decision per iid:
+  `{cohort_total, cohort_clean, cohort_error, ratio, nudge, max_ts}`.
+  Only counts outcomes strictly later than `state.iids[iid].last_event_ts`.
+  The window-aggregate `compute_outcome_ranking()` is kept as-is for
+  human-facing `/cx-status outcome-ranking` display.
+- **`_nudge_lock_acquire()` / `_nudge_lock_release()`** — advisory
+  exclusive lock on `~/.claude/cortex/nudge-state.json.lock` via
+  `fcntl.flock` (POSIX). Falls back to no-op on platforms without
+  `fcntl`; the race window is the subprocess runtime (<500 ms in
+  practice) and YAML rewrites remain individually atomic via
+  `tmp + replace`.
+
+### Changed
+
+- **`apply_outcome_nudges()` reframed** — the function now wraps the
+  whole `load → decide → apply → save` sequence in the advisory lock,
+  computes decisions cohort-based via `compute_outcome_decisions`,
+  and advances `state.iids[iid].last_event_ts` to the cohort `max_ts`
+  on every apply (or on saturated boundary detection). Legacy callers
+  passing a v3.20.x rankings dict are accepted but the dict is
+  ignored — decisions are always recomputed from cohort state.
+- **`nudge-state.json` schema bump v1 → v2.** New canonical shape:
+  ```json
+  {"version": 2, "iids": {"<iid>": {
+    "last_event_ts": "<ISO-8601 of last consumed outcome>",
+    "last_nudge_ts": "<ISO-8601 of this apply>",
+    "last_direction": "+0.05" | "-0.05" | "saturated",
+    "conf_at_last_nudge": <float>
+  }}}
+  ```
+  v1 state is discarded on first load. The YAML confidences that v1
+  already applied are preserved (they live in the YAMLs, not in
+  `nudge-state.json`); the only memory lost is "have I already nudged
+  this exact `outcome_total`?", which is replaced by the stricter
+  ts-based gate. The first v3.21.0 run after the migration may emit
+  one extra nudge per iid as the cohort filter sees all current
+  outcomes as "new"; this is by design and self-corrects on the
+  next Stop hook.
+- **`docs/OUTCOME-RANKING.md` safeguard #7 rewritten** to describe
+  cohort-based gating and enumerate the four bugs it closes.
+
+### Tests
+
+- `test_impact.sh` adds **Tests 42–45** (4 new pass cases):
+  - 42: marginal cohort decays when recent evidence sours (drift fix —
+    phase 1 +0.05 on clean cohort, phase 2 −0.05 on sour cohort even
+    though aggregate ratio over both phases is 0.467 / middling)
+  - 43: 3 parallel `outcome-nudge --apply` processes serialize via
+    flock — net effect is exactly one `+0.05` on the YAML, not three
+  - 44: post-archive cohort still triggers decay (`outcome_total`
+    decrement is irrelevant; ts-based gate stays open)
+  - 45: v1 `nudge-state.json` migrates cleanly to v2 (load returns
+    canonical v2 shape, no crash)
+- Tests 38–41 (v3.20.2 idempotency) remain valid; Test 39 fixture
+  updated to use a strictly-later timestamp for the second cohort
+  (the v3.21.0 gate is `ts >` strict, not just `count >`).
+- Suite: **61/61 PASS** (impact, was 56). Full repo holds
+  **253 tests / 13 suites**.
+
+### Operator note
+
+Existing instincts whose YAML confidence was inflated by the
+v3.20.0/.1 saturation bug are NOT auto-reverted by this release.
+The v3.20.2 procedure (edit YAML manually + delete `nudge-state.json`)
+is still the rollback path. After v3.21.0 is installed, the cohort
+gate prevents a recurrence even if the YAML still holds inflated
+values.
+
 ## [3.20.2] — 2026-04-26
 
 ### Hotfix — `apply_outcome_nudges` was double-counting evidence

@@ -170,14 +170,25 @@ proceeds normally.
    so noisy mid-range data never moves confidence by accident.
 6. **Knowledge log** — every applied nudge writes one line. The
    `/cx-timeline` command surfaces these for retrospective review.
-7. **Idempotency (v3.20.2+)** — `~/.claude/cortex/nudge-state.json`
-   records `{outcome_total, last_nudge_ts}` per iid at apply time.
-   Subsequent calls only nudge again when the iid has accumulated
-   **new** outcome events since the last apply. Without this gate
-   (v3.20.0 / v3.20.1), every Stop hook re-applied the same nudge
-   on the same 14-day window — `gotcha-agent-spawn-preflight`
-   raced from `0.77 → 0.99` (the `NUDGE_MAX_CONF` cap) in five
-   consecutive Stop hooks on identical evidence.
+7. **Cohort-based gating (v3.21.0+)** — `~/.claude/cortex/nudge-state.json`
+   schema v2 records `{last_event_ts, last_nudge_ts, last_direction,
+   conf_at_last_nudge}` per iid. The apply path
+   (`compute_outcome_decisions()`) only counts outcomes whose `ts` is
+   **strictly later** than `last_event_ts`. The ratio is therefore
+   *marginal* — it answers "did the new evidence point up or down?"
+   instead of "what does the rolling 14-day average look like?".
+   This closes four bugs the v3.20.2 `outcome_total` gate left open:
+   *(a) drift* (aggregate stays >0.85 even when the recent cohort is
+   80% errors); *(b) archive decrement* (`rotate()` removes >30d
+   events, `outcome_total` falls below `prev_seen`, gate skips
+   silently); *(c) race condition* in parallel Stop hooks (now
+   serialized by `fcntl.flock` advisory lock on
+   `nudge-state.json.lock`); *(d) reverse-direction whiplash* (data
+   sours but aggregate is still positive — cohort ratio decays
+   immediately). The v3.20.0 / v3.20.1 saturation symptom
+   (`gotcha-agent-spawn-preflight` racing `0.77 → 0.99` in five
+   hooks) was only the first observable manifestation of these
+   four underlying defects.
 
 ### Reset
 

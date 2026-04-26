@@ -427,19 +427,33 @@ def _read_yaml_id_and_conf(path):
 
 
 NUDGE_STATE_FILE = CORTEX_DIR / "nudge-state.json"
+NUDGE_STATE_LOCK = CORTEX_DIR / "nudge-state.json.lock"
+NUDGE_STATE_SCHEMA = 2   # v2 (v3.21.0+): cohort timestamp tracking
 
 
 def _load_nudge_state() -> dict:
-    """Load `~/.claude/cortex/nudge-state.json`. Returns the canonical shape
-    even when the file is missing or corrupt: `{"version": 1, "last_seen": {}}`.
+    """Load `~/.claude/cortex/nudge-state.json` in the canonical v2 shape:
+
+      {"version": 2, "iids": {<iid>: {last_event_ts, last_nudge_ts,
+                                       last_direction, conf_at_last_nudge}}}
+
+    v1 → v2 migration (v3.20.2 → v3.21.0): v1 stored `outcome_total` as the
+    idempotency key, which suffered from drift, archive-decrement, and
+    aggregate-ratio bugs. v2 keys on the cohort `last_event_ts` per iid
+    instead. v1 state is discarded on first load — the YAML confidences
+    that were already applied are preserved (they live in the YAMLs, not
+    in this state file). The first v2 run after the migration may emit
+    one extra nudge per iid as the cohort filter sees all current outcomes
+    as "new"; this is by design and self-corrects on the next Stop hook.
     """
     try:
         data = json.loads(NUDGE_STATE_FILE.read_text(encoding="utf-8"))
-        if isinstance(data, dict) and "last_seen" in data:
+        if isinstance(data, dict) and data.get("version") == NUDGE_STATE_SCHEMA:
+            data.setdefault("iids", {})
             return data
     except (OSError, json.JSONDecodeError):
         pass
-    return {"version": 1, "last_seen": {}}
+    return {"version": NUDGE_STATE_SCHEMA, "iids": {}}
 
 
 def _save_nudge_state(state: dict) -> None:
@@ -450,83 +464,212 @@ def _save_nudge_state(state: dict) -> None:
     tmp.replace(NUDGE_STATE_FILE)
 
 
-def apply_outcome_nudges(rankings: dict, dry_run: bool = False) -> list[dict]:
-    """Walk every instinct YAML and apply nudges from `rankings`.
+def _nudge_lock_acquire():
+    """Best-effort exclusive advisory lock on `nudge-state.json.lock`.
 
-    Reflex iids (`reflex:*`) are skipped — reflexes have their own
-    enabled/usefulCount/noiseCount accounting, not a confidence field.
-
-    **v3.20.2 idempotency** — every applied nudge records the iid's
-    `outcome_total` at apply time in `~/.claude/cortex/nudge-state.json`.
-    Subsequent calls only nudge again when the iid has accumulated NEW
-    outcome events since the last apply. This prevents the same data
-    from driving repeated nudges across consecutive Stop hooks (the
-    v3.20.0/.1 saturation bug — `gotcha-agent-spawn-preflight` raced
-    from 0.77 to 0.99 in five hooks on identical evidence).
-
-    Returns a list of {iid, path, before, after, nudge, prev_seen, now_seen}
-    for every change that was applied (or would be in dry-run).
+    Returns the open file handle (caller must close). Uses `fcntl.flock`
+    on POSIX. Falls back to no-op on platforms without fcntl (Windows);
+    the race window is the subprocess runtime (<500 ms in practice) and
+    the worst case is a single double-apply, never silent corruption of
+    the YAML (each YAML write is its own `tmp + replace`).
     """
-    state = _load_nudge_state()
-    last_seen = state.get("last_seen", {})
+    NUDGE_STATE_LOCK.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        import fcntl
+        fh = open(NUDGE_STATE_LOCK, "w")
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        return fh
+    except (ImportError, OSError):
+        return None
 
-    applied: list[dict] = []
-    for path in _instinct_yaml_paths():
-        iid, conf, text = _read_yaml_id_and_conf(path)
-        if not iid or conf is None:
-            continue
-        if iid.startswith("reflex:"):
-            continue
-        rec = rankings.get(iid)
-        if not rec or not rec.get("nudge"):
-            continue
 
-        # v3.20.2: idempotency gate — only nudge when new outcome
-        # events have accumulated for this iid since the last apply.
-        now_seen = int(rec.get("outcome_total", 0))
-        prev_entry = last_seen.get(iid) or {}
-        prev_seen = int(prev_entry.get("outcome_total", 0))
-        if now_seen <= prev_seen:
-            # Same evidence as last time; skip silently — this is the
-            # default path most of the time once the system stabilizes.
+def _nudge_lock_release(fh) -> None:
+    if fh is None:
+        return
+    try:
+        import fcntl
+        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+    except Exception:
+        pass
+    try:
+        fh.close()
+    except Exception:
+        pass
+
+
+def compute_outcome_decisions(state: dict | None = None,
+                              min_outcomes: int = NUDGE_MIN_OUTCOMES) -> dict:
+    """Per-iid nudge decision based on the **NEW outcome cohort** since the
+    iid's last apply (v3.21.0+).
+
+    Distinct from `compute_outcome_ranking()` which aggregates the full
+    14-day window. This function only counts outcomes whose `ts` is
+    strictly later than `state.iids[iid].last_event_ts`. The ratio is
+    therefore *marginal* — it answers "did the evidence that arrived
+    since we last decided point up or down?" rather than "what does
+    the rolling 14-day average look like?".
+
+    This closes four bugs the v3.20.2 `outcome_total` gate left open:
+
+      1. Drift — aggregate ratio could stay >0.85 even when the new
+         cohort was 80% errors. The marginal ratio reflects only the
+         new evidence.
+      2. Archive decrement — `rotate()` removes outcomes >30d old, so
+         `outcome_total` could fall below `prev_seen` and skip silently.
+         The marginal cohort is unaffected: events between
+         `last_event_ts` and now are still in the active jsonl.
+      3. Reverse-direction whiplash — once data turns sour, the
+         marginal ratio decays immediately rather than being diluted
+         by historic positives in the 14-day aggregate.
+      4. Single-cohort double-counting — already covered by v3.20.2,
+         strengthened here by `ts >` strict (no equal-timestamp slip).
+
+    Returns:
+      {<iid>: {cohort_total, cohort_clean, cohort_error, ratio, nudge,
+               max_ts}}
+    """
+    if state is None:
+        state = _load_nudge_state()
+    iids_state = state.get("iids", {})
+
+    cohorts: dict[str, dict] = {}
+    for ev in _iter_events():
+        if ev.get("ev") != "outcome":
             continue
-
-        nudge = float(rec["nudge"])
-        new_conf = max(NUDGE_MIN_CONF, min(NUDGE_MAX_CONF, conf + nudge))
-        if abs(new_conf - conf) < 1e-6:
-            # Already at clamp boundary — record state so we don't keep
-            # re-trying every Stop hook, but emit no applied entry.
-            if not dry_run:
-                last_seen[iid] = {
-                    "outcome_total": now_seen,
-                    "last_nudge_ts": _now_iso(),
-                    "saturated": True,
-                }
+        iid = ev.get("iid")
+        if not iid:
             continue
-
-        applied.append(
-            {"iid": iid, "path": str(path), "before": round(conf, 4),
-             "after": round(new_conf, 4), "nudge": nudge,
-             "prev_seen": prev_seen, "now_seen": now_seen}
-        )
-        if dry_run:
+        ev_ts = ev.get("ts", "")
+        last_ts = (iids_state.get(iid) or {}).get("last_event_ts", "")
+        if ev_ts <= last_ts:
             continue
-        new_text = _CONF_RE.sub(
-            lambda m: f"{m.group('lead')}{new_conf:.4f}", text, count=1
-        )
-        tmp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
-        tmp.write_text(new_text, encoding="utf-8")
-        tmp.replace(path)
+        bucket = cohorts.setdefault(iid, {
+            "cohort_total": 0, "cohort_clean": 0, "cohort_error": 0,
+            "max_ts": "",
+        })
+        bucket["cohort_total"] += 1
+        if ev.get("error_within_10") is True:
+            bucket["cohort_error"] += 1
+        else:
+            bucket["cohort_clean"] += 1
+        if ev_ts > bucket["max_ts"]:
+            bucket["max_ts"] = ev_ts
 
-        last_seen[iid] = {
-            "outcome_total": now_seen,
-            "last_nudge_ts": _now_iso(),
-        }
+    decisions: dict[str, dict] = {}
+    for iid, b in cohorts.items():
+        if b["cohort_total"] < min_outcomes:
+            continue
+        ratio = b["cohort_clean"] / b["cohort_total"]
+        if ratio >= NUDGE_BOOST_RATIO:
+            nudge = NUDGE_DELTA
+        elif ratio <= NUDGE_DECAY_RATIO:
+            nudge = -NUDGE_DELTA
+        else:
+            nudge = 0.0
+        decisions[iid] = {**b, "ratio": round(ratio, 4), "nudge": nudge}
+    return decisions
 
-    if not dry_run and applied:
-        state["last_seen"] = last_seen
-        _save_nudge_state(state)
-    return applied
+
+def apply_outcome_nudges(rankings_or_none: dict | None = None,
+                         dry_run: bool = False) -> list[dict]:
+    """Walk instinct YAMLs and apply cohort-based nudges (v3.21.0+).
+
+    Reflex iids (`reflex:*`) are skipped — they have their own
+    enabled/usefulCount/noiseCount accounting in `reflexes.json`.
+
+    **Cohort gating (v3.21.0)** — every apply consumes only outcomes
+    whose `ts` is strictly later than the iid's `last_event_ts` recorded
+    in `~/.claude/cortex/nudge-state.json` (schema v2). The decision is
+    made on the marginal cohort, not on the 14-day aggregate. After
+    apply, `last_event_ts` advances to the cohort max so the next Stop
+    hook starts fresh. See `compute_outcome_decisions()` for the four
+    bugs this closes vs the v3.20.2 `outcome_total` gate.
+
+    **Concurrency** — the whole load → decide → apply → save sequence
+    is wrapped in an advisory `fcntl.flock` on
+    `nudge-state.json.lock` (POSIX). On platforms without fcntl
+    (Windows pre-3.13) the lock is a no-op; the race window is so small
+    (<500 ms subprocess) that double-apply is rare and the YAML
+    `tmp + replace` keeps each individual rewrite atomic.
+
+    Saturated iids (already at `NUDGE_MIN_CONF` or `NUDGE_MAX_CONF`)
+    record state advancing `last_event_ts` so subsequent Stop hooks
+    don't re-evaluate the same cohort, but emit no apply entry.
+
+    Backwards-compat: `rankings_or_none` is accepted for legacy callers
+    but the v3.20.x window-aggregate shape is **ignored** — decisions
+    are always recomputed from the cohort. Pass `None` for new code.
+
+    Returns a list of {iid, path, before, after, nudge, ratio,
+    cohort_total, cohort_clean, cohort_error} for every change applied
+    (or would be in dry-run).
+    """
+    lock = _nudge_lock_acquire()
+    try:
+        state = _load_nudge_state()
+        iids_state = state.setdefault("iids", {})
+        decisions = compute_outcome_decisions(state)
+
+        applied: list[dict] = []
+        state_changed = False
+        for path in _instinct_yaml_paths():
+            iid, conf, text = _read_yaml_id_and_conf(path)
+            if not iid or conf is None:
+                continue
+            if iid.startswith("reflex:"):
+                continue
+            rec = decisions.get(iid)
+            if not rec or not rec.get("nudge"):
+                continue
+
+            nudge = float(rec["nudge"])
+            new_conf = max(NUDGE_MIN_CONF, min(NUDGE_MAX_CONF, conf + nudge))
+
+            if abs(new_conf - conf) < 1e-6:
+                # Saturated boundary — advance state so we don't keep
+                # re-checking, but emit no apply entry.
+                if not dry_run:
+                    iids_state[iid] = {
+                        "last_event_ts": rec.get("max_ts", ""),
+                        "last_nudge_ts": _now_iso(),
+                        "last_direction": "saturated",
+                        "conf_at_last_nudge": round(conf, 4),
+                    }
+                    state_changed = True
+                continue
+
+            applied.append({
+                "iid": iid, "path": str(path),
+                "before": round(conf, 4), "after": round(new_conf, 4),
+                "nudge": nudge,
+                "ratio": rec.get("ratio", 0.0),
+                "cohort_total": rec.get("cohort_total", 0),
+                "cohort_clean": rec.get("cohort_clean", 0),
+                "cohort_error": rec.get("cohort_error", 0),
+            })
+            if dry_run:
+                continue
+
+            new_text = _CONF_RE.sub(
+                lambda m: f"{m.group('lead')}{new_conf:.4f}", text, count=1
+            )
+            tmp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
+            tmp.write_text(new_text, encoding="utf-8")
+            tmp.replace(path)
+
+            iids_state[iid] = {
+                "last_event_ts": rec.get("max_ts", ""),
+                "last_nudge_ts": _now_iso(),
+                "last_direction": ("+" if nudge > 0 else "-") + f"{abs(nudge):.2f}",
+                "conf_at_last_nudge": round(new_conf, 4),
+            }
+            state_changed = True
+
+        if not dry_run and state_changed:
+            _save_nudge_state(state)
+        return applied
+    finally:
+        _nudge_lock_release(lock)
 
 
 def log_nudges_to_knowledge(applied: list[dict]) -> None:

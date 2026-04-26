@@ -866,11 +866,11 @@ print(m.group(1) if m else 'NONE')
 [ "$CONF_AFTER" = "0.7500" ] && pass "confidence still 0.7500 after re-runs" || fail "confidence drifted: $CONF_AFTER"
 
 # -----------------------------------------------------------------------------
-echo "--- Test 39: nudge resumes when NEW outcomes accumulate ---"
-# Add 6 more outcomes (total now 12) — gate should re-open.
+echo "--- Test 39: nudge resumes when NEW outcomes (later ts) accumulate ---"
+# Add 6 more outcomes with a STRICTLY LATER ts — cohort filter must see them.
 python3 -c "
 import json, os
-events = [{'v':1,'ts':'2026-04-26T10:00:00Z','ev':'outcome','iid':'idem-test','sid':'sid-I','error_within_10':False} for _ in range(6)]
+events = [{'v':1,'ts':'2026-04-26T11:00:00Z','ev':'outcome','iid':'idem-test','sid':'sid-I','error_within_10':False} for _ in range(6)]
 with open(os.path.join('$SANDBOX','impact.jsonl'),'a') as f:
     for e in events: f.write(json.dumps(e)+'\n')
 "
@@ -886,17 +886,21 @@ print(m.group(1) if m else 'NONE')
 [ "$CONF_AFTER2" = "0.8000" ] && pass "confidence advanced 0.7500 → 0.8000" || fail "expected 0.8000, got $CONF_AFTER2"
 
 # -----------------------------------------------------------------------------
-echo "--- Test 40: nudge-state.json records {outcome_total, last_nudge_ts} ---"
+echo "--- Test 40: nudge-state.json v2 schema records last_event_ts (cohort timestamp) ---"
 if [ -f "$SANDBOX/nudge-state.json" ]; then
   if python3 -c "
 import json
 state = json.load(open('$SANDBOX/nudge-state.json'))
-assert state['last_seen']['idem-test']['outcome_total'] == 12, 'wrong outcome_total'
-assert 'last_nudge_ts' in state['last_seen']['idem-test'], 'missing last_nudge_ts'
+assert state['version'] == 2, f\"expected version=2, got {state.get('version')}\"
+entry = state['iids']['idem-test']
+assert entry['last_event_ts'] == '2026-04-26T11:00:00Z', f\"wrong last_event_ts: {entry['last_event_ts']}\"
+assert 'last_nudge_ts' in entry, 'missing last_nudge_ts'
+assert entry['last_direction'] == '+0.05', f\"wrong direction: {entry['last_direction']}\"
+assert entry['conf_at_last_nudge'] == 0.8, f\"wrong conf snapshot: {entry['conf_at_last_nudge']}\"
 " 2>/dev/null; then
-    pass "nudge-state.json shape correct"
+    pass "nudge-state.json v2 shape correct"
   else
-    fail "nudge-state.json shape wrong"
+    fail "nudge-state.json v2 shape wrong"
     cat "$SANDBOX/nudge-state.json"
   fi
 else
@@ -933,6 +937,161 @@ d = json.loads(sys.stdin.read())
 print(any(a['iid']=='sat-test' for a in d['applied']))
 ")
 [ "$SAT2" = "False" ] && pass "re-running saturated iid stays a no-op" || fail "saturated iid leaked on re-run"
+
+# -----------------------------------------------------------------------------
+# v3.21.0 — Cohort-based outcome nudging (Sprint 5 follow-up to v3.20.2)
+# -----------------------------------------------------------------------------
+echo "--- Test 42: marginal cohort decays when recent evidence sours (drift fix) ---"
+# v3.20.2 bug: aggregate ratio over 14 days could stay >0.85 even when
+# the recent cohort was 80% errors. v3.21.0 closes this by computing the
+# ratio only on outcomes with ts > last_event_ts.
+rm -f "$SANDBOX/impact.jsonl" "$SANDBOX/nudge-state.json" "$SANDBOX/knowledge-log.md"
+rm -rf "$SANDBOX/instincts"
+mkdir -p "$SANDBOX/instincts/global"
+cat > "$SANDBOX/instincts/global/drift-test.yaml" <<'YAML'
+---
+id: drift-test
+confidence: 0.70
+domain: test
+---
+YAML
+# Phase 1: 10 clean outcomes at t=10:00 → ratio 1.0 → +0.05 (0.70 → 0.75)
+python3 -c "
+import json, os
+events = [{'v':1,'ts':'2026-04-26T10:00:00Z','ev':'outcome','iid':'drift-test','sid':'sid-D1','error_within_10':False} for _ in range(10)]
+with open(os.path.join('$SANDBOX','impact.jsonl'),'a') as f:
+    for e in events: f.write(json.dumps(e)+'\n')
+"
+python3 "$IMPACT_PY" outcome-nudge --days 1 --apply --json >/dev/null 2>&1
+CONF_PHASE1=$(python3 -c "
+import re; print(re.search(r'confidence:\s*([\d.]+)', open('$SANDBOX/instincts/global/drift-test.yaml').read()).group(1))
+")
+[ "$CONF_PHASE1" = "0.7500" ] && pass "phase 1 (clean cohort): 0.70 → 0.7500" || fail "phase 1 expected 0.7500, got $CONF_PHASE1"
+
+# Phase 2: add 20 outcomes at t=12:00 with 16 errors / 4 clean → marginal ratio 0.20
+# Aggregate over both phases would be (10+4)/30 = 0.467 → nudge=0 (middling).
+# But the marginal cohort over phase 2 alone is 0.20 → nudge=-0.05 (decay).
+# v3.21.0 must apply -0.05 (cohort), v3.20.2 would apply 0 (aggregate).
+python3 -c "
+import json, os
+events = []
+for _ in range(16):
+    events.append({'v':1,'ts':'2026-04-26T12:00:00Z','ev':'outcome','iid':'drift-test','sid':'sid-D2','error_within_10':True})
+for _ in range(4):
+    events.append({'v':1,'ts':'2026-04-26T12:00:00Z','ev':'outcome','iid':'drift-test','sid':'sid-D2','error_within_10':False})
+with open(os.path.join('$SANDBOX','impact.jsonl'),'a') as f:
+    for e in events: f.write(json.dumps(e)+'\n')
+"
+python3 "$IMPACT_PY" outcome-nudge --days 1 --apply --json >/dev/null 2>&1
+CONF_PHASE2=$(python3 -c "
+import re; print(re.search(r'confidence:\s*([\d.]+)', open('$SANDBOX/instincts/global/drift-test.yaml').read()).group(1))
+")
+[ "$CONF_PHASE2" = "0.7000" ] && pass "phase 2 (sour cohort): 0.7500 → 0.7000 (decay on marginal)" || fail "phase 2 expected 0.7000 (cohort decay), got $CONF_PHASE2"
+
+# -----------------------------------------------------------------------------
+echo "--- Test 43: concurrent applies don't double-nudge (advisory file lock) ---"
+rm -f "$SANDBOX/impact.jsonl" "$SANDBOX/nudge-state.json"
+rm -rf "$SANDBOX/instincts"
+mkdir -p "$SANDBOX/instincts/global"
+cat > "$SANDBOX/instincts/global/race-test.yaml" <<'YAML'
+---
+id: race-test
+confidence: 0.50
+domain: test
+---
+YAML
+python3 -c "
+import json, os
+events = [{'v':1,'ts':'2026-04-26T13:00:00Z','ev':'outcome','iid':'race-test','sid':'sid-R','error_within_10':False} for _ in range(10)]
+with open(os.path.join('$SANDBOX','impact.jsonl'),'a') as f:
+    for e in events: f.write(json.dumps(e)+'\n')
+"
+# Fire 3 parallel apply processes — they should serialize via flock.
+# Net effect: at most ONE nudge applied (cohort consumed by first, others see no new evidence).
+(
+  for _ in 1 2 3; do
+    python3 "$IMPACT_PY" outcome-nudge --days 1 --apply --json >/dev/null 2>&1 &
+  done
+  wait
+)
+CONF_RACE=$(python3 -c "
+import re; print(re.search(r'confidence:\s*([\d.]+)', open('$SANDBOX/instincts/global/race-test.yaml').read()).group(1))
+")
+# Expected: exactly 0.5500 (one +0.05 applied, the other two raced + lost). NOT 0.6500 (3x apply).
+[ "$CONF_RACE" = "0.5500" ] && pass "3 parallel applies = 1 nudge (lock serialized)" || fail "expected 0.5500 (single nudge), got $CONF_RACE (multi-apply leak)"
+
+# -----------------------------------------------------------------------------
+echo "--- Test 44: archived outcomes don't open the gate (cohort uses ts not count) ---"
+# v3.20.2 bug: when rotate() archives outcomes >30d old, outcome_total
+# could DECREMENT (now_seen <= prev_seen) and skip even when newer
+# evidence had arrived. v3.21.0 keys on ts, so archive is irrelevant.
+rm -f "$SANDBOX/impact.jsonl" "$SANDBOX/nudge-state.json"
+rm -rf "$SANDBOX/instincts"
+mkdir -p "$SANDBOX/instincts/global"
+cat > "$SANDBOX/instincts/global/arch-test.yaml" <<'YAML'
+---
+id: arch-test
+confidence: 0.50
+domain: test
+---
+YAML
+# Phase 1: 10 clean outcomes at t=10:00, apply nudge.
+python3 -c "
+import json, os
+events = [{'v':1,'ts':'2026-04-26T10:00:00Z','ev':'outcome','iid':'arch-test','sid':'sid-A1','error_within_10':False} for _ in range(10)]
+with open(os.path.join('$SANDBOX','impact.jsonl'),'a') as f:
+    for e in events: f.write(json.dumps(e)+'\n')
+"
+python3 "$IMPACT_PY" outcome-nudge --days 1 --apply --json >/dev/null 2>&1
+
+# Phase 2: simulate rotate() — wipe impact.jsonl entirely (extreme archive).
+# Now add fresh sour cohort at t=12:00. With v3.20.2 outcome_total=10 (state) and
+# now_seen=10 (post-archive new) → skip. With v3.21.0 last_event_ts=10:00 and
+# new events at 12:00 → cohort sees them.
+rm -f "$SANDBOX/impact.jsonl"
+python3 -c "
+import json, os
+events = []
+for _ in range(8):
+    events.append({'v':1,'ts':'2026-04-26T12:00:00Z','ev':'outcome','iid':'arch-test','sid':'sid-A2','error_within_10':True})
+for _ in range(2):
+    events.append({'v':1,'ts':'2026-04-26T12:00:00Z','ev':'outcome','iid':'arch-test','sid':'sid-A2','error_within_10':False})
+with open(os.path.join('$SANDBOX','impact.jsonl'),'a') as f:
+    for e in events: f.write(json.dumps(e)+'\n')
+"
+python3 "$IMPACT_PY" outcome-nudge --days 1 --apply --json >/dev/null 2>&1
+CONF_ARCH=$(python3 -c "
+import re; print(re.search(r'confidence:\s*([\d.]+)', open('$SANDBOX/instincts/global/arch-test.yaml').read()).group(1))
+")
+# Expected 0.5000: phase 1 → 0.55, phase 2 cohort ratio 0.2 → -0.05 → 0.50.
+[ "$CONF_ARCH" = "0.5000" ] && pass "post-archive cohort still triggers decay" || fail "archive blocked decay: got $CONF_ARCH (expected 0.5000)"
+
+# -----------------------------------------------------------------------------
+echo "--- Test 45: v1 nudge-state migrates cleanly to v2 (no crash, empty state) ---"
+rm -f "$SANDBOX/nudge-state.json" "$SANDBOX/impact.jsonl"
+# Seed a v3.20.2 v1 state file.
+cat > "$SANDBOX/nudge-state.json" <<'JSON'
+{
+  "version": 1,
+  "last_seen": {
+    "ghost-iid": {"outcome_total": 100, "last_nudge_ts": "2026-04-25T10:00:00Z"}
+  }
+}
+JSON
+# Loading should return canonical v2 (v1 discarded).
+LOAD_OUT=$(python3 -c "
+import sys, os; sys.path.insert(0, '$REPO_ROOT/hooks/lib')
+os.environ['CORTEX_DIR'] = '$SANDBOX'
+import importlib, impact_log
+importlib.reload(impact_log)
+state = impact_log._load_nudge_state()
+print(state.get('version'), '|', list(state.get('iids', {}).keys()))
+" 2>&1)
+if echo "$LOAD_OUT" | grep -q "^2 | \[\]$"; then
+  pass "v1 state discarded; canonical v2 shape returned"
+else
+  fail "v1→v2 migration unexpected: $LOAD_OUT"
+fi
 
 # -----------------------------------------------------------------------------
 echo
