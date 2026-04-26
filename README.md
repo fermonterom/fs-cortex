@@ -240,7 +240,7 @@ Claude provides a verdict with reasoning per item before you decide. All command
 | `session-start.py` | SessionStart | Inject Laws + EOD resume (once) + context.md bridge | Sync (5s) |
 | `observe.py` | PreToolUse / PostToolUse | Capture tool start/complete (single-process, ~70ms) | Async (0 tokens) |
 | `injector.sh` / `injector.js` | PreToolUse | Inject matched reflexes + instincts (`.sh` on Unix, `.js` on Windows — both delegate to `lib/injector-engine.js`) | Sync (3s) |
-| `session-learner.js` | Stop | Analyze session, proposals, context.md | Sync (15s) |
+| `session-learner.js` | Stop | Analyze session, proposals, impact-funnel correlation, reflex auto-evaluation, **outcome auto-ranking** (v3.20.0+), context.md | Sync (15s) |
 
 Also fires `session-start.py` on `/compact` to re-inject laws.
 
@@ -257,7 +257,8 @@ Also fires `session-start.py` on `/compact` to re-inject laws.
 ```
 ~/.claude/cortex/
 ├── memory.json              # Identity + config + stats
-├── reflexes.json            # Deterministic rules (10 default)
+├── reflexes.json            # Deterministic rules (13 default — see below)
+├── impact.jsonl             # Impact funnel (Sprint 0+, v:1) — inject/follow/feedback/outcome events
 ├── proposals.json           # Pending proposals from session-learner + cx-analyze
 ├── laws/                    # One-liners (max 10 active)
 │   ├── *.txt
@@ -286,7 +287,7 @@ Also fires `session-start.py` on `/compact` to re-inject laws.
 
 Deterministic rules that fire via hooks — not probabilistic instructions. Triggers are regex patterns matched against tool names and inputs.
 
-Default reflexes (10):
+Default reflexes (13):
 
 | Reflex | Trigger (regex) | Action |
 |--------|---------|--------|
@@ -297,6 +298,9 @@ Default reflexes (10):
 | `git-push-safety` | git push / gh pr create | Fetch+rebase, --force-with-lease |
 | `git-merge-verify` | gh pr merge | Verify checks, clean up branch |
 | `api-auth-check` | Edit route.ts/api/ | Validate authentication |
+| `bash-cat-use-read` | `^(cat\|head\|tail) <path>.<ext>` (source files) | Use Read tool instead — refined matcher in v3.20.0 |
+| `bash-grep-use-grep-tool` | `^grep -[rR]` (recursive only) | Use Grep tool instead — refined matcher in v3.20.0 |
+| `bash-find-use-glob` | `^find <path> -name <pattern>` (no -exec/-delete/etc.) | Use Glob tool instead — refined matcher in v3.20.0 |
 | `security-headers` | Edit vercel.json/next.config | Verify security headers |
 | `instinct-downvote` | "wrong instinct" / "ignore instinct" | Suggest /cx-downvote |
 | `capture-decision` | "from now on" / "always use" / "never use" | Suggest saving decision |

@@ -4,6 +4,53 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.20.1] — 2026-04-26
+
+### Public-repo hygiene after v3.20.0 — CI gaps + README + SECURITY
+
+A read-through of the public-facing surface uncovered three drift items
+that v3.20.0 left behind: the CI workflow had four bash suites that were
+present in `tests/` but never executed (a 87-test gap), the README still
+documented "10 default reflexes" after v3.20.0 added 3, and SECURITY.md
+listed only 8 suites with stale counts.
+
+### Fixed
+
+- **`.github/workflows/test.yml`** — added `test_impact.sh` (48),
+  `test_migrate_legacy_iid.sh` (12), `test_integrity.sh` (14), and
+  `test_uninstall.sh` (13) to the `test` job. Until this patch these
+  four suites only ran via the `tests/run_all.sh` summary step, which
+  is `tail -10` cosmetic — failures inside them did not fail the job.
+  Now each is a separate step on the `ubuntu-latest`/`macos-latest`
+  matrix and a regression in any of them turns CI red.
+
+### Changed
+
+- **`README.md`** —
+  - Reflex count `10 default` → `13 default` in two places (data tree
+    + reflexes section heading).
+  - Reflex table extended with the three Sprint 5 tool-substitution
+    reflexes (`bash-cat-use-read`, `bash-grep-use-grep-tool`,
+    `bash-find-use-glob`) and the refined matcher patterns.
+  - `session-learner.js` hook row now lists "outcome auto-ranking
+    (v3.20.0+)" so the public arch diagram reflects Step 5e.
+  - `~/.claude/cortex/` directory tree now shows `impact.jsonl` line.
+- **`SECURITY.md`** —
+  - "Security Measures (v3.6)" heading depinned from v3.6; baseline
+    measures listed as preserved-and-extended in every release.
+  - New Sprint 5 (v3.20.0) safeguards section: bounded nudges, reflex
+    immunity, subprocess timeout, sample-size floor.
+  - Test suite count corrected from "124 tests, 8 suites" to the
+    actual **240 tests, 13 suites**, with the full breakdown grouped
+    by safety / learning / installer.
+  - Added one-line CI matrix description so vulnerability researchers
+    know which platforms and runtimes are exercised.
+
+### Tests
+
+- No code paths touched. The four newly-CI-wired suites already pass
+  locally (impact 48, migrate 12, integrity 14, uninstall 13).
+
 ## [3.20.0] — 2026-04-26
 
 ### Sprint 5 — Autonomy + intelligence

@@ -72,6 +72,18 @@ jobs:
       - name: Run hooks e2e tests
         run: bash tests/test_hooks_e2e.sh
 
+      - name: Run impact funnel tests (Sprint 0–5)
+        run: bash tests/test_impact.sh
+
+      - name: Run impact migration tests (v3.19.5)
+        run: bash tests/test_migrate_legacy_iid.sh
+
+      - name: Run integrity tests
+        run: bash tests/test_integrity.sh
+
+      - name: Run uninstall tests
+        run: bash tests/test_uninstall.sh
+
       - name: Test summary
         if: always()
         run: bash tests/run_all.sh 2>&1 | tail -10
