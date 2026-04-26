@@ -1,4 +1,4 @@
-# fs-cortex v3.19.2 — Feature Reference
+# fs-cortex v3.19.3 — Feature Reference
 
 > Complete inventory of all features, commands, hooks, modules, and capabilities.
 > Last updated: 2026-04-26
@@ -557,3 +557,4 @@ locally (not installed to `~/.claude/`):
 | v3.19.0 | 2026-04-25 | installer: wire `CORTEX_AGENT_DISABLE_REFLEXES=1` into `~/.claude/settings.json` env block by default (idempotent) |
 | v3.19.1 | 2026-04-26 | **Hotfix** — reflex auto-evaluation was silently broken since v3.18.0: hardcoded `CORTEX_DIR` (no env-var honor), wrong `_sid` field name in fallback, orphan-harness-sid filter discarded all real injects. Both `correlateImpactEvents` and `correlateReflexFeedback` now union candidate sids from observations. New Test 29 + Test 30 in `test_impact.sh` (38/38 PASS). |
 | v3.19.2 | 2026-04-26 | **Cleanup** — propagates `CORTEX_DIR` env-var honor to remaining hooks (observe.py, session-start.py, precompact.py, injector.sh, injector.js) and lib modules (dashboard_gen.py, yaml_normalize.py, injector-engine.js). Dashboard reflex table now renders Useful/Noise/Health columns with v3.18.0 health classification. Docs sync (README, SKILL v3.10→v3.19.2, claudemd-section, AUTO-EVALUATION, IMPACT-METRICS). |
+| v3.19.3 | 2026-04-26 | **Critical bugfix** — reflex auto-evaluation appeared to work since v3.19.1 (38/38 tests green) but in production the `usefulCount`/`noiseCount` counters never moved. Root cause: `observe.py` truncated `session_id` to `[:24]` while Claude Code session IDs are 36-char UUIDs, so `candidateSids.has(ev.sid)` filter in both correlators never matched. Fixed: raise cap to `[:64]` so UUIDs round-trip; add `sidMatches()` helper that also accepts the legacy 24-char prefix. Tests updated (`test_observe.sh`: 8→9 passing). |

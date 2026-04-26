@@ -413,7 +413,13 @@ def main():
         return
 
     # 4. Session ID and dedup
-    session_id = re.sub(r"[^a-zA-Z0-9_-]", "", data.get("session_id", "unknown"))[:24]
+    # Claude Code session_id is a 36-char UUID. Pre-v3.19.3 we truncated to
+    # [:24], which broke `correlateReflexFeedback` and `correlateImpactEvents`
+    # in session-learner.js (impact.jsonl stores the full UUID, observations
+    # stored the truncated form, so candidateSids.has(ev.sid) never matched
+    # and usefulCount/noiseCount stayed at 0 for every reflex). Allow the full
+    # UUID with margin.
+    session_id = re.sub(r"[^a-zA-Z0-9_-]", "", data.get("session_id", "unknown"))[:64]
 
     tool_input = data.get("tool_input", data.get("input", ""))
     input_str = json.dumps(tool_input) if isinstance(tool_input, dict) else str(tool_input)

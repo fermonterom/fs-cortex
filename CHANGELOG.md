@@ -4,6 +4,50 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.19.3] — 2026-04-26
+
+### Critical bug — auto-evaluation pipeline silently broken since v3.18.0
+
+`hooks/observe.py` truncated `session_id` to 24 chars (`[:24]`) before
+writing observations. Claude Code session IDs are 36-char UUIDs, so every
+observation carried the prefix while `impact.jsonl` (written by the
+injector) carried the full UUID. Inside `session-learner.js`,
+`correlateReflexFeedback` and `correlateImpactEvents` filter inject
+events with `candidateSids.has(ev.sid)` — the prefix vs full-UUID
+mismatch meant **0/24 reflexes ever updated `usefulCount` or
+`noiseCount`**, the `feedback` event stream stayed empty, and the v3.19.0
+`CORTEX_AGENT_DISABLE_REFLEXES` auto-disable threshold could not fire.
+v3.18.0/v3.19.0/v3.19.1/v3.19.2 had been running in this broken state.
+
+### Fixed
+
+- **`hooks/observe.py`** — raise `session_id` cap from `[:24]` to `[:64]`
+  so 36-char UUIDs round-trip intact. Truncation rationale was sandboxing
+  hostile input; 64 keeps that intent and accommodates UUIDs with margin.
+- **`hooks/session-learner.js`** — extract `buildCandidateSids(...)` and
+  `sidMatches(eventSid, candidateSids)` helpers. Both correlators
+  (`correlateImpactEvents`, `correlateReflexFeedback`) now match the full
+  UUID, the truncated 24-char prefix, or both. This recovers feedback
+  for observations stored under the legacy truncated form and continues
+  to work after the observe.py fix.
+- **`tests/test_observe.sh`** — replace `session_id[:24]` assertion with
+  `session_id[:64]` plus a new "UUID round-trips at 36 chars" check.
+
+### Verification
+
+```
+=== Observer Tests ===           9 passed, 0 failed
+=== Session Learner Tests ===    8 passed, 0 failed
+=== Impact Funnel Tests ===     38 passed, 0 failed
+=== Security Regression Tests ===7 passed, 0 failed
+=== Dream Cycle Tests ===       35 passed, 0 failed
+```
+
+Dry-run on real data: with the legacy truncated observations and the new
+correlator, **566/1011 inject events match retroactively** (vs 0 before).
+After this release, fresh observations carry full UUIDs and matching
+will be 1:1.
+
 ## [3.19.2] — 2026-04-26
 
 ### Cleanup release — finishes the v3.19.1 hotfix coverage and surfaces auto-eval data

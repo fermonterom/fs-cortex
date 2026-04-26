@@ -63,15 +63,27 @@ assert detect_is_error(None) == False
 print('OK')
 " | grep -q "OK" && pass "is_error detection (9 patterns)" || fail "is_error detection"
 
-# --- Test 3: session_id truncation (24 chars, not 16) ---
+# --- Test 3: session_id truncation (64 chars to fit 36-char UUIDs) ---
+# v3.19.3: Pre-release this was [:24], which truncated 36-char UUIDs and broke
+# correlation with impact.jsonl (where sids are stored full-length). The full
+# UUID must round-trip so session-learner's correlateReflexFeedback can match.
 echo "--- Session ID ---"
 result=$(python3 -c "
 import re
-sid = 'a' * 50
-clean = re.sub(r'[^a-zA-Z0-9_-]', '', sid)[:24]
+sid = 'a' * 80
+clean = re.sub(r'[^a-zA-Z0-9_-]', '', sid)[:64]
 print(len(clean))
 ")
-[ "$result" = "24" ] && pass "session_id[:24]" || fail "session_id length=$result"
+[ "$result" = "64" ] && pass "session_id[:64]" || fail "session_id length=$result (expected 64)"
+
+# --- Test 3b: 36-char UUID survives intact ---
+uuid_len=$(python3 -c "
+import re
+sid = '254a66c0-baca-460f-8522-429d094c70da'
+clean = re.sub(r'[^a-zA-Z0-9_-]', '', sid)[:64]
+print(len(clean))
+")
+[ "$uuid_len" = "36" ] && pass "UUID round-trips at 36 chars" || fail "UUID truncated to $uuid_len"
 
 # --- Test 4: Dedup behavior ---
 echo "--- Dedup ---"

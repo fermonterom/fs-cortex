@@ -911,16 +911,38 @@ function dedupProposalsByIncident(proposals) {
 //   - err_after=true if is_error=true within 10 events post-inject
 // A marker `impact-correlated-<sid>` lives in tmp to avoid double-write.
 
+// v3.19.3: observe.py truncated session_id to [:24] before this release, so
+// observations carry the prefix while impact.jsonl carries the full 36-char
+// UUID. Match either form so retroactive correlation works on legacy data.
+function sidMatches(eventSid, candidateSids) {
+  if (!eventSid) return false;
+  if (candidateSids.has(eventSid)) return true;
+  if (typeof eventSid === 'string' && eventSid.length > 24) {
+    if (candidateSids.has(eventSid.slice(0, 24))) return true;
+  }
+  return false;
+}
+
+function buildCandidateSids(sidOrSids, observations) {
+  const set = new Set();
+  const addBoth = (s) => {
+    if (!s) return;
+    set.add(s);
+    if (typeof s === 'string' && s.length > 24) set.add(s.slice(0, 24));
+  };
+  if (typeof sidOrSids === 'string') addBoth(sidOrSids);
+  else if (sidOrSids && typeof sidOrSids[Symbol.iterator] === 'function') {
+    for (const s of sidOrSids) addBoth(s);
+  }
+  for (const o of observations) if (o && o.sid) addBoth(o.sid);
+  return set;
+}
+
 function correlateImpactEvents(observations, sidOrSids) {
   if (!impactLog || observations.length === 0) return 0;
 
   // Same orphan-sid rescue as correlateReflexFeedback (v3.19.1).
-  const candidateSids = new Set();
-  if (typeof sidOrSids === 'string' && sidOrSids) candidateSids.add(sidOrSids);
-  else if (sidOrSids && typeof sidOrSids[Symbol.iterator] === 'function') {
-    for (const s of sidOrSids) if (s) candidateSids.add(s);
-  }
-  for (const o of observations) if (o && o.sid) candidateSids.add(o.sid);
+  const candidateSids = buildCandidateSids(sidOrSids, observations);
   if (candidateSids.size === 0) return 0;
 
   const impactFile = impactLog.IMPACT_FILE;
@@ -938,7 +960,7 @@ function correlateImpactEvents(observations, sidOrSids) {
     if (!line.trim()) continue;
     try {
       const ev = JSON.parse(line);
-      if (!candidateSids.has(ev.sid)) continue;
+      if (!sidMatches(ev.sid, candidateSids)) continue;
       if (ev.ev === 'inject' && ev.iid) injects.push(ev);
       else if (ev.ev === 'follow' && ev.iid) correlatedIids.add(ev.iid + '|' + (ev.inject_ts || ''));
     } catch {
@@ -1074,12 +1096,7 @@ function correlateReflexFeedback(observations, sidOrSids) {
   // (transient subagent / slash command sessions), the fallback observation
   // window represents other real sessions whose injects we still want to
   // auto-rate. Build a candidate set from both sources.
-  const candidateSids = new Set();
-  if (typeof sidOrSids === 'string' && sidOrSids) candidateSids.add(sidOrSids);
-  else if (sidOrSids && typeof sidOrSids[Symbol.iterator] === 'function') {
-    for (const s of sidOrSids) if (s) candidateSids.add(s);
-  }
-  for (const o of observations) if (o && o.sid) candidateSids.add(o.sid);
+  const candidateSids = buildCandidateSids(sidOrSids, observations);
   if (candidateSids.size === 0) return 0;
 
   const reflexData = readJsonFile(REFLEXES_PATH);
@@ -1098,7 +1115,7 @@ function correlateReflexFeedback(observations, sidOrSids) {
     if (!line.trim()) continue;
     try {
       const ev = JSON.parse(line);
-      if (!candidateSids.has(ev.sid)) continue;
+      if (!sidMatches(ev.sid, candidateSids)) continue;
       if (ev.ev === 'inject' && typeof ev.iid === 'string' && ev.iid.startsWith('reflex:')) {
         reflexInjects.push(ev);
       } else if (ev.ev === 'feedback' && ev.source === 'agent' && ev.inject_ts && typeof ev.iid === 'string' && ev.iid.startsWith('reflex:')) {
