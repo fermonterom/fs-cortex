@@ -170,6 +170,28 @@ proceeds normally.
    so noisy mid-range data never moves confidence by accident.
 6. **Knowledge log** — every applied nudge writes one line. The
    `/cx-timeline` command surfaces these for retrospective review.
+7. **Idempotency (v3.20.2+)** — `~/.claude/cortex/nudge-state.json`
+   records `{outcome_total, last_nudge_ts}` per iid at apply time.
+   Subsequent calls only nudge again when the iid has accumulated
+   **new** outcome events since the last apply. Without this gate
+   (v3.20.0 / v3.20.1), every Stop hook re-applied the same nudge
+   on the same 14-day window — `gotcha-agent-spawn-preflight`
+   raced from `0.77 → 0.99` (the `NUDGE_MAX_CONF` cap) in five
+   consecutive Stop hooks on identical evidence.
+
+### Reset
+
+If `nudge-state.json` becomes inconsistent with reality (e.g. after a
+manual confidence rewrite, a knowledge-log review, or recovery from a
+bug like the v3.20.0/.1 saturation), delete the file:
+
+```bash
+rm ~/.claude/cortex/nudge-state.json
+```
+
+The next Stop hook re-creates it from the current `impact.jsonl` view.
+Note that the existing YAML confidence values are NOT touched — only the
+"have I already nudged for these outcomes?" memory is wiped.
 
 ---
 

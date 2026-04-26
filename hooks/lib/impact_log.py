@@ -426,15 +426,50 @@ def _read_yaml_id_and_conf(path):
     return iid, conf, text
 
 
+NUDGE_STATE_FILE = CORTEX_DIR / "nudge-state.json"
+
+
+def _load_nudge_state() -> dict:
+    """Load `~/.claude/cortex/nudge-state.json`. Returns the canonical shape
+    even when the file is missing or corrupt: `{"version": 1, "last_seen": {}}`.
+    """
+    try:
+        data = json.loads(NUDGE_STATE_FILE.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and "last_seen" in data:
+            return data
+    except (OSError, json.JSONDecodeError):
+        pass
+    return {"version": 1, "last_seen": {}}
+
+
+def _save_nudge_state(state: dict) -> None:
+    """Atomic write of nudge-state.json (tmp + replace)."""
+    NUDGE_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = NUDGE_STATE_FILE.with_suffix(NUDGE_STATE_FILE.suffix + f".tmp.{os.getpid()}")
+    tmp.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(NUDGE_STATE_FILE)
+
+
 def apply_outcome_nudges(rankings: dict, dry_run: bool = False) -> list[dict]:
     """Walk every instinct YAML and apply nudges from `rankings`.
 
     Reflex iids (`reflex:*`) are skipped — reflexes have their own
     enabled/usefulCount/noiseCount accounting, not a confidence field.
 
-    Returns a list of {iid, path, before, after, nudge} for every change
-    that was applied (or would be in dry-run).
+    **v3.20.2 idempotency** — every applied nudge records the iid's
+    `outcome_total` at apply time in `~/.claude/cortex/nudge-state.json`.
+    Subsequent calls only nudge again when the iid has accumulated NEW
+    outcome events since the last apply. This prevents the same data
+    from driving repeated nudges across consecutive Stop hooks (the
+    v3.20.0/.1 saturation bug — `gotcha-agent-spawn-preflight` raced
+    from 0.77 to 0.99 in five hooks on identical evidence).
+
+    Returns a list of {iid, path, before, after, nudge, prev_seen, now_seen}
+    for every change that was applied (or would be in dry-run).
     """
+    state = _load_nudge_state()
+    last_seen = state.get("last_seen", {})
+
     applied: list[dict] = []
     for path in _instinct_yaml_paths():
         iid, conf, text = _read_yaml_id_and_conf(path)
@@ -445,13 +480,34 @@ def apply_outcome_nudges(rankings: dict, dry_run: bool = False) -> list[dict]:
         rec = rankings.get(iid)
         if not rec or not rec.get("nudge"):
             continue
+
+        # v3.20.2: idempotency gate — only nudge when new outcome
+        # events have accumulated for this iid since the last apply.
+        now_seen = int(rec.get("outcome_total", 0))
+        prev_entry = last_seen.get(iid) or {}
+        prev_seen = int(prev_entry.get("outcome_total", 0))
+        if now_seen <= prev_seen:
+            # Same evidence as last time; skip silently — this is the
+            # default path most of the time once the system stabilizes.
+            continue
+
         nudge = float(rec["nudge"])
         new_conf = max(NUDGE_MIN_CONF, min(NUDGE_MAX_CONF, conf + nudge))
         if abs(new_conf - conf) < 1e-6:
+            # Already at clamp boundary — record state so we don't keep
+            # re-trying every Stop hook, but emit no applied entry.
+            if not dry_run:
+                last_seen[iid] = {
+                    "outcome_total": now_seen,
+                    "last_nudge_ts": _now_iso(),
+                    "saturated": True,
+                }
             continue
+
         applied.append(
             {"iid": iid, "path": str(path), "before": round(conf, 4),
-             "after": round(new_conf, 4), "nudge": nudge}
+             "after": round(new_conf, 4), "nudge": nudge,
+             "prev_seen": prev_seen, "now_seen": now_seen}
         )
         if dry_run:
             continue
@@ -461,6 +517,15 @@ def apply_outcome_nudges(rankings: dict, dry_run: bool = False) -> list[dict]:
         tmp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
         tmp.write_text(new_text, encoding="utf-8")
         tmp.replace(path)
+
+        last_seen[iid] = {
+            "outcome_total": now_seen,
+            "last_nudge_ts": _now_iso(),
+        }
+
+    if not dry_run and applied:
+        state["last_seen"] = last_seen
+        _save_nudge_state(state)
     return applied
 
 

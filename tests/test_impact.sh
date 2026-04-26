@@ -825,6 +825,116 @@ else
 fi
 
 # -----------------------------------------------------------------------------
+# v3.20.2 — Idempotency hotfix (Sprint 5 follow-up)
+# -----------------------------------------------------------------------------
+echo "--- Test 38: apply_outcome_nudges is idempotent (same data, second call = 0) ---"
+# Reset sandbox so previous tests don't pollute state.
+rm -f "$SANDBOX/impact.jsonl" "$SANDBOX/nudge-state.json" "$SANDBOX/knowledge-log.md"
+rm -rf "$SANDBOX/instincts"
+mkdir -p "$SANDBOX/instincts/global"
+cat > "$SANDBOX/instincts/global/idem-test.yaml" <<'YAML'
+---
+id: idem-test
+confidence: 0.70
+domain: test
+---
+body
+YAML
+python3 -c "
+import json, os
+events = [{'v':1,'ts':'2026-04-26T10:00:00Z','ev':'outcome','iid':'idem-test','sid':'sid-I','error_within_10':False} for _ in range(6)]
+with open(os.path.join('$SANDBOX','impact.jsonl'),'a') as f:
+    for e in events: f.write(json.dumps(e)+'\n')
+"
+
+# First call: should apply 1 nudge.
+APPLY1=$(python3 "$IMPACT_PY" outcome-nudge --days 1 --apply --json 2>/dev/null)
+N1=$(echo "$APPLY1" | python3 -c "import json,sys; print(len(json.loads(sys.stdin.read())['applied']))")
+[ "$N1" = "1" ] && pass "first apply: 1 nudge applied" || fail "first apply expected 1, got $N1"
+
+# Second call with NO new outcomes: should apply 0 (was the v3.20.0/.1 bug — would apply 1 again).
+APPLY2=$(python3 "$IMPACT_PY" outcome-nudge --days 1 --apply --json 2>/dev/null)
+N2=$(echo "$APPLY2" | python3 -c "import json,sys; print(len(json.loads(sys.stdin.read())['applied']))")
+[ "$N2" = "0" ] && pass "second apply: 0 nudges (idempotent)" || fail "expected 0 on idempotent re-run, got $N2"
+
+# Third call: confidence file unchanged.
+CONF_AFTER=$(python3 -c "
+import re
+m = re.search(r'confidence:\s*([\d.]+)', open('$SANDBOX/instincts/global/idem-test.yaml').read())
+print(m.group(1) if m else 'NONE')
+")
+[ "$CONF_AFTER" = "0.7500" ] && pass "confidence still 0.7500 after re-runs" || fail "confidence drifted: $CONF_AFTER"
+
+# -----------------------------------------------------------------------------
+echo "--- Test 39: nudge resumes when NEW outcomes accumulate ---"
+# Add 6 more outcomes (total now 12) — gate should re-open.
+python3 -c "
+import json, os
+events = [{'v':1,'ts':'2026-04-26T10:00:00Z','ev':'outcome','iid':'idem-test','sid':'sid-I','error_within_10':False} for _ in range(6)]
+with open(os.path.join('$SANDBOX','impact.jsonl'),'a') as f:
+    for e in events: f.write(json.dumps(e)+'\n')
+"
+APPLY3=$(python3 "$IMPACT_PY" outcome-nudge --days 1 --apply --json 2>/dev/null)
+N3=$(echo "$APPLY3" | python3 -c "import json,sys; print(len(json.loads(sys.stdin.read())['applied']))")
+[ "$N3" = "1" ] && pass "new outcomes re-open the gate (1 nudge)" || fail "expected 1 with new outcomes, got $N3"
+
+CONF_AFTER2=$(python3 -c "
+import re
+m = re.search(r'confidence:\s*([\d.]+)', open('$SANDBOX/instincts/global/idem-test.yaml').read())
+print(m.group(1) if m else 'NONE')
+")
+[ "$CONF_AFTER2" = "0.8000" ] && pass "confidence advanced 0.7500 → 0.8000" || fail "expected 0.8000, got $CONF_AFTER2"
+
+# -----------------------------------------------------------------------------
+echo "--- Test 40: nudge-state.json records {outcome_total, last_nudge_ts} ---"
+if [ -f "$SANDBOX/nudge-state.json" ]; then
+  if python3 -c "
+import json
+state = json.load(open('$SANDBOX/nudge-state.json'))
+assert state['last_seen']['idem-test']['outcome_total'] == 12, 'wrong outcome_total'
+assert 'last_nudge_ts' in state['last_seen']['idem-test'], 'missing last_nudge_ts'
+" 2>/dev/null; then
+    pass "nudge-state.json shape correct"
+  else
+    fail "nudge-state.json shape wrong"
+    cat "$SANDBOX/nudge-state.json"
+  fi
+else
+  fail "nudge-state.json missing"
+fi
+
+# -----------------------------------------------------------------------------
+echo "--- Test 41: saturated instinct (already at 0.99) records state but no apply ---"
+cat > "$SANDBOX/instincts/global/sat-test.yaml" <<'YAML'
+---
+id: sat-test
+confidence: 0.99
+---
+YAML
+python3 -c "
+import json, os
+events = [{'v':1,'ts':'2026-04-26T10:00:00Z','ev':'outcome','iid':'sat-test','sid':'sid-S','error_within_10':False} for _ in range(6)]
+with open(os.path.join('$SANDBOX','impact.jsonl'),'a') as f:
+    for e in events: f.write(json.dumps(e)+'\n')
+"
+APPLY_SAT=$(python3 "$IMPACT_PY" outcome-nudge --days 1 --apply --json 2>/dev/null)
+SAT_APPLIED=$(echo "$APPLY_SAT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+print(any(a['iid']=='sat-test' for a in d['applied']))
+")
+[ "$SAT_APPLIED" = "False" ] && pass "saturated iid emits no apply entry" || fail "saturated iid leaked an apply"
+
+# Re-run: must remain a no-op (state was recorded so we don't keep checking).
+APPLY_SAT2=$(python3 "$IMPACT_PY" outcome-nudge --days 1 --apply --json 2>/dev/null)
+SAT2=$(echo "$APPLY_SAT2" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+print(any(a['iid']=='sat-test' for a in d['applied']))
+")
+[ "$SAT2" = "False" ] && pass "re-running saturated iid stays a no-op" || fail "saturated iid leaked on re-run"
+
+# -----------------------------------------------------------------------------
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 exit $FAIL

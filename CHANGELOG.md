@@ -4,6 +4,63 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.20.2] — 2026-04-26
+
+### Hotfix — `apply_outcome_nudges` was double-counting evidence
+
+Real-data inspection via `/cx-status --impact` after v3.20.1 surfaced
+that `gotcha-agent-spawn-preflight` had been nudged five times in a
+single day, racing from `confidence: 0.7700` to `0.9900` (the
+`NUDGE_MAX_CONF` clamp) on **identical evidence** — 14 outcome events
+that had not changed between Stop hooks. The Sprint 5 doc had promised
+"confidence cannot move >3 points per hour" but the implementation
+re-applied the same `+0.05` boost on every Stop because there was no
+memory of prior applications.
+
+The clamp at `0.99` prevented further damage but the rate-of-change
+contract was violated, and any instinct with positive outcomes was on
+the same trajectory.
+
+### Fixed
+
+- **`hooks/lib/impact_log.py:apply_outcome_nudges`** — gate every
+  apply on `now_seen > prev_seen` per iid. State is persisted to
+  `~/.claude/cortex/nudge-state.json` (`{version, last_seen: {iid:
+  {outcome_total, last_nudge_ts}}}`) with atomic `tmp + replace`.
+- **Saturated-iid handling** — when an iid is already at the
+  `NUDGE_MAX_CONF` (or `MIN_CONF`) clamp boundary, the function records
+  state but emits no apply entry, so subsequent re-runs stay no-op
+  instead of re-evaluating clamp arithmetic on every Stop hook.
+
+### Added
+
+- **`hooks/lib/impact_log.py`** — new helpers `_load_nudge_state()` and
+  `_save_nudge_state()`; new constant `NUDGE_STATE_FILE`.
+- **`docs/OUTCOME-RANKING.md`** — safeguard #7 (idempotency) added
+  with the v3.20.0/.1 saturation symptom documented as the motivating
+  bug. New "Reset" section explains how to wipe `nudge-state.json` if
+  it becomes inconsistent (manual confidence rewrites, recovery from
+  this very bug, etc.).
+
+### Tests
+
+- `test_impact.sh` adds **Tests 38–41** (8 new pass cases):
+  - 38: first apply nudges; second apply on same data is a no-op
+  - 39: gate re-opens when new outcomes accumulate; confidence advances
+  - 40: `nudge-state.json` shape (`outcome_total`, `last_nudge_ts`)
+  - 41: saturated iid (already at clamp) emits no apply entry across
+    re-runs
+- Suite: **56/56 PASS** (impact, was 48), full repo **248/248 PASS**.
+
+### Operator note
+
+Existing instincts whose YAML confidence was already inflated by the
+v3.20.0/.1 bug will NOT be reverted automatically by this hotfix. To
+roll a specific instinct back to its pre-bug confidence, edit the YAML
+frontmatter directly. To re-baseline the nudge memory after such an
+edit, delete `~/.claude/cortex/nudge-state.json` — the next Stop hook
+will recreate it from the current `impact.jsonl`.
+
 ## [3.20.1] — 2026-04-26
 
 ### Public-repo hygiene after v3.20.0 — CI gaps + README + SECURITY
