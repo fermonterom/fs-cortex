@@ -160,6 +160,63 @@
       "usefulCount": 0,
       "noiseCount": 0,
       "lastFired": null
+    },
+    {
+      "id": "bash-cat-use-read",
+      "matcher": "Bash",
+      "condition": "^(cat|head|tail)\\s+[\\.\\/~]?\\S*\\.(py|js|jsx|ts|tsx|md|json|ya?ml|sh|html|css|toml|cfg|ini|conf|sql|env)\\b",
+      "action": "Use Read tool (with limit/offset) instead of cat/head/tail for source files.",
+      "severity": "medium",
+      "enabled": true,
+      "fireCount": 0,
+      "usefulCount": 0,
+      "noiseCount": 0,
+      "lastFired": null,
+      "evaluator": {
+        "type": "tool-substitution",
+        "expected_tool": "Read",
+        "anti_tool": "Bash",
+        "anti_pattern": "^(cat|head|tail)\\s+[\\.\\/~]?\\S*\\.(py|js|jsx|ts|tsx|md|json|ya?ml|sh|html|css|toml|cfg|ini|conf|sql|env)\\b",
+        "window": 3
+      }
+    },
+    {
+      "id": "bash-grep-use-grep-tool",
+      "matcher": "Bash",
+      "condition": "^grep\\s+(-[a-zA-Z]*[rR])",
+      "action": "Use Grep tool instead of recursive grep — structured output, faster, no permission issues.",
+      "severity": "medium",
+      "enabled": true,
+      "fireCount": 0,
+      "usefulCount": 0,
+      "noiseCount": 0,
+      "lastFired": null,
+      "evaluator": {
+        "type": "tool-substitution",
+        "expected_tool": "Grep",
+        "anti_tool": "Bash",
+        "anti_pattern": "^grep\\s+(-[a-zA-Z]*[rR])",
+        "window": 3
+      }
+    },
+    {
+      "id": "bash-find-use-glob",
+      "matcher": "Bash",
+      "condition": "^find\\s+\\S+\\s+-name\\s+\\S+(?!.*-(exec|delete|newer|mtime|print0|prune))",
+      "action": "Use Glob tool instead of find for plain -name searches — faster, no permission issues.",
+      "severity": "medium",
+      "enabled": true,
+      "fireCount": 0,
+      "usefulCount": 0,
+      "noiseCount": 0,
+      "lastFired": null,
+      "evaluator": {
+        "type": "tool-substitution",
+        "expected_tool": "Glob",
+        "anti_tool": "Bash",
+        "anti_pattern": "^find\\s+\\S+\\s+-name\\s+\\S+(?!.*-(exec|delete|newer|mtime|print0|prune))",
+        "window": 3
+      }
     }
   ]
 }

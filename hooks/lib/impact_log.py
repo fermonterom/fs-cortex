@@ -30,6 +30,7 @@ import argparse
 import datetime as _dt
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -307,6 +308,180 @@ def gate_recommendation(metrics: dict[str, Any]) -> str:
     return "NO-GO"
 
 
+# ── outcome ranking (Sprint 5, v3.20.0) ─────────────────────────────────────
+
+NUDGE_BOOST_RATIO = 0.85   # ratio at/above which an iid earns +0.05 confidence
+NUDGE_DECAY_RATIO = 0.30   # ratio at/below which an iid loses 0.05 confidence
+NUDGE_DELTA = 0.05
+NUDGE_MIN_CONF = 0.10
+NUDGE_MAX_CONF = 0.99
+NUDGE_MIN_OUTCOMES = 5     # require >=N outcome events before nudging
+
+
+def compute_outcome_ranking(days: int = 14, min_outcomes: int = NUDGE_MIN_OUTCOMES) -> dict:
+    """Per-iid outcome cleanliness ratio + suggested confidence nudge.
+
+    For each iid that emitted at least `min_outcomes` outcome events in the
+    window, compute:
+      outcome_clean_ratio = count(error_within_10 == False) / count(outcome)
+
+    And map ratio → nudge:
+      ratio >= NUDGE_BOOST_RATIO  →  +NUDGE_DELTA  (confidence boost candidate)
+      ratio <= NUDGE_DECAY_RATIO  →  -NUDGE_DELTA  (confidence decay candidate)
+      otherwise                   →  0             (held — no signal yet)
+
+    Returns:
+      {
+        "<iid>": {
+          "outcome_total": int,
+          "outcome_clean": int,    # error_within_10 == False
+          "outcome_error": int,    # error_within_10 == True
+          "ratio": float,          # 0.00-1.00
+          "nudge": float,          # -NUDGE_DELTA, 0, +NUDGE_DELTA
+        },
+        ...
+      }
+    """
+    per_iid: dict[str, dict] = {}
+    for ev in _iter_events(since_days=days):
+        if ev.get("ev") != "outcome":
+            continue
+        iid = ev.get("iid")
+        if not iid:
+            continue
+        bucket = per_iid.setdefault(
+            iid, {"outcome_total": 0, "outcome_clean": 0, "outcome_error": 0}
+        )
+        bucket["outcome_total"] += 1
+        if ev.get("error_within_10") is True:
+            bucket["outcome_error"] += 1
+        else:
+            bucket["outcome_clean"] += 1
+
+    rankings: dict[str, dict] = {}
+    for iid, b in per_iid.items():
+        if b["outcome_total"] < min_outcomes:
+            continue
+        ratio = b["outcome_clean"] / b["outcome_total"]
+        if ratio >= NUDGE_BOOST_RATIO:
+            nudge = NUDGE_DELTA
+        elif ratio <= NUDGE_DECAY_RATIO:
+            nudge = -NUDGE_DELTA
+        else:
+            nudge = 0.0
+        rankings[iid] = {
+            **b,
+            "ratio": round(ratio, 4),
+            "nudge": nudge,
+        }
+    return rankings
+
+
+# ── nudge application — instinct YAML frontmatter (Sprint 5) ────────────────
+
+# Match `confidence: 0.XY` in YAML frontmatter, with optional quotes.
+_CONF_RE = re.compile(
+    r'^(?P<lead>confidence\s*:\s*)["\']?(?P<val>\d+(?:\.\d+)?)["\']?\s*$',
+    re.MULTILINE,
+)
+_ID_RE = re.compile(
+    r'^id\s*:\s*["\']?(?P<val>[^"\'\n]+?)["\']?\s*$',
+    re.MULTILINE,
+)
+
+
+def _instinct_yaml_paths():
+    """Yield Path of every instinct YAML known to this Cortex install."""
+    global_dir = CORTEX_DIR / "instincts" / "global"
+    if global_dir.is_dir():
+        for p in sorted(global_dir.glob("*.yaml")):
+            yield p
+    projects_dir = CORTEX_DIR / "projects"
+    if projects_dir.is_dir():
+        for proj in sorted(projects_dir.iterdir()):
+            inst_dir = proj / "instincts"
+            if inst_dir.is_dir():
+                for p in sorted(inst_dir.glob("*.yaml")):
+                    yield p
+
+
+def _read_yaml_id_and_conf(path):
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None, None, None
+    if not text.startswith("---"):
+        return None, None, text
+    end = text.find("---", 3)
+    if end < 0:
+        return None, None, text
+    front = text[3:end]
+    iid_m = _ID_RE.search(front)
+    conf_m = _CONF_RE.search(front)
+    iid = iid_m.group("val").strip() if iid_m else None
+    try:
+        conf = float(conf_m.group("val")) if conf_m else None
+    except ValueError:
+        conf = None
+    return iid, conf, text
+
+
+def apply_outcome_nudges(rankings: dict, dry_run: bool = False) -> list[dict]:
+    """Walk every instinct YAML and apply nudges from `rankings`.
+
+    Reflex iids (`reflex:*`) are skipped — reflexes have their own
+    enabled/usefulCount/noiseCount accounting, not a confidence field.
+
+    Returns a list of {iid, path, before, after, nudge} for every change
+    that was applied (or would be in dry-run).
+    """
+    applied: list[dict] = []
+    for path in _instinct_yaml_paths():
+        iid, conf, text = _read_yaml_id_and_conf(path)
+        if not iid or conf is None:
+            continue
+        if iid.startswith("reflex:"):
+            continue
+        rec = rankings.get(iid)
+        if not rec or not rec.get("nudge"):
+            continue
+        nudge = float(rec["nudge"])
+        new_conf = max(NUDGE_MIN_CONF, min(NUDGE_MAX_CONF, conf + nudge))
+        if abs(new_conf - conf) < 1e-6:
+            continue
+        applied.append(
+            {"iid": iid, "path": str(path), "before": round(conf, 4),
+             "after": round(new_conf, 4), "nudge": nudge}
+        )
+        if dry_run:
+            continue
+        new_text = _CONF_RE.sub(
+            lambda m: f"{m.group('lead')}{new_conf:.4f}", text, count=1
+        )
+        tmp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
+        tmp.write_text(new_text, encoding="utf-8")
+        tmp.replace(path)
+    return applied
+
+
+def log_nudges_to_knowledge(applied: list[dict]) -> None:
+    """Append one knowledge-log line per nudge."""
+    if not applied:
+        return
+    log_path = CORTEX_DIR / "knowledge-log.md"
+    today = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
+    lines = []
+    for a in applied:
+        lines.append(
+            f"{today} | outcome-nudge | {a['iid']} | "
+            f"conf {a['before']:.4f} → {a['after']:.4f} ({a['nudge']:+.2f}) | "
+            f"impact-funnel\n"
+        )
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_path, "a", encoding="utf-8") as fh:
+        fh.writelines(lines)
+
+
 # ── rotation ────────────────────────────────────────────────────────────────
 
 def rotate(days: int = ROTATION_DAYS) -> int:
@@ -424,6 +599,20 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("rotate", help=f"archive events older than {ROTATION_DAYS} days")
 
+    s_rank = sub.add_parser("outcome-ranking",
+                            help="per-iid outcome cleanliness + suggested confidence nudge")
+    s_rank.add_argument("--days", type=int, default=14)
+    s_rank.add_argument("--min-outcomes", type=int, default=NUDGE_MIN_OUTCOMES)
+    s_rank.add_argument("--json", action="store_true")
+
+    s_nudge = sub.add_parser("outcome-nudge",
+                             help="apply outcome-ranking nudges to instinct YAMLs (Sprint 5)")
+    s_nudge.add_argument("--days", type=int, default=14)
+    s_nudge.add_argument("--min-outcomes", type=int, default=NUDGE_MIN_OUTCOMES)
+    s_nudge.add_argument("--apply", action="store_true",
+                         help="actually write YAML changes (default: dry-run)")
+    s_nudge.add_argument("--json", action="store_true")
+
     s_log = sub.add_parser("log", help="append one impact event (for scripts/tests)")
     s_log.add_argument("--event", required=True, choices=sorted(VALID_EVENTS))
     s_log.add_argument("--iid")
@@ -448,6 +637,34 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "rotate":
         archived = rotate()
         print(f"archived {archived} events older than {ROTATION_DAYS} days")
+    elif args.cmd == "outcome-ranking":
+        rankings = compute_outcome_ranking(days=args.days, min_outcomes=args.min_outcomes)
+        if args.json:
+            print(json.dumps(rankings, indent=2, ensure_ascii=False))
+        else:
+            if not rankings:
+                print(f"No iids met the min-outcomes={args.min_outcomes} bar in the last {args.days} days.")
+            else:
+                print(f"\nOUTCOME RANKING — last {args.days} days, min outcomes={args.min_outcomes}")
+                print("─" * 70)
+                items = sorted(rankings.items(), key=lambda kv: (-kv[1]["nudge"], -kv[1]["ratio"]))
+                for iid, r in items:
+                    print(f"  {r['outcome_clean']:>4}/{r['outcome_total']:<4} clean  "
+                          f"ratio={r['ratio']:.4f}  nudge={r['nudge']:+.2f}  {iid}")
+    elif args.cmd == "outcome-nudge":
+        rankings = compute_outcome_ranking(days=args.days, min_outcomes=args.min_outcomes)
+        applied = apply_outcome_nudges(rankings, dry_run=not args.apply)
+        if args.apply and applied:
+            log_nudges_to_knowledge(applied)
+        if args.json:
+            print(json.dumps({"applied": applied, "dry_run": not args.apply}, indent=2))
+        else:
+            tag = "would apply" if not args.apply else "applied"
+            print(f"\n{tag} {len(applied)} nudge(s)")
+            for a in applied:
+                print(f"  {a['iid']:<45} {a['before']:.4f} → {a['after']:.4f}  ({a['nudge']:+.2f})")
+            if not args.apply and applied:
+                print("\n(dry-run — pass --apply to persist + log to knowledge-log.md)")
     elif args.cmd == "log":
         _cli_log(args)
 

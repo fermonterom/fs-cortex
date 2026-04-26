@@ -636,6 +636,195 @@ console.log(sl.correlateImpactEvents(obs, 'orphan-sid'));
 [ "$RATED2" = "0" ] && pass "second pass dedupes (no double emit)" || fail "expected 0 on dedup, got '$RATED2'"
 
 # -----------------------------------------------------------------------------
+# v3.20.0 — Outcome auto-ranking (Sprint 5)
+# -----------------------------------------------------------------------------
+echo "--- Test 31: compute_outcome_ranking returns nudge=+0.05 for clean iid ---"
+rm -f "$SANDBOX/impact.jsonl"
+# 6 outcome events for 'inst-A' all clean → ratio 1.0 → nudge +0.05
+for i in 1 2 3 4 5 6; do
+  python3 "$IMPACT_PY" log --event outcome --iid inst-A --sid sid-X
+done
+# Need to add `error_within_10` field — log subcommand doesn't support it; write directly
+rm -f "$SANDBOX/impact.jsonl"
+python3 -c "
+import json, os
+events = [{'v':1,'ts':'2026-04-26T10:00:00Z','ev':'outcome','iid':'inst-A','sid':'sid-X','error_within_10':False} for _ in range(6)]
+with open(os.path.join('$SANDBOX','impact.jsonl'),'a') as f:
+    for e in events: f.write(json.dumps(e)+'\n')
+"
+RANK=$(python3 "$IMPACT_PY" outcome-ranking --days 1 --json 2>/dev/null)
+if echo "$RANK" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+assert 'inst-A' in d, 'inst-A missing'
+assert d['inst-A']['nudge'] == 0.05, f\"nudge={d['inst-A']['nudge']}\"
+assert d['inst-A']['ratio'] == 1.0, f\"ratio={d['inst-A']['ratio']}\"
+" 2>/dev/null; then
+  pass "clean ratio → nudge +0.05"
+else
+  fail "outcome-ranking output unexpected: $RANK"
+fi
+
+# -----------------------------------------------------------------------------
+echo "--- Test 32: dirty iid earns nudge=-0.05 ---"
+rm -f "$SANDBOX/impact.jsonl"
+python3 -c "
+import json, os
+events = []
+# 6 outcomes: 5 errors, 1 clean → ratio 0.167 → nudge -0.05
+for i in range(5):
+    events.append({'v':1,'ts':'2026-04-26T10:00:00Z','ev':'outcome','iid':'inst-B','sid':'sid-Y','error_within_10':True})
+events.append({'v':1,'ts':'2026-04-26T10:00:00Z','ev':'outcome','iid':'inst-B','sid':'sid-Y','error_within_10':False})
+with open(os.path.join('$SANDBOX','impact.jsonl'),'a') as f:
+    for e in events: f.write(json.dumps(e)+'\n')
+"
+RANK=$(python3 "$IMPACT_PY" outcome-ranking --days 1 --json 2>/dev/null)
+if echo "$RANK" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+assert d['inst-B']['nudge'] == -0.05, f\"nudge={d['inst-B']['nudge']}\"
+" 2>/dev/null; then
+  pass "dirty ratio → nudge -0.05"
+else
+  fail "outcome-ranking dirty output unexpected: $RANK"
+fi
+
+# -----------------------------------------------------------------------------
+echo "--- Test 33: middling ratio (0.30 < r < 0.85) earns nudge=0 ---"
+rm -f "$SANDBOX/impact.jsonl"
+python3 -c "
+import json, os
+events = []
+# 6 outcomes: 3 errors, 3 clean → ratio 0.5 → nudge 0
+for i in range(3):
+    events.append({'v':1,'ts':'2026-04-26T10:00:00Z','ev':'outcome','iid':'inst-C','sid':'sid-Z','error_within_10':True})
+for i in range(3):
+    events.append({'v':1,'ts':'2026-04-26T10:00:00Z','ev':'outcome','iid':'inst-C','sid':'sid-Z','error_within_10':False})
+with open(os.path.join('$SANDBOX','impact.jsonl'),'a') as f:
+    for e in events: f.write(json.dumps(e)+'\n')
+"
+RANK=$(python3 "$IMPACT_PY" outcome-ranking --days 1 --json 2>/dev/null)
+if echo "$RANK" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+assert d['inst-C']['nudge'] == 0.0, f\"nudge={d['inst-C']['nudge']}\"
+" 2>/dev/null; then
+  pass "middling ratio → nudge 0"
+else
+  fail "outcome-ranking middling output unexpected: $RANK"
+fi
+
+# -----------------------------------------------------------------------------
+echo "--- Test 34: iids below min-outcomes are excluded ---"
+rm -f "$SANDBOX/impact.jsonl"
+python3 -c "
+import json, os
+# Only 4 outcomes for 'inst-D' (default min is 5) → should be excluded
+events = [{'v':1,'ts':'2026-04-26T10:00:00Z','ev':'outcome','iid':'inst-D','sid':'sid-W','error_within_10':False} for _ in range(4)]
+with open(os.path.join('$SANDBOX','impact.jsonl'),'a') as f:
+    for e in events: f.write(json.dumps(e)+'\n')
+"
+RANK=$(python3 "$IMPACT_PY" outcome-ranking --days 1 --json 2>/dev/null)
+if echo "$RANK" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+assert 'inst-D' not in d, 'inst-D should be excluded (only 4 outcomes < min 5)'
+" 2>/dev/null; then
+  pass "iid with <min-outcomes excluded"
+else
+  fail "min-outcomes filter not applied: $RANK"
+fi
+
+# -----------------------------------------------------------------------------
+echo "--- Test 35: apply_outcome_nudges skips reflex:* iids ---"
+# Even if a reflex iid has clean outcomes, apply_outcome_nudges must not
+# touch any YAML for it (reflexes don't have confidence — they have
+# enabled/usefulCount/noiseCount).
+rm -f "$SANDBOX/impact.jsonl"
+mkdir -p "$SANDBOX/instincts/global"
+cat > "$SANDBOX/instincts/global/test-instinct.yaml" <<'YAML'
+---
+id: test-instinct
+confidence: 0.70
+domain: test
+---
+body
+YAML
+python3 -c "
+import json, os
+events = []
+# 6 clean outcomes for the reflex (must be skipped)
+for i in range(6):
+    events.append({'v':1,'ts':'2026-04-26T10:00:00Z','ev':'outcome','iid':'reflex:test-reflex','sid':'sid-R','error_within_10':False})
+# 6 clean outcomes for the instinct (must be applied)
+for i in range(6):
+    events.append({'v':1,'ts':'2026-04-26T10:00:00Z','ev':'outcome','iid':'test-instinct','sid':'sid-R','error_within_10':False})
+with open(os.path.join('$SANDBOX','impact.jsonl'),'a') as f:
+    for e in events: f.write(json.dumps(e)+'\n')
+"
+APPLY=$(python3 "$IMPACT_PY" outcome-nudge --days 1 --apply --json 2>/dev/null)
+if echo "$APPLY" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+ids = [a['iid'] for a in d['applied']]
+assert 'test-instinct' in ids, 'instinct nudge not applied'
+assert not any(i.startswith('reflex:') for i in ids), f'reflex nudge leaked: {ids}'
+" 2>/dev/null; then
+  pass "instinct nudged; reflex iid skipped"
+else
+  fail "apply_outcome_nudges leaked reflex iids: $APPLY"
+fi
+
+# -----------------------------------------------------------------------------
+echo "--- Test 36: nudge persisted to YAML and clamped to [0.10, 0.99] ---"
+NEW_CONF=$(python3 -c "
+import re
+text = open('$SANDBOX/instincts/global/test-instinct.yaml').read()
+m = re.search(r'confidence:\s*([\d.]+)', text)
+print(m.group(1) if m else 'NONE')
+")
+if [ "$NEW_CONF" = "0.7500" ]; then
+  pass "confidence rewritten 0.7000 → 0.7500"
+else
+  fail "confidence not updated as expected: got $NEW_CONF"
+fi
+
+# Idempotency-adjacent: cap at 0.99
+cat > "$SANDBOX/instincts/global/cap-test.yaml" <<'YAML'
+---
+id: cap-test
+confidence: 0.97
+---
+YAML
+python3 "$IMPACT_PY" log --event outcome --iid cap-test --sid sid-C 2>/dev/null
+python3 -c "
+import json, os
+events = [{'v':1,'ts':'2026-04-26T10:00:00Z','ev':'outcome','iid':'cap-test','sid':'sid-C','error_within_10':False} for _ in range(6)]
+with open(os.path.join('$SANDBOX','impact.jsonl'),'a') as f:
+    for e in events: f.write(json.dumps(e)+'\n')
+"
+python3 "$IMPACT_PY" outcome-nudge --days 1 --apply --json >/dev/null 2>&1
+CAPPED=$(python3 -c "
+import re
+m = re.search(r'confidence:\s*([\d.]+)', open('$SANDBOX/instincts/global/cap-test.yaml').read())
+print(m.group(1) if m else 'NONE')
+")
+if [ "$CAPPED" = "0.9900" ]; then
+  pass "confidence clamped to NUDGE_MAX_CONF=0.99"
+else
+  fail "confidence not clamped: got $CAPPED (expected 0.9900)"
+fi
+
+# -----------------------------------------------------------------------------
+echo "--- Test 37: knowledge-log.md gets one line per applied nudge ---"
+KL_LINES=$(grep -c '^2026.*outcome-nudge' "$SANDBOX/knowledge-log.md" 2>/dev/null || echo 0)
+if [ "$KL_LINES" -ge 2 ]; then
+  pass "knowledge-log records nudges (>=2 lines)"
+else
+  fail "knowledge-log nudge entries missing: got $KL_LINES"
+fi
+
+# -----------------------------------------------------------------------------
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 exit $FAIL

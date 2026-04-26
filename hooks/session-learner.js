@@ -1277,6 +1277,27 @@ async function main() {
       log(`Reflex feedback failed: ${e.message}`);
     }
 
+    // Step 5e: Outcome auto-ranking — nudge instinct confidence based on
+    // observed outcome cleanliness. Sprint 5, v3.20.0. Reflexes are skipped
+    // by impact_log.apply_outcome_nudges (they have their own accounting).
+    try {
+      const { spawnSync } = require('child_process');
+      const impactPy = path.join(__dirname, 'lib', 'impact_log.py');
+      if (fs.existsSync(impactPy)) {
+        const r = spawnSync('python3', [impactPy, 'outcome-nudge', '--days', '14', '--apply', '--json'],
+          { encoding: 'utf8', timeout: 5000, env: process.env });
+        if (r.status === 0 && r.stdout) {
+          try {
+            const out = JSON.parse(r.stdout);
+            const n = (out.applied || []).length;
+            if (n > 0) log(`Applied ${n} outcome-nudge(s) to instinct YAMLs`);
+          } catch (_) { /* JSON parse error — skip silently */ }
+        }
+      }
+    } catch (e) {
+      log(`Outcome nudge failed: ${e.message}`);
+    }
+
     // Step 6: Combine all proposals with session_date for cross-day tracking
     const rawProposals = [
       ...errorProposals,

@@ -35,3 +35,4 @@ docs/*
 !docs/IMPACT-METRICS.md
 !docs/AGENT-FEEDBACK.md
 !docs/AUTO-EVALUATION.md
+!docs/OUTCOME-RANKING.md

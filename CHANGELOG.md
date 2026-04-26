@@ -4,6 +4,92 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.20.0] — 2026-04-26
+
+### Sprint 5 — Autonomy + intelligence
+
+The impact funnel has been collecting `outcome` events with
+`error_within_10` since v3.19.4 but never closed the loop on instinct
+confidence. Sprint 5 wires that signal directly into the YAML
+frontmatter at every Stop hook, refines the three auto-disabled
+tool-substitution reflexes with narrower matchers, and audits the
+NEVER-FIRED reflexes (all kept — matchers were correct, the corpus
+just doesn't touch their domains).
+
+### Added
+
+- **`hooks/lib/impact_log.py`** —
+  - `compute_outcome_ranking(days=14, min_outcomes=5)` returns per-iid
+    `outcome_clean_ratio` and a confidence nudge in `{-0.05, 0, +0.05}`.
+    Bands: ratio `>=0.85` boost, `<=0.30` decay, otherwise hold.
+  - `apply_outcome_nudges(rankings, dry_run=False)` walks every
+    instinct YAML and rewrites `confidence:` in the frontmatter. Reflex
+    iids (`reflex:*`) are skipped — they have their own runtime
+    accounting. Atomic `tmp + replace`. Clamped to `[0.10, 0.99]`.
+  - `log_nudges_to_knowledge(applied)` appends one pipe-delimited line
+    per applied nudge to `~/.claude/cortex/knowledge-log.md`.
+  - Two new CLI subcommands: `outcome-ranking` (read-only) and
+    `outcome-nudge` (defaults to dry-run, `--apply` to persist).
+- **`hooks/session-learner.js` Step 5e** — spawns
+  `python3 impact_log.py outcome-nudge --apply --json` after the reflex
+  feedback step at every Stop hook. 5s subprocess timeout; failures
+  are logged but never block the rest of the Stop pipeline.
+- **`core/reflexes.default.json`** — three new reflexes
+  (`bash-cat-use-read`, `bash-grep-use-grep-tool`, `bash-find-use-glob`)
+  with refined matchers. They had existed only in user runtime files
+  prior; new installs now get them with the v3.20.0 matchers from day
+  one.
+- **`docs/OUTCOME-RANKING.md`** — full architectural decision record
+  including algorithm contract, safeguards (min sample size, bounded
+  delta, hard clamp, reflex immunity, conservative middle band), Stop
+  hook integration, failure modes, and CLI surface.
+
+### Changed
+
+- **`hooks/lib/impact_log.py` imports** — added `import re` for the
+  YAML frontmatter regex used by `apply_outcome_nudges`.
+- **Refined tool-substitution matchers** (Sprint 5 task 2c):
+  - `bash-cat-use-read`: now fires only when cat/head/tail reads a
+    source file by extension (py, js, ts, tsx, md, json, yaml, sh,
+    html, css, toml, sql, env, etc.). Excludes pipes, heredocs, log
+    tails, and operational concat.
+  - `bash-grep-use-grep-tool`: now fires only on recursive grep
+    (`grep -r/-R` flag present). Drops `-n` and `-l` which are common
+    in legitimate pipe usage.
+  - `bash-find-use-glob`: now fires only on plain `-name` searches
+    without `-exec`/`-delete`/`-newer`/`-mtime`/`-print0`/`-prune`,
+    since Glob can't replace those find features.
+- **3 reflexes reactivated** in runtime `~/.claude/cortex/reflexes.json`
+  with `usefulCount=0` / `noiseCount=0` after matcher refinement
+  (Sprint 5 task 2d). The pre-refinement counters were accumulated
+  under broken correlator logic (pre-v3.19.3) and over-broad matchers,
+  so a clean slate is more honest than reusing them.
+
+### Tests
+
+- `test_impact.sh` adds **Tests 31–37** (8 new):
+  - 31: clean ratio → `+0.05` nudge
+  - 32: dirty ratio → `-0.05` nudge
+  - 33: middling ratio → `0` nudge
+  - 34: iids below `min_outcomes` excluded
+  - 35: `apply_outcome_nudges` skips `reflex:*` iids
+  - 36: nudge persisted to YAML + clamped to `[0.10, 0.99]`
+  - 37: `knowledge-log.md` gets one line per applied nudge
+- Suite: **48/48 PASS** (impact, was 40), **9/9** (observe),
+  **8/8** (learner), **7/7** (security), **35/35** (dream),
+  **12/12** (migrate).
+
+### Audit (no code change)
+
+- **9 NEVER-FIRED reflexes reviewed** (`git-merge-verify`,
+  `security-headers`, `html-twin-deliverables`,
+  `python3-bypass-write-tool`, `instinct-downvote`, `capture-decision`,
+  `tavily-rate-limit`, `docker-cross-network`, `git-tag-after-amend`).
+  All matchers are correct and domain-specific — the never-fired
+  signal reflects which domains the user touched in the window, not a
+  matcher problem. No changes were made. Documented in
+  `docs/OUTCOME-RANKING.md`.
+
 ## [3.19.6] — 2026-04-26
 
 ### Cosmetic — visual explainer footer was three releases behind
