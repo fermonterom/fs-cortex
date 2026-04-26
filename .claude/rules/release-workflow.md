@@ -101,7 +101,16 @@ git push && git push --tags
 ```
 git diff HEAD -- CHANGELOG.md  # Must show changes
 bash tests/test_security.sh && bash tests/test_dream_cycle.sh  # Must pass
+
+# Sanity check — every place that hardcodes the version must read the new one.
+# Run this and eyeball that ALL FOUR lines show the same new version:
+grep -E 'NEW_VERSION="|NewVersion = "|^# fs-cortex v|fs-cortex v[0-9].* &middot;' \
+  install.sh install.ps1 docs/FEATURES.md docs/FEATURES-visual.html
 ```
+
+`docs/FEATURES-visual.html` was missed in v3.19.3, v3.19.4, and v3.19.5
+in a row before the v3.19.6 cosmetic catch-up. Run the grep above before
+`git push` so the count of stale references is always **zero**.
 
 ## Complete push sequence
 

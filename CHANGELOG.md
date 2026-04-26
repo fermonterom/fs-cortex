@@ -4,6 +4,30 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.19.6] — 2026-04-26
+
+### Cosmetic — visual explainer footer was three releases behind
+
+`docs/FEATURES-visual.html` is the public visual explainer for the project
+and the only HTML deliverable that mirrors the version. The footer was
+last bumped to `v3.19.2` and then silently skipped by three consecutive
+release cycles (v3.19.3, v3.19.4, v3.19.5), so anyone opening the live
+explainer saw a stale version label even though the underlying code was
+current. The omission is now explicitly called out in the release
+checklist via `.claude/rules/release-workflow.md`.
+
+### Fixed
+
+- **`docs/FEATURES-visual.html`** — footer line `fs-cortex v3.19.2 &middot;
+  Open source (MIT)` updated to `v3.19.6`. No content, layout, or asset
+  change otherwise.
+
+### Tests
+
+- No code paths touched. Pre-push hook (`tests/test_security.sh` 7/7,
+  `tests/test_dream_cycle.sh` 35/35) re-run as part of the release
+  guardrails.
+
 ## [3.19.5] — 2026-04-26
 
 ### Data hygiene + docs sync after the v3.19.4 outcome/agent-feedback unblock
