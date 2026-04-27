@@ -4,6 +4,84 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.21.1] — 2026-04-27
+
+### Hotfix — `install.sh` aborted at Step 8b when invoked outside the repo
+
+Latent regression introduced in v3.0.1 (2026-04-09) when the git pre-push
+hook installation step was added. The line:
+
+```bash
+GIT_HOOKS_DIR=$(git -C "$SCRIPT_DIR" rev-parse --git-dir 2>/dev/null)/hooks
+```
+
+returns the **relative** path `.git` when the repo is not a worktree,
+which is then concatenated to `/hooks` and passed to `cp`. The shell
+resolves the resulting `.git/hooks/pre-push` against the **user's
+working directory**, not against `SCRIPT_DIR`. Users who invoked the
+installer with an absolute path (`bash /Users/me/github/fs-cortex/install.sh`)
+from any directory other than the repo root saw:
+
+```
+cp: .git/hooks/pre-push: No such file or directory
+```
+
+`set -e` then aborted the script before Steps 10–14, leaving the
+installation half-finished:
+
+- Steps 5–8a (cortex/, memory.json, reflexes.json, skill, commands,
+  hooks, lib modules) — completed normally.
+- Step 8b (git pre-push hook) — **failed**.
+- Step 10 (settings.json hooks merge) — skipped.
+- Step 11 (CLAUDE.md Cortex section) — skipped.
+- Step 14 (`~/.claude/cortex/version` marker) — skipped, so the file
+  reported the previous version.
+
+The runtime impact was small: the hooks Cortex needs were already in
+place (Step 8a copies them) and `settings.json` from earlier installs
+already pointed to `~/.claude/hooks/cortex/`. The user-visible damage
+was a stale version marker and a confusing error.
+
+### Fixed
+
+- **`install.sh` Step 8b** — switched to
+  `git rev-parse --absolute-git-dir` and added an extra
+  `[ -d "$GIT_HOOKS_DIR" ]` guard so the cp only runs against an
+  existing target directory. The block now silently skips on:
+  - `SCRIPT_DIR` not in a git repo (e.g. user installed from a
+    tarball)
+  - Sibling worktrees with no `hooks/` directory
+  - Anyone running the installer from outside the repo
+
+### Unaffected
+
+- **`install.ps1`** — does not install a git pre-push hook, so the
+  same family of bugs cannot occur on Windows.
+
+### Tests
+
+- No code-path test was exercising Step 8b before this release
+  (`test_install.sh` runs the installer in a sandbox where `SCRIPT_DIR`
+  always equals `cwd`, masking the relative-path bug). This release
+  does not add a regression test for it — the fix is a one-character
+  flag change to a shell command, and the canonical way to test it
+  would require running `install.sh` from a non-repo `cwd`, which
+  conflicts with the test sandbox layout. Marked as a known
+  test-coverage gap; will be addressed when `test_install.sh` gets
+  its next overhaul.
+
+### Recovery
+
+If you hit the original bug, the fix re-runs cleanly:
+
+```bash
+bash /Users/<you>/github/fs-cortex/install.sh
+```
+
+The Y/N prompt confirms the v3.21.0 → v3.21.1 upgrade. Step 14 will
+write `~/.claude/cortex/version = 3.21.1`, repairing the stale
+marker that v3.21.0 left behind.
+
 ## [3.21.0] — 2026-04-27
 
 ### Cohort-based outcome nudging — the definitive fix

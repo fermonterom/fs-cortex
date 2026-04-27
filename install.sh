@@ -21,7 +21,7 @@ COMMANDS_DIR="$CLAUDE_DIR/commands"
 HOOKS_DIR="$CLAUDE_DIR/hooks/cortex"
 SETTINGS_FILE="$CLAUDE_DIR/settings.json"
 CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
-NEW_VERSION="3.21.0"
+NEW_VERSION="3.21.1"
 
 print_header() {
     echo ""
@@ -264,9 +264,11 @@ if [ -d "$SCRIPT_DIR/hooks/lib" ]; then
 fi
 
 # Step 8b: Install git pre-push hook (version+changelog enforcement)
-if [ -d "$SCRIPT_DIR/.git" ] || git -C "$SCRIPT_DIR" rev-parse --git-dir >/dev/null 2>&1; then
-    GIT_HOOKS_DIR=$(git -C "$SCRIPT_DIR" rev-parse --git-dir 2>/dev/null)/hooks
-    if [ -f "$SCRIPT_DIR/githooks/pre-push" ]; then
+# v3.21.1 fix: use --absolute-git-dir; previous --git-dir returned a relative
+# `.git` when invoked from outside the repo, breaking `cp` (resolved against CWD).
+if git -C "$SCRIPT_DIR" rev-parse --absolute-git-dir >/dev/null 2>&1; then
+    GIT_HOOKS_DIR="$(git -C "$SCRIPT_DIR" rev-parse --absolute-git-dir 2>/dev/null)/hooks"
+    if [ -f "$SCRIPT_DIR/githooks/pre-push" ] && [ -d "$GIT_HOOKS_DIR" ]; then
         cp "$SCRIPT_DIR/githooks/pre-push" "$GIT_HOOKS_DIR/pre-push"
         chmod +x "$GIT_HOOKS_DIR/pre-push"
         print_ok "Git pre-push hook installed (version+changelog guard)"
