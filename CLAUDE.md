@@ -6,6 +6,13 @@
 hooks, modules, and capabilities of this project. Read it before exploring source
 files — it provides a complete inventory and is kept up-to-date with every release.
 
+## Pending validation
+
+**`docs/SPRINT-5-PENDING-GATES.md`** — three measurement gates from Sprint 5
+that require fresh production data to validate (matcher quality, reflex
+auto-disable loop, injection-rate reduction). Re-check after 24-48h of
+normal use. Delete the file when all gates pass.
+
 ## Release workflow
 
 All pushes to `main` must follow `.claude/rules/release-workflow.md`:

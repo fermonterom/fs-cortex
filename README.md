@@ -30,7 +30,7 @@ Observe (hooks)  →  Analyze  →  Validate  →  Distill  →  Evolve  →  Au
    (JSONL, 0 tok)                  (YAML)       (TXT)     (evolved/)
 ```
 
-Parallel systems: **Reflexes** (10 deterministic rules, always fire) and **Agents** (3 specialized: pattern analysis, code review, task planning).
+Parallel systems: **Reflexes** (11 deterministic rules, always fire) and **Agents** (3 specialized: pattern analysis, code review, task planning).
 
 ### Dual Injection
 
@@ -257,7 +257,7 @@ Also fires `session-start.py` on `/compact` to re-inject laws.
 ```
 ~/.claude/cortex/
 ├── memory.json              # Identity + config + stats
-├── reflexes.json            # Deterministic rules (13 default — see below)
+├── reflexes.json            # Deterministic rules (11 default — see below)
 ├── impact.jsonl             # Impact funnel (Sprint 0+, v:1) — inject/follow/feedback/outcome events
 ├── proposals.json           # Pending proposals from session-learner + cx-analyze
 ├── laws/                    # One-liners (max 10 active)

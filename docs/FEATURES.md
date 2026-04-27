@@ -1,7 +1,7 @@
-# fs-cortex v3.21.1 — Feature Reference
+# fs-cortex v3.21.2 — Feature Reference
 
 > Complete inventory of all features, commands, hooks, modules, and capabilities.
-> Last updated: 2026-04-26
+> Last updated: 2026-04-27
 
 ---
 
@@ -300,7 +300,7 @@ All interactive commands use consistent shorthand (no modal dialogs):
 
 ---
 
-## Reflexes (10 default)
+## Reflexes (11 default)
 
 Deterministic rules via hooks — not probabilistic instructions. Triggers are regex patterns.
 
@@ -566,3 +566,4 @@ locally (not installed to `~/.claude/`):
 | v3.20.2 | 2026-04-26 | **Hotfix — outcome-nudge idempotency.** Detected via `/cx-status --impact` after v3.20.1: `gotcha-agent-spawn-preflight` raced from `0.77 → 0.99` (cap) in five consecutive Stop hooks on identical evidence because `apply_outcome_nudges` re-evaluated the same 14-day outcome window each call without remembering prior applications. Fix: persist `~/.claude/cortex/nudge-state.json` per iid (`{outcome_total, last_nudge_ts}`) and gate the nudge on `now_seen > prev_seen`. Saturated iids (already at clamp) record state but emit no apply entry, so the gate stays a no-op afterward. New tests 38–41 in `test_impact.sh` (idempotency, gate re-open on new outcomes, state shape, saturated iid). 48 → **56 PASS**. `OUTCOME-RANKING.md` adds safeguard #7 + reset instructions (`rm nudge-state.json`). |
 | v3.21.0 | 2026-04-27 | **Cohort-based outcome nudging — definitive fix.** The v3.20.2 `outcome_total` gate closed the visible saturation symptom but left four latent defects exposed by an internal Six-Hat review + independent sub-agent audit: aggregate-ratio drift, archive decrement, parallel-Stop race, no clawback. v3.21.0 reframes the apply path around a **cohort** of new evidence: new helper `compute_outcome_decisions(state)` only counts outcomes with `ts > state.iids[iid].last_event_ts`, so the ratio is marginal (only what arrived since the last decision). Schema bump `nudge-state.json` v1 → v2 (`{version: 2, iids: {<iid>: {last_event_ts, last_nudge_ts, last_direction, conf_at_last_nudge}}}`); v1 state is discarded on first load (already-applied YAML confidences are preserved). Concurrency: `fcntl.flock` advisory lock on `nudge-state.json.lock` serializes parallel Stop hooks (no-op fallback on Windows). Tests 42–45 added: drift cohort decay, parallel-apply lock, archive resilience, v1→v2 migration. `test_impact.sh` 56 → **61 PASS**. `OUTCOME-RANKING.md` safeguard #7 rewritten. |
 | v3.21.1 | 2026-04-27 | **Hotfix — `install.sh` Step 8b crashed when run from outside the repo.** Latent bug since v3.0.1 (2026-04-09): `git -C "$SCRIPT_DIR" rev-parse --git-dir` returns the **relative** path `.git`, which the subsequent `cp` resolves against the user's `cwd`, not against `SCRIPT_DIR`. If the user invoked the installer with an absolute path (e.g. `bash /Users/fmm/github/fs-cortex/install.sh`) from any non-repo directory, the script aborted at Step 8b under `set -e`, leaving Steps 10–14 unexecuted (settings.json hooks merge, CLAUDE.md update, version marker). The Cortex code itself was already in place (Steps 5–8a finished), so end-users typically saw a half-finished install with stale `~/.claude/cortex/version`. Fix: use `git rev-parse --absolute-git-dir`. `install.ps1` does not install a pre-push hook, so it is unaffected. |
+| v3.21.2 | 2026-04-27 | **Cleanup — remove two reflexes whose matcher design never worked.** `instinct-downvote` (matcher `Bash` + condition `/cx-downvote\|wrong instinct\|...`) and `capture-decision` (matcher `Bash\|Edit\|Write` + condition `from now on\|always use\|...`) targeted user-prompt patterns, but reflexes match against tool **input**, not against the user's chat message — so neither reflex ever fired in production (0 fires across 14 days, against 2314 inject events). Both removed from `core/reflexes.default.json`. Default reflex count 13 → **11**. New `docs/SPRINT-5-PENDING-GATES.md` tracks the three Sprint 5 measurement gates that need fresh production data (matcher quality of `bash-grep-use-grep-tool`, no-re-disable check on the three reactivated NOISY reflexes, ≥40% injection-rate reduction vs pre-Sprint-5 baseline). `CLAUDE.md` references the gates doc so it surfaces at SessionStart until all gates pass. User-local `~/.claude/cortex/reflexes.json` is **not** modified by the installer — existing copies of the two removed reflexes stay in place until the user prunes them. No code changes. |

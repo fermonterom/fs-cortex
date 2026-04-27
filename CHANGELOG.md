@@ -4,6 +4,92 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.21.2] — 2026-04-27
+
+### Cleanup — remove two reflexes whose matcher design never fired
+
+`core/reflexes.default.json` shipped two reflexes since the early days
+that targeted user-prompt patterns (`/cx-downvote`, `wrong instinct`,
+`from now on`, `always use`, …) via the `Bash`/`Edit`/`Write` matcher.
+Reflexes match against tool **input**, not against the user's chat
+message — so the condition strings never appeared in tool input and
+neither reflex ever fired:
+
+- `instinct-downvote` — 0 fires across 14 days vs 2314 inject events.
+- `capture-decision` — 0 fires across 14 days.
+
+Both removed from `core/reflexes.default.json`. The default reflex
+count drops from 13 to **11**.
+
+### Diagnosis of three user-local reflexes (informational)
+
+`/cx-status --reflexes` flagged three other reflexes worth tracking but
+they live in user-local `~/.claude/cortex/reflexes.json`, not in the
+shipped default, so this release does **not** modify them:
+
+- `git-tag-after-amend` (severity `high`, 24 fires / 1 useful) — the
+  matcher fires on every `git tag -a vX.Y.Z`, including normal release
+  tags where no `--amend` is coming. Consider lowering severity to
+  `medium` or narrowing the condition.
+- `tavily-rate-limit` (0 fires / 3 useful events in `impact.jsonl`) —
+  matcher `tavily` should still substring-match MCP-prefixed tool names;
+  worth verifying the regex pipeline.
+- `python3-bypass-write-tool` (0 fires) — kept; rare safety net for
+  Read-first bypass via `python3 -c "...write_text..."`.
+
+### Added
+
+- `docs/SPRINT-5-PENDING-GATES.md` — tracks the three measurement gates
+  from Sprint 5 that need fresh production data to validate:
+  - Gate 1: `bash-grep-use-grep-tool` useful/noise ratio ≥ 3× (currently
+    1.13× — fails).
+  - Gate 2: the three reactivated NOISY reflexes stay enabled (currently
+    pass).
+  - Gate 3: 7-day rolling inject/session ≥ 40% lower than pre-Sprint-5
+    baseline (unmeasured — needs reconstruction from history).
+- `CLAUDE.md` — new "Pending validation" section that references
+  `docs/SPRINT-5-PENDING-GATES.md` so the gates surface at SessionStart
+  until they all pass and the file is deleted.
+
+### Changed
+
+- `README.md` — reflex count 10 → **11** in the parallel-systems
+  paragraph, and 13 → **11** in the `~/.claude/cortex/` tree comment.
+- `docs/FEATURES.md` — header version, last-updated date, reflex count
+  (`Reflexes (11 default)`), and version-history row for v3.21.2.
+- `docs/FEATURES-visual.html` — footer bumped to v3.21.2.
+
+### Tests
+
+- No new tests. The change is data-only: removing two JSON entries from
+  a config file. `core/reflexes.default.json` is consumed by
+  `install.sh` Step 6 (`cp -n reflexes.default.json reflexes.json`), so
+  fresh installs will get 11 reflexes; existing installs are not
+  touched and keep whatever the user has tuned locally.
+
+### Migration
+
+- Existing users with the two removed reflexes still in their
+  `~/.claude/cortex/reflexes.json` can prune them safely:
+  ```bash
+  python3 -c "
+  import json, pathlib
+  p = pathlib.Path.home() / '.claude/cortex/reflexes.json'
+  data = json.loads(p.read_text())
+  reflexes = data.get('reflexes', data)
+  if isinstance(reflexes, list):
+      reflexes[:] = [r for r in reflexes if r.get('id') not in
+                     ('instinct-downvote', 'capture-decision')]
+  elif isinstance(reflexes, dict):
+      for rid in ('instinct-downvote', 'capture-decision'):
+          reflexes.pop(rid, None)
+  p.write_text(json.dumps(data, indent=2))
+  print('pruned')
+  "
+  ```
+  Skipping this leaves them in place but harmless — they are
+  `enabled: true` with 0 fire history, so they cost nothing.
+
 ## [3.21.1] — 2026-04-27
 
 ### Hotfix — `install.sh` aborted at Step 8b when invoked outside the repo
