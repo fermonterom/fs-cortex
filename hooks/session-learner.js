@@ -1126,6 +1126,33 @@ function correlateReflexFeedback(observations, sidOrSids) {
   const reflexData = readJsonFile(REFLEXES_PATH);
   if (!reflexData || !Array.isArray(reflexData.reflexes)) return 0;
 
+  // v3.22.1: auto-heal — backfill `resetAt` on the three bash-* reflexes
+  // that v3.20.0 reset (matchers refined, useful/noise counters zeroed,
+  // but no boundary marker was written). Idempotent: only sets the field
+  // when missing AND the reflex matches the known-reset shape (fireCount
+  // > 0 AND noiseCount === 0 AND usefulCount === 0). Future resets must
+  // set `resetAt` directly at the time of reset.
+  const V3_20_0_RESET_AT = '2026-04-26T13:31:57+02:00';
+  const KNOWN_V3_20_0_RESETS = new Set([
+    'bash-cat-use-read',
+    'bash-grep-use-grep-tool',
+    'bash-find-use-glob',
+  ]);
+  let autoHealed = false;
+  for (const r of reflexData.reflexes) {
+    if (!KNOWN_V3_20_0_RESETS.has(r.id)) continue;
+    if (r.resetAt) continue;
+    const fires = r.fireCount || 0;
+    const useful = r.usefulCount || 0;
+    const noise = r.noiseCount || 0;
+    if (fires > 0 && useful === 0 && noise === 0) {
+      r.resetAt = V3_20_0_RESET_AT;
+      autoHealed = true;
+      log(`Auto-healed reflex ${r.id}: resetAt = ${V3_20_0_RESET_AT}`);
+    }
+  }
+  if (autoHealed) writeJsonFile(REFLEXES_PATH, reflexData);
+
   const reflexById = Object.create(null);
   for (const r of reflexData.reflexes) reflexById[r.id] = r;
 

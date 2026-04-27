@@ -638,6 +638,10 @@ console.log(sl.correlateImpactEvents(obs, 'orphan-sid'));
 # -----------------------------------------------------------------------------
 # v3.20.0 — Outcome auto-ranking (Sprint 5)
 # -----------------------------------------------------------------------------
+# v3.22.1: switch tests 31-34 to a dynamically-generated UTC timestamp so
+# they don't go red 24 h after the original 2026-04-26 fixture date.
+NOW_TS=$(python3 -c "import datetime; print(datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))")
+
 echo "--- Test 31: compute_outcome_ranking returns nudge=+0.05 for clean iid ---"
 rm -f "$SANDBOX/impact.jsonl"
 # 6 outcome events for 'inst-A' all clean → ratio 1.0 → nudge +0.05
@@ -648,7 +652,7 @@ done
 rm -f "$SANDBOX/impact.jsonl"
 python3 -c "
 import json, os
-events = [{'v':1,'ts':'2026-04-26T10:00:00Z','ev':'outcome','iid':'inst-A','sid':'sid-X','error_within_10':False} for _ in range(6)]
+events = [{'v':1,'ts':'$NOW_TS','ev':'outcome','iid':'inst-A','sid':'sid-X','error_within_10':False} for _ in range(6)]
 with open(os.path.join('$SANDBOX','impact.jsonl'),'a') as f:
     for e in events: f.write(json.dumps(e)+'\n')
 "
@@ -673,8 +677,8 @@ import json, os
 events = []
 # 6 outcomes: 5 errors, 1 clean → ratio 0.167 → nudge -0.05
 for i in range(5):
-    events.append({'v':1,'ts':'2026-04-26T10:00:00Z','ev':'outcome','iid':'inst-B','sid':'sid-Y','error_within_10':True})
-events.append({'v':1,'ts':'2026-04-26T10:00:00Z','ev':'outcome','iid':'inst-B','sid':'sid-Y','error_within_10':False})
+    events.append({'v':1,'ts':'$NOW_TS','ev':'outcome','iid':'inst-B','sid':'sid-Y','error_within_10':True})
+events.append({'v':1,'ts':'$NOW_TS','ev':'outcome','iid':'inst-B','sid':'sid-Y','error_within_10':False})
 with open(os.path.join('$SANDBOX','impact.jsonl'),'a') as f:
     for e in events: f.write(json.dumps(e)+'\n')
 "
@@ -697,9 +701,9 @@ import json, os
 events = []
 # 6 outcomes: 3 errors, 3 clean → ratio 0.5 → nudge 0
 for i in range(3):
-    events.append({'v':1,'ts':'2026-04-26T10:00:00Z','ev':'outcome','iid':'inst-C','sid':'sid-Z','error_within_10':True})
+    events.append({'v':1,'ts':'$NOW_TS','ev':'outcome','iid':'inst-C','sid':'sid-Z','error_within_10':True})
 for i in range(3):
-    events.append({'v':1,'ts':'2026-04-26T10:00:00Z','ev':'outcome','iid':'inst-C','sid':'sid-Z','error_within_10':False})
+    events.append({'v':1,'ts':'$NOW_TS','ev':'outcome','iid':'inst-C','sid':'sid-Z','error_within_10':False})
 with open(os.path.join('$SANDBOX','impact.jsonl'),'a') as f:
     for e in events: f.write(json.dumps(e)+'\n')
 "
@@ -720,7 +724,7 @@ rm -f "$SANDBOX/impact.jsonl"
 python3 -c "
 import json, os
 # Only 4 outcomes for 'inst-D' (default min is 5) → should be excluded
-events = [{'v':1,'ts':'2026-04-26T10:00:00Z','ev':'outcome','iid':'inst-D','sid':'sid-W','error_within_10':False} for _ in range(4)]
+events = [{'v':1,'ts':'$NOW_TS','ev':'outcome','iid':'inst-D','sid':'sid-W','error_within_10':False} for _ in range(4)]
 with open(os.path.join('$SANDBOX','impact.jsonl'),'a') as f:
     for e in events: f.write(json.dumps(e)+'\n')
 "
@@ -1091,6 +1095,126 @@ if echo "$LOAD_OUT" | grep -q "^2 | \[\]$"; then
   pass "v1 state discarded; canonical v2 shape returned"
 else
   fail "v1→v2 migration unexpected: $LOAD_OUT"
+fi
+
+# -----------------------------------------------------------------------------
+# v3.22.1 — Reset honesty (Sprint 5 follow-up)
+# -----------------------------------------------------------------------------
+echo "--- Test 46: compute_metrics excludes pre-resetAt events for the reflex ---"
+rm -f "$SANDBOX/impact.jsonl" "$SANDBOX/reflexes.json"
+# Reflex with resetAt at midnight 2030-01-01 — anything before is dropped,
+# anything at-or-after is counted. Use a far-future boundary to make the
+# fixture stable regardless of when the test runs.
+cat > "$SANDBOX/reflexes.json" <<'JSON'
+{
+  "version": "2.3.0",
+  "reflexes": [
+    {
+      "id": "test-reflex",
+      "matcher": "Bash",
+      "resetAt": "2030-01-01T00:00:00Z",
+      "fireCount": 0, "usefulCount": 0, "noiseCount": 0
+    },
+    {
+      "id": "other-reflex",
+      "matcher": "Bash",
+      "fireCount": 0, "usefulCount": 0, "noiseCount": 0
+    }
+  ]
+}
+JSON
+python3 -c "
+import json, os
+events = [
+    # Pre-reset noise for test-reflex — MUST be filtered out
+    {'v':1,'ts':'2029-12-31T23:00:00Z','ev':'inject','iid':'reflex:test-reflex','sid':'s1','tool':'Bash'},
+    {'v':1,'ts':'2029-12-31T23:00:01Z','ev':'feedback','iid':'reflex:test-reflex','sid':'s1','rating':'noise','source':'agent','inject_ts':'2029-12-31T23:00:00Z'},
+    # Post-reset useful for test-reflex — MUST be counted
+    {'v':1,'ts':'2030-01-02T10:00:00Z','ev':'inject','iid':'reflex:test-reflex','sid':'s2','tool':'Bash'},
+    {'v':1,'ts':'2030-01-02T10:00:01Z','ev':'feedback','iid':'reflex:test-reflex','sid':'s2','rating':'useful','source':'agent','inject_ts':'2030-01-02T10:00:00Z'},
+]
+with open(os.path.join('$SANDBOX','impact.jsonl'),'w') as f:
+    for e in events: f.write(json.dumps(e)+'\n')
+"
+# --days 365000 ≈ no time-cutoff, so the only filter is resetAt.
+STATS=$(python3 "$IMPACT_PY" stats --days 365000 --json 2>/dev/null)
+if echo "$STATS" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+top_useful = dict(d.get('top_useful', []))
+top_noisy = dict(d.get('top_noisy', []))
+# Pre-reset noise must be filtered out
+assert top_noisy.get('reflex:test-reflex', 0) == 0, f\"pre-reset noise leaked: {top_noisy}\"
+# Post-reset useful must be counted
+assert top_useful.get('reflex:test-reflex', 0) == 1, f\"post-reset useful missing: {top_useful}\"
+" 2>/dev/null; then
+  pass "pre-resetAt events filtered, post-resetAt counted"
+else
+  fail "resetAt boundary not respected: $STATS"
+fi
+
+# -----------------------------------------------------------------------------
+echo "--- Test 47: _load_reflex_resets returns empty dict on missing file ---"
+rm -f "$SANDBOX/reflexes.json"
+RESETS=$(python3 -c "
+import sys, os; sys.path.insert(0, '$REPO_ROOT/hooks/lib')
+os.environ['CORTEX_DIR'] = '$SANDBOX'
+import importlib, impact_log
+importlib.reload(impact_log)
+print(impact_log._load_reflex_resets())
+" 2>&1)
+if echo "$RESETS" | grep -q "^{}$"; then
+  pass "missing reflexes.json → empty resets dict"
+else
+  fail "expected {}, got: $RESETS"
+fi
+
+# -----------------------------------------------------------------------------
+echo "--- Test 48: resetAt on one reflex does not affect other reflexes ---"
+rm -f "$SANDBOX/impact.jsonl"
+cat > "$SANDBOX/reflexes.json" <<'JSON'
+{
+  "version": "2.3.0",
+  "reflexes": [
+    {
+      "id": "gated-reflex",
+      "matcher": "Bash",
+      "resetAt": "2030-01-01T00:00:00Z",
+      "fireCount": 0, "usefulCount": 0, "noiseCount": 0
+    },
+    {
+      "id": "ungated-reflex",
+      "matcher": "Bash",
+      "fireCount": 0, "usefulCount": 0, "noiseCount": 0
+    }
+  ]
+}
+JSON
+python3 -c "
+import json, os
+events = [
+    # Pre-reset event for gated-reflex (filtered) and ungated-reflex (kept)
+    {'v':1,'ts':'2029-12-31T23:00:00Z','ev':'inject','iid':'reflex:gated-reflex','sid':'s1','tool':'Bash'},
+    {'v':1,'ts':'2029-12-31T23:00:01Z','ev':'feedback','iid':'reflex:gated-reflex','sid':'s1','rating':'useful','source':'agent','inject_ts':'2029-12-31T23:00:00Z'},
+    {'v':1,'ts':'2029-12-31T23:00:02Z','ev':'inject','iid':'reflex:ungated-reflex','sid':'s1','tool':'Bash'},
+    {'v':1,'ts':'2029-12-31T23:00:03Z','ev':'feedback','iid':'reflex:ungated-reflex','sid':'s1','rating':'useful','source':'agent','inject_ts':'2029-12-31T23:00:02Z'},
+]
+with open(os.path.join('$SANDBOX','impact.jsonl'),'w') as f:
+    for e in events: f.write(json.dumps(e)+'\n')
+"
+STATS=$(python3 "$IMPACT_PY" stats --days 365000 --json 2>/dev/null)
+if echo "$STATS" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+top_useful = dict(d.get('top_useful', []))
+# gated-reflex: pre-reset useful filtered out → 0
+assert top_useful.get('reflex:gated-reflex', 0) == 0, f\"gated-reflex pre-reset leaked: {top_useful}\"
+# ungated-reflex: same-era event kept → 1
+assert top_useful.get('reflex:ungated-reflex', 0) == 1, f\"ungated-reflex erased: {top_useful}\"
+" 2>/dev/null; then
+  pass "resetAt on one reflex leaves other reflex events alone"
+else
+  fail "cross-reflex contamination: $STATS"
 fi
 
 # -----------------------------------------------------------------------------

@@ -144,12 +144,88 @@ def log_feedback(
 
 # ── reader ──────────────────────────────────────────────────────────────────
 
-def _iter_events(path: Path = IMPACT_FILE, since_days: int | None = None):
+# v3.22.1: per-reflex `resetAt` boundary. When v3.20.0-style refinement
+# resets a reflex's useful/noise counters, the impact funnel stays
+# polluted by the pre-refinement evidence (the matcher that produced
+# those events no longer exists). `_load_reflex_resets()` reads
+# `reflexes.json` and returns `{reflex_id: resetAt_iso}` for every
+# reflex with a non-empty `resetAt`. Callers that aggregate per-iid
+# (compute_metrics, top_useful/top_noisy) honor this boundary by
+# discarding events with `ts < resetAt`. Other callers (rotate,
+# outcome-ranking) ignore it — they need the raw history.
+REFLEXES_FILE = CORTEX_DIR / "reflexes.json"
+
+
+def _load_reflex_resets() -> dict[str, str]:
+    """Return {reflex_id: resetAt_iso} for every reflex carrying a `resetAt`.
+
+    Returns an empty dict if the file is missing, malformed, or no reflex
+    declares a reset boundary. Cheap to call (one JSON parse, no caching) —
+    `compute_metrics` invokes it once per `--impact` run.
+    """
+    if not REFLEXES_FILE.exists():
+        return {}
+    try:
+        data = json.loads(REFLEXES_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    resets: dict[str, str] = {}
+    items = data.get("reflexes", []) if isinstance(data, dict) else []
+    if not isinstance(items, list):
+        return {}
+    for r in items:
+        if not isinstance(r, dict):
+            continue
+        rid = r.get("id")
+        rts = r.get("resetAt")
+        if isinstance(rid, str) and isinstance(rts, str) and rts:
+            resets[rid] = rts
+    return resets
+
+
+def _is_pre_reset(iid: str | None, ts_raw: str, reflex_resets: dict[str, str]) -> bool:
+    """True if `iid` is `reflex:X` and `ts_raw` is strictly older than the
+    reflex's `resetAt`. Lexicographic compare on ISO-8601 strings is
+    correct for both `Z` and `+HH:MM` forms when both ends are normalized
+    to UTC, but `resetAt` may be timezone-aware (e.g. `+02:00`) while
+    impact events use `Z`. We normalize both sides via parsing.
+    """
+    if not isinstance(iid, str) or not iid.startswith("reflex:"):
+        return False
+    rid = iid[len("reflex:"):]
+    boundary = reflex_resets.get(rid)
+    if not boundary:
+        return False
+    try:
+        ev_ts = _dt.datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+        bd_ts = _dt.datetime.fromisoformat(boundary.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return False
+    if ev_ts.tzinfo is None:
+        ev_ts = ev_ts.replace(tzinfo=_dt.timezone.utc)
+    if bd_ts.tzinfo is None:
+        bd_ts = bd_ts.replace(tzinfo=_dt.timezone.utc)
+    return ev_ts < bd_ts
+
+
+def _iter_events(
+    path: Path = IMPACT_FILE,
+    since_days: int | None = None,
+    reflex_resets: dict[str, str] | None = None,
+):
+    """Iterate events from `impact.jsonl`, optionally filtered by:
+      * `since_days` — drop events older than N days.
+      * `reflex_resets` — drop `reflex:X` events with `ts < resetAt[X]`.
+        Pass `None` (default) to disable. `compute_metrics` passes a
+        dict from `_load_reflex_resets()`; `rotate()` and outcome
+        helpers leave it as `None` because they need raw history.
+    """
     if not path.exists():
         return
     cutoff: _dt.datetime | None = None
     if since_days is not None:
         cutoff = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=since_days)
+    resets = reflex_resets or {}
     with open(path, "r", encoding="utf-8", errors="replace") as fh:
         for raw in fh:
             raw = raw.strip()
@@ -159,14 +235,16 @@ def _iter_events(path: Path = IMPACT_FILE, since_days: int | None = None):
                 obj = json.loads(raw)
             except json.JSONDecodeError:
                 continue
+            ts_raw = obj.get("ts", "")
             if cutoff is not None:
-                ts_raw = obj.get("ts", "")
                 try:
                     when = _dt.datetime.strptime(ts_raw, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=_dt.timezone.utc)
                 except ValueError:
                     continue
                 if when < cutoff:
                     continue
+            if resets and _is_pre_reset(obj.get("iid"), ts_raw, resets):
+                continue
             yield obj
 
 
@@ -208,7 +286,13 @@ def compute_metrics(days: int = 14) -> dict[str, Any]:
     noise_user = 0
     noise_agent = 0
 
-    for ev in _iter_events(since_days=days):
+    # v3.22.1: honor per-reflex resetAt boundaries so refined matchers
+    # don't drag pre-refinement evidence into Sprint 5 gates. See
+    # `_load_reflex_resets()` for the data source and SPRINT-5-RESET-
+    # HONESTY-FIX.md for the diagnosis.
+    reflex_resets = _load_reflex_resets()
+
+    for ev in _iter_events(since_days=days, reflex_resets=reflex_resets):
         kind = ev.get("ev")
         if kind in counts:
             counts[kind] += 1
