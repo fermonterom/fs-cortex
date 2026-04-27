@@ -4,6 +4,85 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.22.1] — 2026-04-27
+
+### Fixed
+
+- **Reset-aware impact stats** — `/cx-status --impact` was reporting a
+  misleading `1.13×` useful/noise ratio for `bash-grep-use-grep-tool`
+  (Sprint 5 Gate 1) because it aggregated events from BOTH eras of the
+  matcher: pre-v3.20.0 (when the matcher was wider and produced 62 noise
+  events) AND post-v3.20.0 (refined matcher, 0 fires in 50 h). The
+  refined matcher inherited the old data, so the gate never read clean.
+
+  New behavior: each reflex may carry an optional `resetAt` ISO-8601
+  timestamp. `hooks/lib/impact_log.py` now reads `reflexes.json` once
+  per `compute_metrics()` call via the new `_load_reflex_resets()`
+  helper, and `_iter_events()` discards any `reflex:X` event whose
+  `ts < resetAt[X]`. Other callers (`rotate()`, outcome-ranking,
+  outcome-nudge) leave the boundary disabled by passing
+  `reflex_resets=None`. Default behavior unchanged when no reflex has a
+  `resetAt`. Schema bump `core/reflexes.default.json` 2.2.0 → 2.3.0
+  (the field is optional, backward compatible — the shipped template
+  does not declare any reset boundary).
+
+  `hooks/session-learner.js` `correlateReflexFeedback` now auto-heals
+  user-local `~/.claude/cortex/reflexes.json` runtimes: at the next
+  Stop event, the three v3.20.0-reset reflexes (`bash-cat-use-read`,
+  `bash-grep-use-grep-tool`, `bash-find-use-glob`) get their `resetAt`
+  backfilled to `2026-04-26T13:31:57+02:00` (the v3.20.0 commit
+  timestamp) — but only when they match the known-reset shape
+  (`fireCount > 0 AND usefulCount === 0 AND noiseCount === 0`). The
+  heal is idempotent: subsequent runs skip reflexes that already have
+  a `resetAt`. New future-proof contract: code paths that reset reflex
+  counters must ALSO set `resetAt` at the time of reset (otherwise
+  `--impact` will keep aggregating pre-reset events).
+
+  This unblocks `docs/SPRINT-5-PENDING-GATES.md` Gate 1: the
+  `bash-grep-use-grep-tool` ratio will now reflect post-reset data
+  only, not the polluted blend of pre- and post-refinement evidence.
+
+- **`tests/test_impact.sh` 31-33 time-fragility** — these tests
+  hardcoded the fixture timestamp `2026-04-26T10:00:00Z` with
+  `--days 1`, so the window expired the moment the wall clock passed
+  24 h after that date. CI went red on the v3.21.2 and v3.22.0
+  releases purely because the date moved on. Fixed by computing
+  `NOW_TS=$(python3 -c ...utcnow().strftime(...))` once before
+  Test 31 and using `'$NOW_TS'` everywhere inside the fixture
+  python heredocs (Tests 31, 32, 33, 34). Closes the "Known issues"
+  block declared in v3.22.0.
+
+### Added
+
+- **`hooks/lib/impact_log.py`** — `_load_reflex_resets()` and
+  `_is_pre_reset()` helpers, plus a new optional `reflex_resets`
+  parameter on `_iter_events()`.
+- **3 new tests in `tests/test_impact.sh`** (46-48):
+  - Test 46: `compute_metrics` excludes pre-`resetAt` events for
+    the configured reflex.
+  - Test 47: `_load_reflex_resets()` returns `{}` when
+    `reflexes.json` is missing.
+  - Test 48: `resetAt` on one reflex does not affect events of
+    other reflexes (no cross-contamination).
+
+### Tests at release
+
+| Suite | Result |
+|---|---|
+| `test_impact.sh` | **64/64 PASS** (was 58/61 with 3 fragility) |
+| `test_security.sh` | 7/7 PASS |
+| `test_dream_cycle.sh` | 35/35 PASS |
+| `test_distill_engine.sh` | 15/15 PASS |
+
+### Migration
+
+No user action required. The auto-heal in `session-learner.js` runs at
+the next Stop hook and backfills `resetAt` on the three known-reset
+reflexes if (and only if) the local runtime matches the post-reset
+shape. Users whose `reflexes.json` already has those three reflexes
+with non-zero `usefulCount`/`noiseCount` are skipped — the heal only
+applies to runtimes that genuinely had counters reset by v3.20.0.
+
 ## [3.22.0] — 2026-04-27
 
 ### Sprint 6 · Auto-distill engine

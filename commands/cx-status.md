@@ -215,6 +215,15 @@ Output includes:
 Supports `--days N` to change the lookback window (default 14). Pass
 `--json` for machine-readable output suitable for dashboards.
 
+**Reset-aware aggregation (v3.22.1+)** — when a reflex carries an
+optional `resetAt` ISO-8601 timestamp in `reflexes.json`, this panel
+discards `reflex:X` events whose `ts < resetAt[X]`. This keeps Gate 1
+honest after matcher-refining releases (v3.20.0 reset the three
+`bash-*` reflexes; their pre-refinement evidence is no longer
+attributable to the current matcher). Other callers — `rotate()`,
+`outcome-ranking`, `outcome-nudge` — leave the boundary disabled and
+see raw history.
+
 ### `--reflexes` — Reflex health panel (v3.18.0+)
 
 Skip the full dashboard and show a per-reflex health table from
