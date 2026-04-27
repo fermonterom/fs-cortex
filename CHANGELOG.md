@@ -4,6 +4,108 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.22.0] — 2026-04-27
+
+### Sprint 6 · Auto-distill engine
+
+Closes the manual-loop gap left over from the original v4.0 plan: the
+deterministic parts of `/cx-distill` (decay, archive, instinct → law
+promotion) now run automatically at SessionStart, gated to once per 24h.
+The judgment-heavy parts (project → global Jaccard promotion, law
+replacement when 10/10 active, instinct merging, borderline universality
+calls) stay manual under `/cx-distill` — unchanged behaviour.
+
+### Added
+
+- **`hooks/lib/distill_engine.py`** (827 LOC, pure stdlib) — the engine.
+  Public API: `run_auto_distill()`, `apply_decay()`, `archive_decayed()`,
+  `auto_promote_to_law()`. CLI:
+  - `python3 distill_engine.py auto [--dry-run]` — full auto pass.
+  - `python3 distill_engine.py decay [--dry-run]` — decay only.
+  - `python3 distill_engine.py promote [--dry-run]` — promotion check only.
+  - `python3 distill_engine.py status` — show current candidates.
+
+  Concurrency safety via `fcntl.flock` on `.distill-engine.lock` (POSIX);
+  silent no-op on Windows. Atomic writes via `os.replace`. Honors
+  `CORTEX_DIR` env var for sandbox testing.
+
+- **Auto-promote-to-law gate** — STRICT: an instinct only graduates
+  automatically when ALL of:
+  1. `confidence ≥ 0.95`
+  2. Sustained ≥ 14 days at that confidence (new YAML field
+     `at_law_threshold_since` tracks the first crossing; gets removed
+     when the instinct drops below 0.95).
+  3. Seen in ≥ 3 distinct projects (union of `project_id` field,
+     `projects_seen[]` array, and filesystem locations).
+  4. ≥ 5 useful events in last 14 days from `impact.jsonl`.
+  5. 0 noise events in last 14 days.
+  6. No existing law overlaps content (Jaccard < 0.50 of trigger+action
+     tokens vs every active law file).
+  7. Active law count < 10.
+
+  Instincts at conf ≥ 0.95 that fail any of (2)-(7) get written as a
+  1-line summary to `~/.claude/cortex/auto-distill-candidates.md` so
+  the user can review them with `/cx-distill`.
+
+- **`hooks/session-start.py`** — new step 3d invokes
+  `run_auto_distill()`, prints a 1-line summary if anything changed
+  (`[CORTEX] auto-distill: N decayed, N archived, N promoted, N candidates`).
+  Errors are silently swallowed — auto-distill must never block a session.
+
+- **`tests/test_distill_engine.sh`** (651 LOC, 15 tests, all PASS) —
+  decay basic / stacking / fresh-noop, archive on low conf, threshold
+  tracking field set/cleared, the 7 promotion-gate failure modes,
+  promotion happy path, idempotency, rate-limit marker, parallel-lock.
+
+- **Knowledge log entries** — every auto action appends one line to
+  `~/.claude/cortex/knowledge-log.md` under source `cx-auto-distill`
+  (vs `cx-distill` for manual runs). Format unchanged:
+  `YYYY-MM-DD | <event> | <id> | <detail> | cx-auto-distill`.
+
+### Changed
+
+- **`hooks/session-start.py` `check_maintenance()`** — the legacy
+  weekly `[MAINT] Run /cx-distill` nag now ONLY fires when
+  `~/.claude/cortex/auto-distill-candidates.md` is non-empty. Users
+  whose system has nothing pending no longer see the reminder.
+- **`docs/FEATURES.md`** — header version, last-updated date, version
+  history row for v3.22.0.
+- **`docs/FEATURES-visual.html`** — footer bumped to v3.22.0.
+
+### Known issues — deferred to v3.22.1
+
+- `tests/test_impact.sh` tests 31-33 hardcode the timestamp
+  `2026-04-26T10:00:00Z` with `stats --days 1`. The window expires when
+  the wall clock advances past 24h after the fixture date, so these
+  tests turn red on day-2 even with no code changes. Pre-existing
+  fragility (not introduced by this release). Other tests in the same
+  file using the same timestamp pass because they assert the
+  empty/no-op state which coincides with the post-expiration result.
+  Fix in v3.22.1: switch to dynamic `date -u`-derived timestamps.
+
+### Tests at release
+
+| Suite | Result |
+|---|---|
+| `test_distill_engine.sh` | **15/15 PASS** (new) |
+| `test_security.sh` | 7/7 PASS |
+| `test_dream_cycle.sh` | 35/35 PASS |
+| `test_impact.sh` | 58/61 PASS (3 pre-existing time-fragility, see Known issues) |
+
+### Migration
+
+No migration required for users. The engine creates its own state files
+on first run. Existing `~/.claude/cortex/` data is read but never
+mutated outside the standard YAML/log/marker channels documented above.
+
+The new YAML field `at_law_threshold_since` is added lazily by the
+engine on the first auto-distill run that observes an instinct at
+conf ≥ 0.95 — older YAMLs without it are interpreted as
+"threshold-crossing happened today", so they need 14 more days before
+becoming eligible for auto-promotion. Run `/cx-distill` manually if
+you want to bypass the wait for an instinct that has been stable for
+months already.
+
 ## [3.21.2] — 2026-04-27
 
 ### Cleanup — remove two reflexes whose matcher design never fired

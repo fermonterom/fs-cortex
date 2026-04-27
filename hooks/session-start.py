@@ -104,10 +104,19 @@ def check_maintenance():
     """Check distill (7d), audit (30d), validate (pending proposals)."""
     reminders = []
 
-    # Distill: weekly
-    distill_file = CORTEX_DIR / '.last-distill'
-    if not distill_file.exists() or _file_older_than(distill_file, 7):
-        reminders.append("[MAINT] Run /cx-distill — 7+ days since last distillation (decay, promotions, law extraction).")
+    # Distill: only surface when there are pending candidates (Sprint 6).
+    # Auto-distill now handles decay/archive/promotion automatically; the
+    # manual /cx-distill reminder fires only when candidates need human review.
+    candidates_file = CORTEX_DIR / 'auto-distill-candidates.md'
+    has_candidates = False
+    if candidates_file.exists():
+        try:
+            content = candidates_file.read_text(encoding='utf-8').strip()
+            has_candidates = bool(content)
+        except Exception:
+            pass
+    if has_candidates:
+        reminders.append("[MAINT] Run /cx-distill — promotion candidates pending review.")
 
     # Audit: monthly
     audit_file = CORTEX_DIR / '.last-audit'
@@ -303,6 +312,18 @@ def main():
     # 3b. Maintenance reminders
     for reminder in check_maintenance():
         parts.append(f'\n{reminder}')
+
+    # 3d. Auto-distill (Sprint 6 — runs once per 24h, idempotent)
+    try:
+        from distill_engine import run_auto_distill
+        summary = run_auto_distill()
+        if summary.get("decayed") or summary.get("archived") or summary.get("promoted") or summary.get("candidates"):
+            line = f"[CORTEX] auto-distill: {summary['decayed']} decayed, {summary['archived']} archived, {summary['promoted']} promoted"
+            if summary.get("candidates"):
+                line += f", {summary['candidates']} candidate(s) — run /cx-distill to review"
+            parts.append(f"\n{line}")
+    except Exception:
+        pass  # never block session-start on engine errors
 
     # 3c. Context bridge
     ctx = inject_context_bridge(input_json)
