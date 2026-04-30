@@ -4,6 +4,113 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.22.2] — 2026-04-30
+
+### Cleanup pass + Sprint 5 gates partial closure
+
+Triggered by Fer's instinct that `noise_events: 1` post-v3.22.1 looked
+too clean after several days of intensive work. Three parallel
+sub-agents (haiku for the comparative report, 2× sonnet for forensics
+and sprint inventory) confirmed the pipeline is healthy AND surfaced
+accumulated cruft to clean.
+
+### Findings (forense subagent)
+
+- The `noise_events: 1` reading is **real, not broken pipeline**. 105
+  of 106 historical noise events come from the three bash-* reflexes
+  pre-`resetAt: 2026-04-26` and are correctly excluded by v3.22.1's
+  reset-aware aggregation. The single survivor is a manual rating on
+  `read-before-edit`. The current `impact.jsonl` only has ~5 days of
+  fresh post-reset history — most of the file fits inside the 14-day
+  window, so ratios are artifact-inflated.
+- Verdict: re-measure `--impact` ratios from mid-May 2026 once 30+
+  days of fresh data accumulate.
+
+### Changed
+
+- **`docs/SPRINT-5-PENDING-GATES.md`** rewritten with status updates:
+  - **Gate 2 — three reactivated NOISY reflexes stay enabled**:
+    ✅ **PASS** (closed). All three (`bash-cat-use-read`,
+    `bash-grep-use-grep-tool`, `bash-find-use-glob`) remain
+    `enabled: true` with `noiseCount: 0` after 5+ days of fresh data.
+  - **Gate 3 — inject/session ≥ 40% lower than pre-Sprint-5**:
+    ❌ **DROPPED**. The pre-v3.20.0 baseline is not reconstructible
+    from the current `impact.jsonl` (earliest event is 2026-04-25).
+    The intent — "Sprint 5 reduces noise injection" — is already
+    covered by the aggregate `useful_ratio: 0.90` and `noise_ratio:
+    0.0003` reported by `/cx-status --impact`. Specific ratio gate
+    not needed.
+  - **Gate 1 — `bash-grep-use-grep-tool` ratio ≥ 3×**: ⏳ PENDING
+    until mid-May 2026. v3.22.1 made it honest by excluding
+    pre-`resetAt` events; current post-reset window (5d) is too small.
+    Pass criterion clarified: `useful / noise ≥ 3.0` AND
+    `useful + noise ≥ 50`.
+
+### Cleanup recommendations (NOT shipped — local-only changes)
+
+This release does not modify any code or installed runtime. It
+documents the audit conclusions and provides per-user migration
+guidance:
+
+#### Niche laws → skills (free 4 law slots)
+
+The following 4 laws in `~/.claude/cortex/laws/` are project-specific
+(NOT universal) and should live in skills, where they auto-load by
+trigger only when the relevant stack is in use. Currently they burn
+~135 tokens per session in projects that don't use that stack:
+
+- `playwright-selector-priority.txt` → covered by skill `fs-e2e`
+- `supabase-rls-verify.txt` → covered by skill `fs-supabase-gotchas`
+- `three-layer-security.txt` → covered by skill `fs-supabase-gotchas`
+- `touch-visible-buttons.txt` → covered by skill `fs-web-design`
+
+Per-user archive:
+
+```bash
+cd ~/.claude/cortex/laws && mkdir -p archive
+mv playwright-selector-priority.txt supabase-rls-verify.txt \
+   three-layer-security.txt touch-visible-buttons.txt archive/
+```
+
+Active law count after archive: 11 → 7 universal-only. Plenty of
+slots for organic growth.
+
+#### Cap drift in manual `/cx-distill`
+
+The auto-promote engine (`distill_engine.py auto_promote_to_law`)
+correctly enforces `LAW_MAX_ACTIVE = 10` (line 626). The 11-active-laws
+state happened because manual `/cx-distill` does not enforce the cap
+when adding laws — its spec recommends "evaluate replacement vs new"
+but the user can approve a candidate without performing the
+replacement. Future tightening: enforce cap in the manual command too.
+
+#### Dead reflex cleanup
+
+Per-user audit candidates with sustained low utility:
+
+| Reflex | Fires | Useful | Action |
+|---|---|---|---|
+| `html-twin-deliverables` | 35 | 0 | Delete (no signal in 6+ months) |
+| `git-tag-after-amend` | 39 | 1 | Lower severity high → low (informational) |
+| `docker-cross-network` | 682 | 3 | Lower severity medium → low (overgenerous matcher) |
+
+Per-user pruning is reversible (the `core/reflexes.default.json` ships
+the canonical set; user-local additions are purely opt-in).
+
+### Tests
+
+- `test_security.sh` 7/7 PASS (unchanged)
+- `test_dream_cycle.sh` 35/35 PASS (unchanged)
+- `test_impact.sh` 64/64 PASS (unchanged from v3.22.1)
+- `test_distill_engine.sh` 15/15 PASS (unchanged)
+
+No new tests — this release ships only docs.
+
+### Migration from v3.22.1
+
+No upgrade action required. Run the optional cleanup snippets above
+if you want to apply the audit recommendations to your local config.
+
 ## [3.22.1] — 2026-04-27
 
 ### Fixed

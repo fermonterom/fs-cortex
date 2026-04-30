@@ -8,10 +8,10 @@ files — it provides a complete inventory and is kept up-to-date with every rel
 
 ## Pending validation
 
-**`docs/SPRINT-5-PENDING-GATES.md`** — three measurement gates from Sprint 5
-that require fresh production data to validate (matcher quality, reflex
-auto-disable loop, injection-rate reduction). Re-check after 24-48h of
-normal use. Delete the file when all gates pass.
+**`docs/SPRINT-5-PENDING-GATES.md`** — Gate 2 closed (PASS) and Gate 3
+dropped in v3.22.2. Only **Gate 1** (`bash-grep-use-grep-tool` ratio ≥ 3×)
+remains pending — measurable from mid-May 2026 onward when 30+ days of
+post-`resetAt` evidence accumulate. Delete the file when Gate 1 passes.
 
 ## Release workflow
 
