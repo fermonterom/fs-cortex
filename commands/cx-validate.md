@@ -6,6 +6,13 @@ command: true
 
 # /cx-validate
 
+## Auto mode (Sprint 7+)
+
+Most validate/evolve work now runs automatically at SessionStart via
+`hooks/lib/distill_engine.py`. The manual command remains for:
+- `correction`, `user-preference`, `decision`, `workflow` proposals — they need human judgment
+- Weak instincts (confidence < 0.50) that did not meet the auto-accept threshold
+
 ## What it does
 
 Interactive review of pending proposals and weak instincts. Lets the user confirm (+0.20 confidence) or reject (-0.20 or delete) each one.

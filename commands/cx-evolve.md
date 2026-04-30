@@ -6,6 +6,14 @@ command: true
 
 # /cx-evolve
 
+## Auto mode (Sprint 7+)
+
+Most validate/evolve work now runs automatically at SessionStart via
+`hooks/lib/distill_engine.py`. The manual command remains for:
+- Reviewing the auto-generated drafts at `~/.claude/cortex/evolved/skills/`
+- Clusters that were not auto-detected (low Jaccard, cross-domain patterns)
+- Installing, merging, or discarding generated draft skills
+
 ## What it does
 
 The final step in the learning pipeline. Finds clusters of 3+ mature instincts (confidence >= 0.70) in the same domain, and generates reusable artifacts: skills, commands, or passive rules.

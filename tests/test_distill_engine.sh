@@ -645,6 +645,328 @@ else
 fi
 rm -rf "$T15"
 
+# ── Sprint 7: auto_validate_proposals tests ──────────────────────────────────
+
+make_proposal() {
+  # make_proposal <proposals_file> <id> <conf> <domain> [scope=global] [status=pending]
+  local file="$1" iid="$2" conf="$3" domain="$4"
+  local scope="${5:-global}" status="${6:-pending}"
+  mkdir -p "$(dirname "$file")"
+  # Append to array in JSON (or create fresh file)
+  python3 - <<PYEOF
+import json, os
+path = '$file'
+entry = {
+    "id": "$iid",
+    "trigger": "SomeTool",
+    "action": "Always do the thing for testing",
+    "confidence": $conf,
+    "domain": "$domain",
+    "scope": "$scope",
+    "project_id": "global",
+    "project_name": "cross-project",
+    "tags": [],
+    "detected": "2026-01-01",
+    "source": "cx-analyze",
+    "status": "$status",
+}
+data = []
+if os.path.exists(path):
+    try:
+        data = json.loads(open(path).read())
+    except Exception:
+        data = []
+data.append(entry)
+open(path, 'w').write(json.dumps(data, indent=2))
+PYEOF
+}
+
+_py_patch() {
+  # Patch distill_engine module-level paths to CORTEX_DIR in a heredoc
+  local tdir="$1"
+  cat <<PYEOF
+import sys, os; sys.path.insert(0, '$PROJECT_ROOT/hooks/lib')
+os.environ['CORTEX_DIR'] = '$tdir'
+import distill_engine as de
+from pathlib import Path
+de.CORTEX_DIR = Path('$tdir')
+de.INSTINCTS_DIR = de.CORTEX_DIR / 'instincts' / 'global'
+de.LAWS_DIR = de.CORTEX_DIR / 'laws'
+de.IMPACT_FILE = de.CORTEX_DIR / 'impact.jsonl'
+de.KNOWLEDGE_LOG = de.CORTEX_DIR / 'knowledge-log.md'
+de.CANDIDATES_FILE = de.CORTEX_DIR / 'auto-distill-candidates.md'
+de.MARKER_FILE = de.CORTEX_DIR / '.last-auto-distill'
+de.LOCK_FILE = de.CORTEX_DIR / '.distill-engine.lock'
+de.PROPOSALS_FILE = de.CORTEX_DIR / 'proposals.json'
+de.EVOLVED_SKILLS_DIR = de.CORTEX_DIR / 'evolved' / 'skills'
+de.SKILLS_DIR = de.CORTEX_DIR / 'skills'
+PYEOF
+}
+
+# ── Test 16: auto-validate-accepts-gotcha-conf-high ──────────────────────────
+echo "--- Test 16: auto-validate-accepts-gotcha-conf-high ---"
+T16="$(mktemp -d -t distill-t16-XXXXXX)"
+export CORTEX_DIR="$T16"
+make_proposal "$T16/proposals.json" "t16-gotcha" "0.60" "error-recovery"
+
+result=$(python3 - <<PYEOF
+$(_py_patch "$T16")
+r = de.auto_validate_proposals()
+accepted_ids = [a['id'] for a in r['accepted']]
+import json
+# Check instinct file created
+instinct_path = de.CORTEX_DIR / 'instincts' / 'global' / 't16-gotcha.yaml'
+instinct_exists = instinct_path.exists()
+# Check proposals.json updated
+props = json.loads(de.PROPOSALS_FILE.read_text())
+status_ok = props[0]['status'] == 'accepted'
+print('t16-gotcha' in accepted_ids, instinct_exists, status_ok)
+PYEOF
+)
+if echo "$result" | grep -q "True True True"; then
+  pass "auto-validate-accepts-gotcha-conf-high: error-recovery conf=0.60 accepted, instinct created"
+else
+  fail "auto-validate-accepts-gotcha-conf-high: got '$result'"
+fi
+rm -rf "$T16"
+
+# ── Test 17: auto-validate-rejects-correction ────────────────────────────────
+echo "--- Test 17: auto-validate-rejects-correction ---"
+T17="$(mktemp -d -t distill-t17-XXXXXX)"
+export CORTEX_DIR="$T17"
+make_proposal "$T17/proposals.json" "t17-corr" "0.80" "correction"
+
+result=$(python3 - <<PYEOF
+$(_py_patch "$T17")
+r = de.auto_validate_proposals()
+skipped_ids = {s['id']: s['reason'] for s in r['skipped']}
+accepted_ids = [a['id'] for a in r['accepted']]
+reason_ok = skipped_ids.get('t17-corr') == 'needs-human-judgment'
+not_accepted = 't17-corr' not in accepted_ids
+print(reason_ok, not_accepted)
+PYEOF
+)
+if echo "$result" | grep -q "True True"; then
+  pass "auto-validate-rejects-correction: domain=correction skipped with needs-human-judgment"
+else
+  fail "auto-validate-rejects-correction: got '$result'"
+fi
+rm -rf "$T17"
+
+# ── Test 18: auto-validate-rejects-low-conf ──────────────────────────────────
+echo "--- Test 18: auto-validate-rejects-low-conf ---"
+T18="$(mktemp -d -t distill-t18-XXXXXX)"
+export CORTEX_DIR="$T18"
+make_proposal "$T18/proposals.json" "t18-low" "0.40" "gotcha"
+
+result=$(python3 - <<PYEOF
+$(_py_patch "$T18")
+r = de.auto_validate_proposals()
+skipped_ids = {s['id']: s['reason'] for s in r['skipped']}
+reason_ok = skipped_ids.get('t18-low') == 'low-confidence'
+not_accepted = 't18-low' not in [a['id'] for a in r['accepted']]
+print(reason_ok, not_accepted)
+PYEOF
+)
+if echo "$result" | grep -q "True True"; then
+  pass "auto-validate-rejects-low-conf: conf=0.40 skipped with low-confidence"
+else
+  fail "auto-validate-rejects-low-conf: got '$result'"
+fi
+rm -rf "$T18"
+
+# ── Test 19: auto-validate-idempotent ────────────────────────────────────────
+echo "--- Test 19: auto-validate-idempotent ---"
+T19="$(mktemp -d -t distill-t19-XXXXXX)"
+export CORTEX_DIR="$T19"
+make_proposal "$T19/proposals.json" "t19-idem" "0.70" "pattern"
+# Pre-create instinct so it "already exists"
+mkdir -p "$T19/instincts/global"
+cat > "$T19/instincts/global/t19-idem.yaml" <<YAML
+---
+id: t19-idem
+confidence: 0.70
+domain: pattern
+trigger: SomeTool
+action: Already exists
+last_seen: 2026-01-01
+first_seen: 2026-01-01
+occurrences: 1
+---
+YAML
+
+result=$(python3 - <<PYEOF
+$(_py_patch "$T19")
+# Read file mtime before
+import os
+mtime_before = os.path.getmtime(de.CORTEX_DIR / 'instincts' / 'global' / 't19-idem.yaml')
+r = de.auto_validate_proposals()
+mtime_after = os.path.getmtime(de.CORTEX_DIR / 'instincts' / 'global' / 't19-idem.yaml')
+skipped_ids = {s['id']: s['reason'] for s in r['skipped']}
+reason_ok = skipped_ids.get('t19-idem') == 'already-instinct'
+not_overwritten = mtime_before == mtime_after
+print(reason_ok, not_overwritten)
+PYEOF
+)
+if echo "$result" | grep -q "True True"; then
+  pass "auto-validate-idempotent: existing instinct skipped with already-instinct, not overwritten"
+else
+  fail "auto-validate-idempotent: got '$result'"
+fi
+rm -rf "$T19"
+
+# ── Sprint 7: auto_evolve_detect tests ───────────────────────────────────────
+
+make_instinct_evolve() {
+  # make_instinct_evolve <dir> <id> <conf> <domain> <trigger> <action>
+  local dir="$1" iid="$2" conf="$3" domain="$4" trigger="$5" action="$6"
+  mkdir -p "$dir"
+  cat > "$dir/${iid}.yaml" <<YAML
+---
+id: ${iid}
+confidence: ${conf}
+domain: ${domain}
+trigger: '${trigger}'
+action: '${action}'
+last_seen: 2026-04-01
+first_seen: 2026-04-01
+occurrences: 5
+project_id: proj-alpha
+project_name: test-project
+---
+YAML
+}
+
+# ── Test 20: evolve-detects-cluster-of-3 ─────────────────────────────────────
+echo "--- Test 20: evolve-detects-cluster-of-3 ---"
+T20="$(mktemp -d -t distill-t20-XXXXXX)"
+export CORTEX_DIR="$T20"
+# 3 instincts, same domain, similar trigger+action tokens → Jaccard >= 0.50
+make_instinct_evolve "$T20/instincts/global" "t20-a" "0.80" "gotcha" \
+  "Bash git commit" "Always run tests before committing code to repository"
+make_instinct_evolve "$T20/instincts/global" "t20-b" "0.80" "gotcha" \
+  "Bash git push" "Always run tests before pushing code to repository"
+make_instinct_evolve "$T20/instincts/global" "t20-c" "0.80" "gotcha" \
+  "Bash git" "Always run tests before any git operation on repository"
+
+result=$(python3 - <<PYEOF
+$(_py_patch "$T20")
+r = de.auto_evolve_detect()
+drafts = r['drafts_generated']
+draft_count = len(drafts)
+draft_path_ok = False
+if drafts:
+    import os
+    draft_path_ok = os.path.exists(drafts[0]['draft_path'])
+    count_ok = drafts[0]['instinct_count'] >= 3
+print(draft_count >= 1, draft_path_ok, count_ok)
+PYEOF
+)
+if echo "$result" | grep -q "True True True"; then
+  pass "evolve-detects-cluster-of-3: 3 similar gotcha instincts → draft generated at correct path"
+else
+  fail "evolve-detects-cluster-of-3: got '$result'"
+fi
+rm -rf "$T20"
+
+# ── Test 21: evolve-rejects-cluster-of-2 ─────────────────────────────────────
+echo "--- Test 21: evolve-rejects-cluster-of-2 ---"
+T21="$(mktemp -d -t distill-t21-XXXXXX)"
+export CORTEX_DIR="$T21"
+# Only 2 instincts in the domain — below cluster minimum
+make_instinct_evolve "$T21/instincts/global" "t21-a" "0.80" "gotcha" \
+  "Bash git commit" "Always run tests before committing code to repository"
+make_instinct_evolve "$T21/instincts/global" "t21-b" "0.80" "gotcha" \
+  "Bash git push" "Always run tests before pushing code to repository"
+
+result=$(python3 - <<PYEOF
+$(_py_patch "$T21")
+r = de.auto_evolve_detect()
+draft_count = len(r['drafts_generated'])
+error_count = 0  # should not error
+print(draft_count == 0, error_count == 0)
+PYEOF
+)
+if echo "$result" | grep -q "True True"; then
+  pass "evolve-rejects-cluster-of-2: 2 instincts → no draft generated, no error"
+else
+  fail "evolve-rejects-cluster-of-2: got '$result'"
+fi
+rm -rf "$T21"
+
+# ── Test 22: evolve-rejects-low-jaccard ──────────────────────────────────────
+echo "--- Test 22: evolve-rejects-low-jaccard ---"
+T22="$(mktemp -d -t distill-t22-XXXXXX)"
+export CORTEX_DIR="$T22"
+# 3 instincts in same domain but very different trigger+action → Jaccard < 0.50
+make_instinct_evolve "$T22/instincts/global" "t22-a" "0.80" "gotcha" \
+  "Bash git" "Always run tests before committing"
+make_instinct_evolve "$T22/instincts/global" "t22-b" "0.80" "gotcha" \
+  "Read file" "Check YAML indentation when editing config"
+make_instinct_evolve "$T22/instincts/global" "t22-c" "0.80" "gotcha" \
+  "Write database" "Verify schema migration before applying to production"
+
+result=$(python3 - <<PYEOF
+$(_py_patch "$T22")
+r = de.auto_evolve_detect()
+draft_count = len(r['drafts_generated'])
+print(draft_count == 0)
+PYEOF
+)
+if echo "$result" | grep -q "True"; then
+  pass "evolve-rejects-low-jaccard: 3 instincts with low Jaccard → no draft"
+else
+  fail "evolve-rejects-low-jaccard: got '$result' (expected 0 drafts)"
+fi
+rm -rf "$T22"
+
+# ── Test 23: evolve-skips-when-skill-exists ───────────────────────────────────
+echo "--- Test 23: evolve-skips-when-skill-exists ---"
+T23="$(mktemp -d -t distill-t23-XXXXXX)"
+export CORTEX_DIR="$T23"
+# 3 similar instincts forming a cluster
+make_instinct_evolve "$T23/instincts/global" "t23-a" "0.80" "gotcha" \
+  "Bash git commit" "Always run tests before committing code to repository"
+make_instinct_evolve "$T23/instincts/global" "t23-b" "0.80" "gotcha" \
+  "Bash git push" "Always run tests before pushing code to repository"
+make_instinct_evolve "$T23/instincts/global" "t23-c" "0.80" "gotcha" \
+  "Bash git" "Always run tests before any git operation on repository"
+
+# First, compute what the cluster-id would be and pre-create the skill
+cluster_id=$(python3 - <<PYEOF
+$(_py_patch "$T23")
+# Run detection once to find the cluster id
+r = de.auto_evolve_detect(dry_run=True)
+if r['drafts_generated']:
+    print(r['drafts_generated'][0]['cluster_id'])
+else:
+    print('no-cluster')
+PYEOF
+)
+
+if [ "$cluster_id" = "no-cluster" ]; then
+  fail "evolve-skips-when-skill-exists: could not detect cluster (prerequisite failed)"
+else
+  # Create the skill directory to simulate existing skill
+  mkdir -p "$T23/skills/$cluster_id"
+  echo "# Existing skill" > "$T23/skills/$cluster_id/SKILL.md"
+
+  result=$(python3 - <<PYEOF
+$(_py_patch "$T23")
+r = de.auto_evolve_detect()
+draft_count = len(r['drafts_generated'])
+skip_count = len(r['skipped'])
+print(draft_count == 0, skip_count >= 1)
+PYEOF
+  )
+  if echo "$result" | grep -q "True True"; then
+    pass "evolve-skips-when-skill-exists: cluster found but skill exists → skipped, no draft"
+  else
+    fail "evolve-skips-when-skill-exists: got '$result'"
+  fi
+fi
+rm -rf "$T23"
+
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="

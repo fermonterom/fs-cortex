@@ -4,6 +4,120 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.23.0] — 2026-04-30
+
+### Sprint 7 · Pipeline automation
+
+Closes the **two manual gates** that remained in the knowledge pipeline
+after Sprint 6: `/cx-validate` (proposal → instinct) and `/cx-evolve`
+(instinct → skill). The full pipeline is now self-driving end to end:
+
+```
+Observations → Proposals → Instincts → Laws / Skills
+(automatic)   (auto-detect) (auto v3.23) (auto v3.22 / auto v3.23 drafts)
+```
+
+### Added
+
+- **`auto_validate_proposals(dry_run)`** in `hooks/lib/distill_engine.py`.
+  Auto-accepts proposals matching the whitelist:
+  - `confidence ≥ 0.50`
+  - `domain in {gotcha, pattern, error-recovery, agent-evolution}`
+  - No existing instinct with same id
+  
+  Action: generates instinct YAML, updates `proposals.json` status,
+  appends to knowledge-log under source `cx-auto-validate`. All atomic.
+  
+  Proposals with `domain in {correction, user-preference, decision,
+  workflow}` stay pending — they need human judgment via manual
+  `/cx-validate`.
+
+- **`auto_evolve_detect(dry_run)`** in `hooks/lib/distill_engine.py`.
+  Clusters mature instincts (`confidence ≥ 0.70`) by domain using
+  pairwise Jaccard similarity (≥ 0.50 over `trigger + action` tokens,
+  BFS connected components). For any cluster of 3+ instincts not
+  already covered by an existing `~/.claude/skills/<id>/SKILL.md`,
+  generates a draft at `~/.claude/cortex/evolved/skills/<cluster-id>.draft.md`.
+  
+  Cluster-id format: `cluster-<domain>-<sha1[:8]>` — stable across runs
+  but rebuilds when the instinct set changes. The user reviews the
+  draft and installs (`cp` to `~/.claude/skills/<id>/SKILL.md`) or
+  discards (`rm`).
+
+- **`tests/test_distill_engine.sh`** extended 15 → 23 tests:
+  - 16: auto-validate accepts gotcha at conf 0.60
+  - 17: auto-validate rejects correction (needs human judgment)
+  - 18: auto-validate rejects low-confidence
+  - 19: auto-validate idempotent (skips existing instinct)
+  - 20: evolve detects cluster of 3 with Jaccard ≥ 0.50
+  - 21: evolve rejects cluster of 2 (need ≥ 3)
+  - 22: evolve rejects low-Jaccard cluster (similarity < 0.50)
+  - 23: evolve skips when skill already exists
+
+### Changed
+
+- **`run_auto_distill()` pipeline order**: decay → archive →
+  **auto-validate** → auto-promote-to-law → **auto-evolve**. Freshly
+  validated instincts are eligible for promotion in the same 24h window.
+  Updated summary shape:
+  
+  ```python
+  {
+    "decayed": int, "archived": int,             # existing
+    "validated": int, "skipped_validate": int,   # NEW
+    "promoted": int, "candidates": int,          # existing
+    "evolve_drafts": int,                        # NEW
+    "skipped_reason": str | None,
+    "ran_at": iso8601,
+  }
+  ```
+
+- **`hooks/session-start.py` step 3d**: replaced the 1-line summary
+  with a multi-line `[CORTEX KNOWLEDGE PIPELINE]` block that shows ONLY
+  non-zero lines. Example output:
+  
+  ```
+  [CORTEX KNOWLEDGE PIPELINE]
+    ✓ Validated: 4 proposals → instincts
+    ✓ Promoted: 1 instinct → laws
+    ✓ Evolve drafts: 1 skill at evolved/skills/
+    ⚠ Pending review: 2 proposals need judgment — run /cx-validate
+  ```
+
+- **`commands/cx-validate.md`**: added "Auto mode (Sprint 7+)" section
+  explaining that the manual command is now only needed for proposals
+  requiring human judgment.
+
+- **`commands/cx-evolve.md`**: added "Auto mode (Sprint 7+)" section
+  explaining that drafts are auto-generated; the manual command remains
+  for reviewing and installing them.
+
+### Tests at release
+
+| Suite | Result |
+|---|---|
+| `test_distill_engine.sh` | **23/23 PASS** (was 15/15 in v3.22.0) |
+| `test_security.sh` | 7/7 PASS |
+| `test_dream_cycle.sh` | 35/35 PASS |
+| `test_impact.sh` | 64/64 PASS (unchanged from v3.22.1) |
+
+### Migration from v3.22.x
+
+No migration required. The engine creates its own state; new functions
+are additive. On the first SessionStart after install:
+
+- All `pending` proposals matching the whitelist will be auto-accepted
+  (cap respected — only those not already in `instincts/`)
+- Any cluster of 3+ mature instincts in the same domain will get a
+  draft at `~/.claude/cortex/evolved/skills/`
+- The new `[CORTEX KNOWLEDGE PIPELINE]` block will surface the first
+  time anything moves through the pipeline
+
+An opt-out env flag is **not** implemented in v3.23.0. If you want to
+suppress auto-validate or auto-evolve, the cleanest path is to delete
+the relevant function calls from `run_auto_distill()`. File an issue
+if a proper flag would be useful.
+
 ## [3.22.2] — 2026-04-30
 
 ### Cleanup pass + Sprint 5 gates partial closure

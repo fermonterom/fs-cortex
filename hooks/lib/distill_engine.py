@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
 """
-distill_engine.py — Auto-distillation engine (Sprint 6, v3.22.0).
+distill_engine.py — Auto-distillation engine (Sprint 7, v3.23.0).
 
 Deterministic parts of the distillation pipeline that run automatically at
 SessionStart (once per 24 h, idempotent) without any human judgment:
   1. Confidence decay  (-0.05 per 30 days unused)
   2. Archive low-confidence instincts (< 0.10)
-  3. Promote mature instincts to laws (STRICT 7-criteria gate)
+  3. Auto-validate proposals that meet whitelist criteria (Sprint 7)
+  4. Promote mature instincts to laws (STRICT 7-criteria gate)
+  5. Auto-evolve: detect clusters of mature instincts, generate skill drafts (Sprint 7)
 
 Public API
 ----------
   run_auto_distill(dry_run=False) -> dict
   apply_decay(now=None, dry_run=False) -> list[dict]
   archive_decayed(threshold=0.10, dry_run=False) -> list[str]
+  auto_validate_proposals(dry_run=False) -> dict
   auto_promote_to_law(dry_run=False) -> tuple[list[dict], list[dict]]
+  auto_evolve_detect(dry_run=False) -> dict
 
 CLI
 ---
@@ -44,6 +48,9 @@ KNOWLEDGE_LOG = CORTEX_DIR / "knowledge-log.md"
 CANDIDATES_FILE = CORTEX_DIR / "auto-distill-candidates.md"
 MARKER_FILE = CORTEX_DIR / ".last-auto-distill"
 LOCK_FILE = CORTEX_DIR / ".distill-engine.lock"
+PROPOSALS_FILE = CORTEX_DIR / "proposals.json"
+EVOLVED_SKILLS_DIR = CORTEX_DIR / "evolved" / "skills"
+SKILLS_DIR = Path(os.environ.get("SKILLS_DIR", str(Path.home() / ".claude" / "skills")))
 
 RATE_LIMIT_HOURS = 24
 DECAY_PER_30_DAYS = 0.05
@@ -57,6 +64,16 @@ LAW_MAX_NOISE_14D = 0
 LAW_MAX_ACTIVE = 10
 LAW_JACCARD_THRESHOLD = 0.50
 LAW_MAX_CHARS = 120
+
+# Sprint 7 — auto-validate
+VALIDATE_MIN_CONF = 0.50
+VALIDATE_AUTO_DOMAINS = {"gotcha", "pattern", "error-recovery", "agent-evolution"}
+VALIDATE_HUMAN_DOMAINS = {"correction", "user-preference", "decision", "workflow"}
+
+# Sprint 7 — auto-evolve
+EVOLVE_MIN_CONF = 0.70
+EVOLVE_CLUSTER_MIN = 3
+EVOLVE_JACCARD_MIN = 0.50
 
 STOPWORDS = {"the", "a", "an", "of", "to", "and", "or", "is", "in"}
 
@@ -649,6 +666,385 @@ def auto_promote_to_law(
     return promoted, candidates
 
 
+# ── 4. Auto-validate proposals ───────────────────────────────────────────────
+
+import hashlib as _hashlib
+
+
+def _load_proposals() -> list[dict]:
+    """Load proposals.json. Returns [] on missing/invalid."""
+    if not PROPOSALS_FILE.exists():
+        return []
+    try:
+        raw = PROPOSALS_FILE.read_text(encoding="utf-8")
+        data = json.loads(raw)
+        if isinstance(data, list):
+            return data
+        return []
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+def _save_proposals(proposals: list[dict]) -> None:
+    """Atomically write proposals.json."""
+    content = json.dumps(proposals, indent=2, ensure_ascii=False) + "\n"
+    _atomic_write(PROPOSALS_FILE, content)
+
+
+def _instinct_exists(iid: str) -> bool:
+    """Return True if an instinct YAML with this id already exists (global or project)."""
+    global_path = CORTEX_DIR / "instincts" / "global" / f"{iid}.yaml"
+    if global_path.exists():
+        return True
+    proj_dir = CORTEX_DIR / "projects"
+    if proj_dir.is_dir():
+        for proj in proj_dir.iterdir():
+            candidate = proj / "instincts" / f"{iid}.yaml"
+            if candidate.exists():
+                return True
+    return False
+
+
+def _proposal_to_instinct_yaml(proposal: dict, today: str) -> str:
+    """Generate instinct YAML content from a proposal dict."""
+    iid = proposal.get("id", "")
+    trigger = proposal.get("trigger", "")
+    action = proposal.get("action", "")
+    conf = float(proposal.get("confidence", 0.50))
+    domain = proposal.get("domain", "gotcha")
+    scope = proposal.get("scope", "global")
+    project_id = proposal.get("project_id", "global")
+    project_name = proposal.get("project_name", "cross-project")
+    tags = proposal.get("tags", [])
+    source = proposal.get("source", "cx-auto-validate")
+
+    # Infer type from domain
+    domain_type_map = {
+        "gotcha": "gotcha",
+        "pattern": "pattern",
+        "error-recovery": "gotcha",
+        "agent-evolution": "agent",
+    }
+    inst_type = domain_type_map.get(domain, "pattern")
+
+    tags_yaml = "\n".join(f"  - {t}" for t in tags) if tags else "  []"
+    if not tags:
+        tags_yaml = "[]"
+
+    evidence_line = f"  - '{today}: Auto-validated from proposal at conf {conf:.2f}'"
+
+    lines = [
+        "---",
+        f"id: {iid}",
+        f"trigger: '{trigger}'",
+        f"action: '{action}'",
+        f"confidence: {conf:.4f}",
+        f"domain: {domain}",
+        f"type: {inst_type}",
+        f"source: cx-auto-validate",
+        f"scope: {scope}",
+        f"project_id: '{project_id}'",
+        f"project_name: '{project_name}'",
+        f"tags: {tags_yaml}",
+        f"created: '{today}'",
+        f"first_seen: '{today}'",
+        f"last_seen: '{today}'",
+        f"occurrences: 1",
+        f"evidence:",
+        f"{evidence_line}",
+        "---",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def auto_validate_proposals(dry_run: bool = False) -> dict:
+    """Auto-accept proposals that match whitelist criteria.
+
+    Returns: {"accepted": [{id, conf, domain}], "skipped": [{id, reason}], "errors": []}
+    """
+    today = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
+    proposals = _load_proposals()
+    accepted: list[dict] = []
+    skipped: list[dict] = []
+    errors: list[str] = []
+
+    updated_proposals = list(proposals)  # copy for mutation
+
+    for i, proposal in enumerate(proposals):
+        iid = proposal.get("id", "")
+        status = proposal.get("status", "pending")
+        conf_raw = proposal.get("confidence", 0.0)
+        domain = proposal.get("domain", "")
+
+        if status != "pending":
+            continue
+
+        try:
+            conf = float(conf_raw)
+        except (TypeError, ValueError):
+            errors.append(f"{iid}: invalid confidence value '{conf_raw}'")
+            continue
+
+        # Check skip conditions first (mutually exclusive ordering)
+        if domain in VALIDATE_HUMAN_DOMAINS:
+            skipped.append({"id": iid, "reason": "needs-human-judgment"})
+            continue
+
+        if conf < VALIDATE_MIN_CONF:
+            skipped.append({"id": iid, "reason": "low-confidence"})
+            continue
+
+        if _instinct_exists(iid):
+            skipped.append({"id": iid, "reason": "already-instinct"})
+            continue
+
+        if domain not in VALIDATE_AUTO_DOMAINS:
+            skipped.append({"id": iid, "reason": "needs-human-judgment"})
+            continue
+
+        # Accept: write instinct YAML
+        scope = proposal.get("scope", "global")
+        project_id = proposal.get("project_id", "global")
+
+        if scope == "global" or not project_id or project_id == "global":
+            dest_path = CORTEX_DIR / "instincts" / "global" / f"{iid}.yaml"
+        else:
+            dest_path = CORTEX_DIR / "projects" / project_id / "instincts" / f"{iid}.yaml"
+
+        if not dry_run:
+            yaml_content = _proposal_to_instinct_yaml(proposal, today)
+            _atomic_write(dest_path, yaml_content)
+
+            # Update proposal status
+            updated_proposals[i] = dict(proposal)
+            updated_proposals[i]["status"] = "accepted"
+            updated_proposals[i]["accepted_by"] = "cx-auto-validate"
+            updated_proposals[i]["accepted_at"] = today
+
+            _log_knowledge("accepted", iid, f"conf={conf:.2f} | cx-auto-validate")
+
+        accepted.append({"id": iid, "conf": conf, "domain": domain})
+
+    if not dry_run and accepted:
+        _save_proposals(updated_proposals)
+
+    return {"accepted": accepted, "skipped": skipped, "errors": errors}
+
+
+# ── 5. Auto-evolve: cluster detection + draft generation ────────────────────
+
+def _all_instinct_records() -> list[dict]:
+    """Return list of {fields, path} for all active instincts."""
+    records = []
+    for path in _all_instinct_paths():
+        result = _read_instinct(path)
+        if result is None:
+            continue
+        fields, _ = result
+        records.append({"fields": fields, "path": path})
+    return records
+
+
+def _cluster_id(domain: str, instinct_ids: list[str]) -> str:
+    """Compute stable cluster id from sorted instinct ids."""
+    sorted_ids = sorted(instinct_ids)
+    hash8 = _hashlib.sha1("|".join(sorted_ids).encode()).hexdigest()[:8]
+    return f"cluster-{domain}-{hash8}"
+
+
+def _skill_exists_for_cluster(cluster_id: str, domain: str, instinct_ids: list[str]) -> bool:
+    """Check if an existing skill covers this cluster."""
+    # Check by exact cluster-id directory
+    skill_path = SKILLS_DIR / cluster_id / "SKILL.md"
+    if skill_path.exists():
+        return True
+
+    # Check evolved draft already exists with same content
+    draft_path = EVOLVED_SKILLS_DIR / f"{cluster_id}.draft.md"
+    if draft_path.exists():
+        # Check if instinct set changed by reading source instinct ids from draft
+        try:
+            content = draft_path.read_text(encoding="utf-8")
+            existing_ids: set[str] = set()
+            for line in content.splitlines():
+                # Lines like: "- <id> (conf: ...)"
+                m = re.match(r"^- ([^\s(]+)", line.strip())
+                if m:
+                    existing_ids.add(m.group(1))
+            if existing_ids == set(instinct_ids):
+                return True  # Same set — idempotent, skip
+        except OSError:
+            pass
+
+    return False
+
+
+def _build_cluster_draft(cluster_id: str, domain: str, records: list[dict], today: str) -> str:
+    """Build draft SKILL.md content for a cluster."""
+    n = len(records)
+
+    # Collect triggers and actions
+    all_triggers: list[str] = []
+    all_actions: list[str] = []
+    source_lines: list[str] = []
+
+    for r in records:
+        f = r["fields"]
+        iid = str(f.get("id", ""))
+        conf = f.get("confidence", 0.0)
+        last_seen = str(f.get("last_seen", "unknown"))
+        trigger = str(f.get("trigger", "")).strip()
+        action = str(f.get("action", "")).strip()
+
+        if trigger:
+            all_triggers.append(trigger)
+        if action:
+            all_actions.append(action)
+
+        source_lines.append(f"- {iid} (conf: {conf}) — last seen {last_seen}")
+
+    # Deduplicate triggers
+    seen_triggers: set[str] = set()
+    unique_triggers: list[str] = []
+    for t in all_triggers:
+        if t not in seen_triggers:
+            seen_triggers.add(t)
+            unique_triggers.append(t)
+
+    triggers_section = "\n".join(unique_triggers) if unique_triggers else "(none)"
+    actions_section = "\n".join(f"- {a}" for a in all_actions) if all_actions else "(none)"
+    sources_section = "\n".join(source_lines)
+
+    return f"""---
+name: {cluster_id}
+description: Auto-generated from {n} instincts in domain {domain}
+status: DRAFT — review before installing
+generated_at: {today}
+---
+
+# {cluster_id} (DRAFT)
+
+Auto-generated cluster from {n} mature instincts (confidence >= {EVOLVE_MIN_CONF}).
+
+## Source instincts
+
+{sources_section}
+
+## Combined triggers
+
+{triggers_section}
+
+## Combined actions
+
+{actions_section}
+
+## To install
+
+cp ~/.claude/cortex/evolved/skills/{cluster_id}.draft.md ~/.claude/skills/{cluster_id}/SKILL.md
+
+## To discard
+
+rm ~/.claude/cortex/evolved/skills/{cluster_id}.draft.md
+"""
+
+
+def auto_evolve_detect(dry_run: bool = False) -> dict:
+    """Detect clusters of 3+ mature instincts in same domain. Generate skill drafts.
+
+    Returns: {"drafts_generated": [{cluster_id, instinct_count, draft_path}],
+              "skipped": [{cluster_id, reason}]}
+    """
+    today = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
+    all_records = _all_instinct_records()
+
+    # Filter to mature instincts
+    mature: list[dict] = []
+    for r in all_records:
+        f = r["fields"]
+        conf_raw = f.get("confidence")
+        try:
+            conf = float(conf_raw)
+        except (TypeError, ValueError):
+            continue
+        if conf >= EVOLVE_MIN_CONF:
+            mature.append(r)
+
+    # Group by domain
+    by_domain: dict[str, list[dict]] = {}
+    for r in mature:
+        domain = str(r["fields"].get("domain", "unknown"))
+        by_domain.setdefault(domain, []).append(r)
+
+    drafts_generated: list[dict] = []
+    skipped: list[dict] = []
+
+    for domain, records in by_domain.items():
+        if len(records) < EVOLVE_CLUSTER_MIN:
+            continue
+
+        # Compute pairwise Jaccard on trigger + action tokens
+        # Build text per record
+        texts = []
+        for r in records:
+            f = r["fields"]
+            combined = str(f.get("trigger", "")) + " " + str(f.get("action", ""))
+            texts.append(combined)
+
+        # Union-find style clustering via Jaccard
+        n = len(records)
+        # adjacency: i-j connected if Jaccard >= threshold
+        adj: dict[int, set[int]] = {i: set() for i in range(n)}
+        for i in range(n):
+            for j in range(i + 1, n):
+                sim = _jaccard(texts[i], texts[j])
+                if sim >= EVOLVE_JACCARD_MIN:
+                    adj[i].add(j)
+                    adj[j].add(i)
+
+        # BFS to find connected components
+        visited: set[int] = set()
+        clusters: list[list[int]] = []
+        for start in range(n):
+            if start in visited:
+                continue
+            component: list[int] = []
+            queue = [start]
+            while queue:
+                node = queue.pop()
+                if node in visited:
+                    continue
+                visited.add(node)
+                component.append(node)
+                queue.extend(adj[node] - visited)
+            if len(component) >= EVOLVE_CLUSTER_MIN:
+                clusters.append(component)
+
+        for component in clusters:
+            cluster_records = [records[i] for i in component]
+            instinct_ids = [str(r["fields"].get("id", "")) for r in cluster_records]
+            cid = _cluster_id(domain, instinct_ids)
+
+            # Check if skill already exists
+            if _skill_exists_for_cluster(cid, domain, instinct_ids):
+                skipped.append({"cluster_id": cid, "reason": "skill-exists-or-draft-unchanged"})
+                continue
+
+            if not dry_run:
+                draft_content = _build_cluster_draft(cid, domain, cluster_records, today)
+                draft_path = EVOLVED_SKILLS_DIR / f"{cid}.draft.md"
+                _atomic_write(draft_path, draft_content)
+                _log_knowledge("evolve-draft", cid, f"{len(cluster_records)} instincts | cx-auto-evolve")
+
+            drafts_generated.append({
+                "cluster_id": cid,
+                "instinct_count": len(cluster_records),
+                "draft_path": str(EVOLVED_SKILLS_DIR / f"{cid}.draft.md"),
+            })
+
+    return {"drafts_generated": drafts_generated, "skipped": skipped}
+
+
 # ── Candidates markdown file ──────────────────────────────────────────────────
 
 def _write_candidates_file(candidates: list[dict]) -> None:
@@ -701,17 +1097,29 @@ def run_auto_distill(dry_run: bool = False) -> dict:
     """Single entry point invoked from session-start hook.
 
     Returns a summary dict:
-      {"decayed": int, "archived": int, "promoted": int, "candidates": int,
+      {"decayed": int, "archived": int,
+       "validated": int, "skipped_validate": int,
+       "promoted": int, "candidates": int,
+       "evolve_drafts": int,
        "skipped_reason": str | None, "ran_at": iso8601}
 
     Idempotent: rate-limited to once per 24 h via MARKER_FILE mtime.
+    Pipeline order (inside the lock):
+      1. apply_decay
+      2. archive_decayed
+      3. auto_validate_proposals  (emits new instincts before promote sees them)
+      4. auto_promote_to_law      (sees newly-validated instincts)
+      5. auto_evolve_detect
     """
     ran_at = _dt.datetime.now(_dt.timezone.utc).isoformat()
 
     # Rate-limit check
     if _is_rate_limited():
         return {
-            "decayed": 0, "archived": 0, "promoted": 0, "candidates": 0,
+            "decayed": 0, "archived": 0,
+            "validated": 0, "skipped_validate": 0,
+            "promoted": 0, "candidates": 0,
+            "evolve_drafts": 0,
             "skipped_reason": "rate-limited", "ran_at": ran_at,
         }
 
@@ -719,14 +1127,24 @@ def run_auto_distill(dry_run: bool = False) -> dict:
     lock_fh, acquired = _lock_acquire(nonblocking=True)
     if not acquired:
         return {
-            "decayed": 0, "archived": 0, "promoted": 0, "candidates": 0,
+            "decayed": 0, "archived": 0,
+            "validated": 0, "skipped_validate": 0,
+            "promoted": 0, "candidates": 0,
+            "evolve_drafts": 0,
             "skipped_reason": "lock-busy", "ran_at": ran_at,
         }
 
     try:
+        # 1. Decay
         decayed = apply_decay(dry_run=dry_run)
+        # 2. Archive
         archived = archive_decayed(dry_run=dry_run)
+        # 3. Auto-validate proposals (new instincts visible to step 4)
+        validate_result = auto_validate_proposals(dry_run=dry_run)
+        # 4. Promote to law (sees freshly-validated instincts)
         promoted, candidates = auto_promote_to_law(dry_run=dry_run)
+        # 5. Evolve: cluster detection
+        evolve_result = auto_evolve_detect(dry_run=dry_run)
 
         if not dry_run:
             _write_candidates_file(candidates)
@@ -735,8 +1153,11 @@ def run_auto_distill(dry_run: bool = False) -> dict:
         return {
             "decayed": len(decayed),
             "archived": len(archived),
+            "validated": len(validate_result["accepted"]),
+            "skipped_validate": len(validate_result["skipped"]),
             "promoted": len(promoted),
             "candidates": len(candidates),
+            "evolve_drafts": len(evolve_result["drafts_generated"]),
             "skipped_reason": None,
             "ran_at": ran_at,
         }
@@ -753,10 +1174,13 @@ def _cmd_auto(dry_run: bool) -> None:
         print(f"{prefix}Skipped: {summary['skipped_reason']}")
         return
     print(f"{prefix}Auto-distill complete ({summary['ran_at']}):")
-    print(f"  decayed  : {summary['decayed']}")
-    print(f"  archived : {summary['archived']}")
-    print(f"  promoted : {summary['promoted']}")
-    print(f"  candidates: {summary['candidates']}")
+    print(f"  decayed        : {summary['decayed']}")
+    print(f"  archived       : {summary['archived']}")
+    print(f"  validated      : {summary['validated']}")
+    print(f"  skipped_validate: {summary['skipped_validate']}")
+    print(f"  promoted       : {summary['promoted']}")
+    print(f"  candidates     : {summary['candidates']}")
+    print(f"  evolve_drafts  : {summary['evolve_drafts']}")
 
 
 def _cmd_decay(dry_run: bool) -> None:

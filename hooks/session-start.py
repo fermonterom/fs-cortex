@@ -313,15 +313,20 @@ def main():
     for reminder in check_maintenance():
         parts.append(f'\n{reminder}')
 
-    # 3d. Auto-distill (Sprint 6 — runs once per 24h, idempotent)
+    # 3d. Knowledge pipeline summary (Sprint 7)
     try:
         from distill_engine import run_auto_distill
-        summary = run_auto_distill()
-        if summary.get("decayed") or summary.get("archived") or summary.get("promoted") or summary.get("candidates"):
-            line = f"[CORTEX] auto-distill: {summary['decayed']} decayed, {summary['archived']} archived, {summary['promoted']} promoted"
-            if summary.get("candidates"):
-                line += f", {summary['candidates']} candidate(s) — run /cx-distill to review"
-            parts.append(f"\n{line}")
+        s = run_auto_distill()
+        lines = []
+        if s.get("validated"): lines.append(f"  ✓ Validated: {s['validated']} proposals → instincts")
+        if s.get("decayed"):   lines.append(f"  · Decayed: {s['decayed']} instincts")
+        if s.get("archived"):  lines.append(f"  · Archived: {s['archived']} stale instincts")
+        if s.get("promoted"):  lines.append(f"  ✓ Promoted: {s['promoted']} instinct(s) → laws")
+        if s.get("evolve_drafts"): lines.append(f"  ✓ Evolve drafts: {s['evolve_drafts']} skill(s) at evolved/skills/")
+        if s.get("candidates"): lines.append(f"  ⚠ Pending review: {s['candidates']} law candidate(s) — run /cx-distill")
+        if s.get("skipped_validate"): lines.append(f"  ⚠ Pending review: {s['skipped_validate']} proposal(s) need judgment — run /cx-validate")
+        if lines:
+            parts.append("\n[CORTEX KNOWLEDGE PIPELINE]\n" + "\n".join(lines))
     except Exception:
         pass  # never block session-start on engine errors
 
