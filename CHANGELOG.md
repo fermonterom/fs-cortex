@@ -4,6 +4,82 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.23.2] — 2026-05-01
+
+### Restore zero-deps invariant — drop PyYAML from `yaml_normalize.py`
+
+`hooks/lib/yaml_normalize.py` had imported `yaml` (PyYAML) since it was
+introduced. PyYAML is the only third-party Python dependency the project
+ever pulled in, and `install.sh` / `install.ps1` deliberately do not run
+`pip install` — the project advertises **zero deps**. On any machine
+without PyYAML pre-installed, the SessionStart normalization pass raised
+`ModuleNotFoundError: No module named 'yaml'` (silently swallowed by the
+`try/except` in `hooks/session-start.py:259`, but real and visible from
+the SessionStart stderr stream).
+
+This release restores the invariant.
+
+### Changed
+
+- **`hooks/lib/yaml_normalize.py`**: removed `import yaml`. Both PyYAML
+  call sites replaced with a stdlib regex helper `_has_broken_dq_line(text)`:
+  - **Pre-check** in `normalize_all()` (was `yaml.safe_load_all` line 113):
+    skip files whose content has no `<key>: "<value with bad escape>"`
+    line on any `REGEX_KEYS` field. Same skip logic as before, narrower
+    in scope but identical for files this module was ever expected to
+    touch.
+  - **Post-rewrite safety** in `normalize_file()` (was `yaml.safe_load_all`
+    line 82): refuse to persist if the rewritten content still has a
+    broken double-quoted REGEX_KEYS line. After `_convert_line()` runs
+    on every line this should never happen — kept as a sanity guard.
+- The pre-compiled regex `_DQ_LINE_RE` is shared between `_convert_line()`
+  and `_has_broken_dq_line()`.
+
+### Added
+
+- **`tests/test_yaml_normalize.sh`** (12 tests, all PASS):
+  1. Module imports without PyYAML (we block `sys.modules['yaml'] = None`
+     before the import to prove independence).
+  2. `_has_broken_dq_line` detects `\.` and `\s` inside double quotes on
+     `trigger`/`action`/`condition`/`matcher` keys.
+  3. Ignores valid escapes (`\n`, `\t`).
+  4. Ignores bad escapes on non-REGEX keys (`evidence`, `id`, etc.).
+  5. `normalize_file()` rewrites bad → single-quoted.
+  6. Idempotent: returns False on already-clean files, file unchanged
+     on disk (sha verified).
+  7. `normalize_all()` on a sandbox CORTEX_DIR: skips clean, fixes
+     broken in both global and project subdirs.
+  8. Skips `archive/` subdirectories.
+  9. Missing CORTEX_DIR returns 0 cleanly.
+
+### Cross-platform verification
+
+`install.sh` (macOS / Linux) and `install.ps1` (Windows) **already**
+respect zero-deps and do not run `pip install` anywhere — verified by
+grep before this release. With the PyYAML import gone, fresh installs
+on any platform with Python 3.6+ (stdlib only) will not hit the
+`ModuleNotFoundError`.
+
+### Tests at release
+
+| Suite | Result |
+|---|---|
+| `test_yaml_normalize.sh` | **12/12 PASS** (new) |
+| `test_security.sh` | 7/7 PASS |
+| `test_dream_cycle.sh` | 35/35 PASS |
+| `test_distill_engine.sh` | 27/27 PASS |
+| `test_impact.sh` | 64/64 PASS |
+| `test_yaml_utils.sh` | 13/13 PASS |
+
+**Total: 158/158 PASS**, no regressions.
+
+### Migration from v3.23.1
+
+No user action required. `bash install.sh` syncs the new module. After
+install, `python3 -c "import sys; sys.path.insert(0,'$HOME/.claude/hooks/cortex/lib'); from yaml_normalize import normalize_all; print(normalize_all())"`
+runs cleanly and returns the count of repaired files (0 on a healthy
+install).
+
 ## [3.23.1] — 2026-05-01
 
 ### `/cx-status --pipeline` — pipeline activity dashboard

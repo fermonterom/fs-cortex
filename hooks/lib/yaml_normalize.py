@@ -14,16 +14,26 @@ Callable as a module (normalize_all(root) → count) or as a standalone script
 (exit 0 always; prints number of files repaired to stderr).
 
 Safe to run on every SessionStart: scans ~128 files in <100ms.
+
+Stdlib-only (v3.23.2+): the previous version imported PyYAML to validate
+that the rewritten file would parse cleanly. The validation step has been
+replaced with a stdlib regex check that detects exactly the failure mode
+this module fixes (invalid backslash escapes inside double-quoted strings
+on REGEX_KEYS lines). Other YAML errors (missing colons, bad indentation)
+were never the target of this module — PyYAML caught them but the module
+just no-op'd, identical behavior to the new stdlib check.
 """
 
 import os
 import re
 import sys
 import glob
-import yaml
 
 REGEX_KEYS = {'trigger', 'condition', 'matcher', 'action'}
 VALID_DOUBLE_QUOTE_ESCAPES = set('0abtnvfre\\"/N_LPxuU ')
+
+# Pre-compiled: matches `<indent>key: "<inner>"` with optional trailing whitespace.
+_DQ_LINE_RE = re.compile(r'^(\s*)(\w[\w_-]*)\s*:\s*"(.*)"\s*$')
 
 
 def _invalid_double_quote(inner):
@@ -39,12 +49,29 @@ def _invalid_double_quote(inner):
     return False
 
 
+def _has_broken_dq_line(text):
+    """True if any line in text is `<key>: "<value with bad escape>"` and key is a
+    REGEX_KEYS member. This is the exact failure mode the module fixes — using it
+    as the pre-check (skip already-clean files) and as the post-rewrite safety
+    check eliminates the PyYAML dependency without changing module behavior on
+    files this module was ever expected to touch.
+    """
+    for line in text.split('\n'):
+        m = _DQ_LINE_RE.match(line)
+        if not m:
+            continue
+        key, val = m.group(2), m.group(3)
+        if key in REGEX_KEYS and _invalid_double_quote(val):
+            return True
+    return False
+
+
 def _convert_line(line):
     """If line is `key: "..."` with key in REGEX_KEYS and value has invalid escapes,
     rewrite as `key: '...'` (or block scalar if value contains `'`).
     Returns the possibly rewritten line (without trailing newline).
     """
-    m = re.match(r'^(\s*)(\w[\w_-]*)\s*:\s*"(.*)"\s*$', line)
+    m = _DQ_LINE_RE.match(line)
     if not m:
         return line
     indent, key, val = m.group(1), m.group(2), m.group(3)
@@ -77,10 +104,9 @@ def normalize_file(path):
     if not changed:
         return False
     new_raw = '\n'.join(out_lines)
-    # Safety: only write if the result actually parses
-    try:
-        list(yaml.safe_load_all(new_raw))
-    except yaml.YAMLError:
+    # Safety: only persist if no broken double-quoted REGEX_KEYS line remains.
+    # _convert_line should have rewritten every offender; this is a sanity check.
+    if _has_broken_dq_line(new_raw):
         return False
     try:
         with open(path, 'w') as f:
@@ -107,13 +133,13 @@ def normalize_all(root=None):
             if not f.endswith('.yaml'):
                 continue
             path = os.path.join(d, f)
-            # Only touch files that currently fail strict parse
+            # Only touch files that have a broken double-quoted REGEX_KEYS line.
             try:
                 with open(path) as fh:
-                    list(yaml.safe_load_all(fh.read()))
-                continue  # already valid
-            except yaml.YAMLError:
-                pass
+                    if not _has_broken_dq_line(fh.read()):
+                        continue  # already clean for our purposes
+            except OSError:
+                continue
             if normalize_file(path):
                 repaired += 1
     return repaired
