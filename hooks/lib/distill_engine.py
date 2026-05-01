@@ -1165,6 +1165,268 @@ def run_auto_distill(dry_run: bool = False) -> dict:
         _lock_release(lock_fh)
 
 
+# ── Pipeline stats ────────────────────────────────────────────────────────────
+
+# Alias: domains that auto-validate accepts without human review
+WHITELIST_DOMAINS = VALIDATE_AUTO_DOMAINS
+
+
+def _mtime_iso(path: Path) -> str | None:
+    """Return ISO-8601 UTC mtime of *path*, or None if path is missing."""
+    try:
+        ts = path.stat().st_mtime
+        return _dt.datetime.fromtimestamp(ts, tz=_dt.timezone.utc).isoformat()
+    except OSError:
+        return None
+
+
+def _iter_knowledge_log(since: _dt.date | None = None):
+    """Yield parsed knowledge-log lines as dicts within the optional date window.
+
+    Line format: ``YYYY-MM-DD | <event> | <id> | <detail> | <source>``
+    """
+    if not KNOWLEDGE_LOG.exists():
+        return
+    try:
+        with open(KNOWLEDGE_LOG, "r", encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                raw = raw.strip()
+                if not raw or raw.startswith("#"):
+                    continue
+                parts = [p.strip() for p in raw.split("|")]
+                if len(parts) < 5:
+                    continue
+                date_str, event, iid, detail, source = parts[0], parts[1], parts[2], parts[3], parts[4]
+                try:
+                    line_date = _dt.date.fromisoformat(date_str[:10])
+                except ValueError:
+                    continue
+                if since is not None and line_date < since:
+                    continue
+                yield {"date": line_date, "event": event, "id": iid, "detail": detail, "source": source}
+    except OSError:
+        pass
+
+
+def compute_pipeline_stats(days: int = 14) -> dict:
+    """Return a snapshot of pipeline activity over the last *days* days.
+
+    Pure function: reads files, writes nothing.
+    All counters default to 0 if the relevant files are missing.
+    """
+    today = _dt.date.today()
+    since = today - _dt.timedelta(days=days - 1)  # inclusive window
+
+    # ── Validate stats ────────────────────────────────────────────────────────
+    auto_accepted = 0
+    manual_accepted = 0
+    manual_rejected = 0
+
+    for entry in _iter_knowledge_log(since=since):
+        ev = entry["event"]
+        src = entry["source"]
+        if ev == "accepted" and src == "cx-auto-validate":
+            auto_accepted += 1
+        elif ev in {"created", "accepted", "promoted"} and src == "cx-validate":
+            manual_accepted += 1
+        elif ev == "rejected" and src == "cx-validate":
+            manual_rejected += 1
+
+    proposals = _load_proposals()
+    pending = [p for p in proposals if p.get("status") == "pending"]
+    pending_count = len(pending)
+    pending_by_domain: dict[str, int] = {}
+    for p in pending:
+        d = str(p.get("domain", "unknown"))
+        pending_by_domain[d] = pending_by_domain.get(d, 0) + 1
+
+    pending_in_whitelist = sum(
+        cnt for dom, cnt in pending_by_domain.items() if dom in WHITELIST_DOMAINS
+    )
+    pending_outside_whitelist = pending_count - pending_in_whitelist
+
+    # ── Promote stats ─────────────────────────────────────────────────────────
+    auto_promoted = 0
+    manual_promoted = 0
+
+    for entry in _iter_knowledge_log(since=since):
+        ev = entry["event"]
+        src = entry["source"]
+        if ev == "promoted" and src == "cx-auto-distill":
+            auto_promoted += 1
+        elif ev in {"law", "promoted"} and src == "cx-distill":
+            manual_promoted += 1
+
+    # candidates queued = non-empty candidates file, count ## headers
+    candidates_queued = 0
+    if CANDIDATES_FILE.exists():
+        try:
+            text = CANDIDATES_FILE.read_text(encoding="utf-8")
+            candidates_queued = sum(1 for ln in text.splitlines() if ln.startswith("## "))
+        except OSError:
+            pass
+
+    active_laws = _active_law_count()
+
+    # ── Evolve stats ──────────────────────────────────────────────────────────
+    auto_drafts_generated = 0
+    manual_evolved = 0
+
+    for entry in _iter_knowledge_log(since=since):
+        ev = entry["event"]
+        src = entry["source"]
+        if ev == "evolve-draft" and src == "cx-auto-evolve":
+            auto_drafts_generated += 1
+        elif ev == "evolved" and src == "cx-evolve":
+            manual_evolved += 1
+
+    drafts_pending_install = 0
+    manual_drafts_pending = 0
+    if EVOLVED_SKILLS_DIR.is_dir():
+        all_mds = list(EVOLVED_SKILLS_DIR.glob("*.md"))
+        cluster_drafts = [f for f in all_mds if f.name.startswith("cluster-") and f.name.endswith(".draft.md")]
+        drafts_pending_install = len(cluster_drafts)
+        manual_drafts_pending = len(all_mds) - len(cluster_drafts)
+
+    # ── Decay / archive stats ─────────────────────────────────────────────────
+    decayed_count = 0
+    archived_count = 0
+
+    for entry in _iter_knowledge_log(since=since):
+        ev = entry["event"]
+        src = entry["source"]
+        if ev == "decayed" and src == "cx-auto-distill":
+            decayed_count += 1
+        elif ev == "archived" and src in {"cx-auto-distill", "cx-validate"}:
+            archived_count += 1
+
+    # ── Last runs ─────────────────────────────────────────────────────────────
+    daily_dir = CORTEX_DIR / "daily-summaries"
+    today_summary = daily_dir / f"{today.isoformat()}.md"
+    last_eod_path = CORTEX_DIR / ".last-eod"
+    eod_path = today_summary if today_summary.exists() else last_eod_path
+
+    analyze_path1 = CORTEX_DIR / ".last-learn-count"
+    analyze_path2 = CORTEX_DIR / ".learn-pending"
+    # Pick whichever exists (prefer .last-learn-count, fall back to .learn-pending)
+    if analyze_path1.exists():
+        analyze_path = analyze_path1
+    elif analyze_path2.exists():
+        analyze_path = analyze_path2
+    else:
+        analyze_path = analyze_path1  # missing — _mtime_iso returns None
+
+    return {
+        "window_days": days,
+        "as_of": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+        "validate": {
+            "auto_accepted": auto_accepted,
+            "manual_accepted": manual_accepted,
+            "manual_rejected": manual_rejected,
+            "pending": pending_count,
+            "pending_by_domain": pending_by_domain,
+            "pending_in_whitelist": pending_in_whitelist,
+            "pending_outside_whitelist": pending_outside_whitelist,
+        },
+        "promote": {
+            "auto_promoted": auto_promoted,
+            "manual_promoted": manual_promoted,
+            "candidates_queued": candidates_queued,
+            "active_laws": active_laws,
+            "law_cap": LAW_MAX_ACTIVE,
+        },
+        "evolve": {
+            "auto_drafts_generated": auto_drafts_generated,
+            "manual_evolved": manual_evolved,
+            "drafts_pending_install": drafts_pending_install,
+            "manual_drafts_pending": manual_drafts_pending,
+        },
+        "decay": {
+            "decayed": decayed_count,
+            "archived": archived_count,
+        },
+        "last_runs": {
+            "auto_distill": _mtime_iso(MARKER_FILE),
+            "analyze": _mtime_iso(analyze_path),
+            "manual_distill": _mtime_iso(CORTEX_DIR / ".last-distill"),
+            "audit": _mtime_iso(CORTEX_DIR / ".last-audit"),
+            "eod": _mtime_iso(eod_path),
+        },
+    }
+
+
+def _fmt_ts(ts: str | None) -> str:
+    """Format an ISO timestamp for human display, or 'never'."""
+    if ts is None:
+        return "never"
+    return ts
+
+
+def _cmd_pipeline_stats(days: int, as_json: bool) -> None:
+    stats = compute_pipeline_stats(days=days)
+    if as_json:
+        print(json.dumps(stats, indent=2, default=str))
+        return
+
+    v = stats["validate"]
+    pr = stats["promote"]
+    ev = stats["evolve"]
+    dc = stats["decay"]
+    lr = stats["last_runs"]
+
+    v_activity = "" if any([v["auto_accepted"], v["manual_accepted"], v["manual_rejected"], v["pending"]]) else " (no activity)"
+    pr_activity = "" if any([pr["auto_promoted"], pr["manual_promoted"], pr["candidates_queued"]]) else " (no activity)"
+    ev_activity = "" if any([ev["auto_drafts_generated"], ev["manual_evolved"], ev["drafts_pending_install"], ev["manual_drafts_pending"]]) else " (no activity)"
+    dc_activity = "" if any([dc["decayed"], dc["archived"]]) else " (no activity)"
+
+    sep = "─" * 49
+
+    lines = [
+        f"CORTEX KNOWLEDGE PIPELINE — last {days} days",
+        sep,
+        f"  As of:  {stats['as_of']}",
+        "",
+        f"VALIDATE:{v_activity}",
+        f"  ✓ Auto-accepted:    {v['auto_accepted']} proposals → instincts (cx-auto-validate)",
+        f"  ✓ Manual accepted:  {v['manual_accepted']} proposals (cx-validate)",
+        f"  ✗ Manual rejected:  {v['manual_rejected']} proposals",
+        f"  ⚠ Pending:          {v['pending']} total",
+    ]
+
+    if v["pending_by_domain"]:
+        for domain, count in sorted(v["pending_by_domain"].items()):
+            tag = "✅ whitelist" if domain in WHITELIST_DOMAINS else "❌ needs judgment"
+            lines.append(f"      {domain}: {count}  [{tag}]")
+
+    lines += [
+        "",
+        f"PROMOTE (instincts → laws):{pr_activity}",
+        f"  ✓ Auto-promoted:    {pr['auto_promoted']} instincts (cx-auto-distill)",
+        f"  ✓ Manual promoted:  {pr['manual_promoted']} instincts (cx-distill)",
+        f"  ⚠ Candidates queued: {pr['candidates_queued']}",
+        f"  · Active laws:      {pr['active_laws']}/{pr['law_cap']}",
+        "",
+        f"EVOLVE (instincts → skills):{ev_activity}",
+        f"  ✓ Auto-drafts:      {ev['auto_drafts_generated']} generated (cx-auto-evolve)",
+        f"  ✓ Manual evolved:   {ev['manual_evolved']} skills (cx-evolve)",
+        f"  ⚠ Drafts pending:   {ev['drafts_pending_install']} at evolved/skills/cluster-*.draft.md",
+        f"  · Manual artifacts: {ev['manual_drafts_pending']} at evolved/skills/*.md",
+        "",
+        f"MAINTENANCE:{dc_activity}",
+        f"  · Decayed:    {dc['decayed']} instincts (-0.05 each)",
+        f"  · Archived:   {dc['archived']} instincts (conf < 0.10)",
+        "",
+        "LAST RUNS:",
+        f"  · auto-distill:   {_fmt_ts(lr['auto_distill'])}",
+        f"  · analyze:        {_fmt_ts(lr['analyze'])}",
+        f"  · manual distill: {_fmt_ts(lr['manual_distill'])}",
+        f"  · audit:          {_fmt_ts(lr['audit'])}",
+        f"  · eod:            {_fmt_ts(lr['eod'])}",
+    ]
+
+    print("\n".join(lines))
+
+
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 def _cmd_auto(dry_run: bool) -> None:
@@ -1218,7 +1480,7 @@ def _cmd_status() -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="distill_engine",
-        description="fs-cortex auto-distillation engine (Sprint 6)",
+        description="fs-cortex auto-distillation engine (Sprint 6/7)",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -1233,6 +1495,19 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("status", help="Show current candidates and rate-limit state")
 
+    p_pipeline = sub.add_parser(
+        "pipeline-stats",
+        help="Show pipeline activity dashboard (Sprint 7.1+)",
+    )
+    p_pipeline.add_argument(
+        "--days", type=int, default=14, metavar="N",
+        help="Lookback window in days (default: 14)",
+    )
+    p_pipeline.add_argument(
+        "--json", dest="as_json", action="store_true",
+        help="Machine-readable JSON output",
+    )
+
     args = parser.parse_args(argv)
 
     if args.cmd == "auto":
@@ -1243,6 +1518,8 @@ def main(argv: list[str] | None = None) -> int:
         _cmd_promote(args.dry_run)
     elif args.cmd == "status":
         _cmd_status()
+    elif args.cmd == "pipeline-stats":
+        _cmd_pipeline_stats(days=args.days, as_json=args.as_json)
 
     return 0
 

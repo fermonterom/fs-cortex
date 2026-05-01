@@ -967,6 +967,140 @@ PYEOF
 fi
 rm -rf "$T23"
 
+# ── Sprint 7.1: pipeline-stats tests ─────────────────────────────────────────
+
+# ── Test 24: pipeline-stats-zero-state ───────────────────────────────────────
+echo "--- Test 24: pipeline-stats-zero-state ---"
+T24="$(mktemp -d -t distill-t24-XXXXXX)"
+export CORTEX_DIR="$T24"
+
+result=$(python3 - <<PYEOF
+$(_py_patch "$T24")
+import json
+stats = de.compute_pipeline_stats(days=14)
+v = stats['validate']
+pr = stats['promote']
+ev = stats['evolve']
+dc = stats['decay']
+lr = stats['last_runs']
+
+all_zero = (
+    v['auto_accepted'] == 0 and v['manual_accepted'] == 0 and
+    v['manual_rejected'] == 0 and v['pending'] == 0 and
+    pr['auto_promoted'] == 0 and pr['manual_promoted'] == 0 and
+    pr['candidates_queued'] == 0 and
+    ev['auto_drafts_generated'] == 0 and ev['manual_evolved'] == 0 and
+    ev['drafts_pending_install'] == 0 and ev['manual_drafts_pending'] == 0 and
+    dc['decayed'] == 0 and dc['archived'] == 0
+)
+all_runs_null = all(v is None for v in lr.values())
+print(all_zero, all_runs_null)
+PYEOF
+)
+if echo "$result" | grep -q "True True"; then
+  pass "pipeline-stats-zero-state: empty CORTEX_DIR → all counts 0, last_runs all null"
+else
+  fail "pipeline-stats-zero-state: got '$result'"
+fi
+rm -rf "$T24"
+
+# ── Test 25: pipeline-stats-counts-by-source ─────────────────────────────────
+echo "--- Test 25: pipeline-stats-counts-by-source ---"
+T25="$(mktemp -d -t distill-t25-XXXXXX)"
+export CORTEX_DIR="$T25"
+
+# Seed knowledge-log: 3 auto-accepted + 2 manual accepted + 1 manual rejected + 1 auto promoted
+TODAY_DATE=$(python3 -c "from datetime import date; print(date.today().isoformat())")
+mkdir -p "$T25"
+cat > "$T25/knowledge-log.md" <<LOG
+$TODAY_DATE | accepted | auto-1 | conf=0.60 | cx-auto-validate
+$TODAY_DATE | accepted | auto-2 | conf=0.65 | cx-auto-validate
+$TODAY_DATE | accepted | auto-3 | conf=0.70 | cx-auto-validate
+$TODAY_DATE | created | manual-1 | 0.75 | cx-validate
+$TODAY_DATE | accepted | manual-2 | 0.80 | cx-validate
+$TODAY_DATE | rejected | manual-r1 | 0.40 | cx-validate
+$TODAY_DATE | promoted | law-1 | law written | cx-auto-distill
+LOG
+
+result=$(python3 - <<PYEOF
+$(_py_patch "$T25")
+import json
+stats = de.compute_pipeline_stats(days=14)
+v = stats['validate']
+pr = stats['promote']
+aa = v['auto_accepted'] == 3
+ma = v['manual_accepted'] == 2
+mr = v['manual_rejected'] == 1
+ap = pr['auto_promoted'] == 1
+print(aa, ma, mr, ap)
+PYEOF
+)
+if echo "$result" | grep -q "True True True True"; then
+  pass "pipeline-stats-counts-by-source: auto_accepted=3, manual_accepted=2, rejected=1, auto_promoted=1"
+else
+  fail "pipeline-stats-counts-by-source: got '$result'"
+fi
+rm -rf "$T25"
+
+# ── Test 26: pipeline-stats-pending-by-domain ────────────────────────────────
+echo "--- Test 26: pipeline-stats-pending-by-domain ---"
+T26="$(mktemp -d -t distill-t26-XXXXXX)"
+export CORTEX_DIR="$T26"
+
+# 2 gotcha pending + 3 workflow pending
+make_proposal "$T26/proposals.json" "p26-g1" "0.60" "gotcha"
+make_proposal "$T26/proposals.json" "p26-g2" "0.65" "gotcha"
+make_proposal "$T26/proposals.json" "p26-w1" "0.55" "workflow"
+make_proposal "$T26/proposals.json" "p26-w2" "0.60" "workflow"
+make_proposal "$T26/proposals.json" "p26-w3" "0.70" "workflow"
+
+result=$(python3 - <<PYEOF
+$(_py_patch "$T26")
+import json
+stats = de.compute_pipeline_stats(days=14)
+v = stats['validate']
+pending_ok = v['pending'] == 5
+domain_ok = v['pending_by_domain'].get('gotcha', 0) == 2 and v['pending_by_domain'].get('workflow', 0) == 3
+# gotcha is in WHITELIST_DOMAINS, workflow is not
+whitelist_ok = v['pending_in_whitelist'] == 2
+outside_ok = v['pending_outside_whitelist'] == 3
+print(pending_ok, domain_ok, whitelist_ok, outside_ok)
+PYEOF
+)
+if echo "$result" | grep -q "True True True True"; then
+  pass "pipeline-stats-pending-by-domain: pending=5, gotcha:2/whitelist, workflow:3/outside"
+else
+  fail "pipeline-stats-pending-by-domain: got '$result'"
+fi
+rm -rf "$T26"
+
+# ── Test 27: pipeline-stats-evolve-drafts ────────────────────────────────────
+echo "--- Test 27: pipeline-stats-evolve-drafts ---"
+T27="$(mktemp -d -t distill-t27-XXXXXX)"
+export CORTEX_DIR="$T27"
+
+mkdir -p "$T27/evolved/skills"
+echo "# draft 1" > "$T27/evolved/skills/cluster-testing-abc12345.draft.md"
+echo "# draft 2" > "$T27/evolved/skills/cluster-workflow-def67890.draft.md"
+echo "# manual skill" > "$T27/evolved/skills/fs-foo.md"
+
+result=$(python3 - <<PYEOF
+$(_py_patch "$T27")
+import json
+stats = de.compute_pipeline_stats(days=14)
+ev = stats['evolve']
+drafts_ok = ev['drafts_pending_install'] == 2
+manual_ok = ev['manual_drafts_pending'] == 1
+print(drafts_ok, manual_ok)
+PYEOF
+)
+if echo "$result" | grep -q "True True"; then
+  pass "pipeline-stats-evolve-drafts: drafts_pending_install=2, manual_drafts_pending=1"
+else
+  fail "pipeline-stats-evolve-drafts: got '$result'"
+fi
+rm -rf "$T27"
+
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="

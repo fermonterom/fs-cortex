@@ -23,6 +23,7 @@ CORTEX COMMAND ROUTER
 Command          Cost        Purpose
 ─────────────────────────────────────────────────────────────
 /cx-status       ~200 tok    Dashboard: laws, instincts, projects, tracking, health
+                              flags: --impact, --reflexes, --pipeline (v3.23.1+)
 /cx-analyze      ~5K tok     Detect patterns in observations → proposals (Opus 1M agent)
 /cx-validate     ~500 tok    Review and accept/reject proposals interactively
 /cx-distill      ~800 tok    Promote instincts to laws, apply decay, Jaccard promotions

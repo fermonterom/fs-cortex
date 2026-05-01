@@ -4,6 +4,92 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.23.1] — 2026-05-01
+
+### `/cx-status --pipeline` — pipeline activity dashboard
+
+Triggered by Fer asking "debería tener datos o un informe que poder
+consultar". Sprint 7 (v3.23.0) writes pipeline activity across 5
+dispersed sources — knowledge-log.md, proposals.json,
+auto-distill-candidates.md, evolved/skills/, and last-run markers.
+The new `--pipeline` flag aggregates them in a single read.
+
+### Added
+
+- **`compute_pipeline_stats(days=14)`** in `hooks/lib/distill_engine.py`
+  (+276 LOC, 1252 → 1528). Pure function returning a dict with 5
+  sections: `validate`, `promote`, `evolve`, `decay`, `last_runs`. All
+  counts derived from existing data sources; no new state introduced.
+
+- **`pipeline-stats` CLI subcommand** in `distill_engine.py` mirroring
+  the `--impact` / `--reflexes` pattern:
+  ```
+  python3 hooks/lib/distill_engine.py pipeline-stats [--days N] [--json]
+  ```
+
+- **`/cx-status --pipeline` flag** in `commands/cx-status.md`. ASCII
+  output sections:
+  - **VALIDATE**: auto-accepted (cx-auto-validate), manual accepted/
+    rejected (cx-validate), pending by domain with whitelist tag.
+  - **PROMOTE**: auto-promoted (cx-auto-distill), manual promoted
+    (cx-distill), candidates queued, active laws / cap.
+  - **EVOLVE**: auto drafts (cx-auto-evolve), manual evolved
+    (cx-evolve), drafts pending install, manual artifacts.
+  - **MAINTENANCE**: decayed instincts, archived instincts.
+  - **LAST RUNS**: marker mtimes for auto-distill / analyze /
+    manual-distill / audit / eod.
+
+- **4 new tests 24-27** in `tests/test_distill_engine.sh`:
+  zero-state (empty CORTEX_DIR), source counters, pending-by-domain,
+  evolve-drafts (cluster vs manual). 23 → **27/27 PASS**.
+
+### Changed
+
+- **`commands/cx-router.md`**: `/cx-status` row extended with the new
+  `flags: --impact, --reflexes, --pipeline` line.
+- **`docs/FEATURES.md`**: commands table `/cx-status` row mentions
+  `--pipeline (v3.23.1)`.
+
+### Bug fix as side-effect
+
+Sprint 7 (v3.23.0) was pushed to GitHub but never installed locally on
+Fer's machine. His `~/.claude/hooks/cortex/lib/distill_engine.py` was
+still running v3.22.x code (0 occurrences of `auto_validate_proposals`,
+MD5 mismatch with repo). The `bash install.sh` run during this release
+synced it (now MD5 matches, 8 occurrences). Forced `run_auto_distill()`
+confirmed:
+
+```
+{ "validated": 0, "skipped_validate": 33,
+  "promoted": 0, "candidates": 12,
+  "evolve_drafts": 0 }
+```
+
+Correct behavior — all 33 pending proposals are `workflow` /
+`user-preference`, outside the auto-accept whitelist
+(`gotcha`/`pattern`/`error-recovery`/`agent-evolution`). The system is
+healthy; pending need human `/cx-validate` because their domain
+explicitly requires judgment.
+
+### Tests at release
+
+| Suite | Result |
+|---|---|
+| `test_distill_engine.sh` | **27/27 PASS** (was 23/23 in v3.23.0) |
+| `test_security.sh` | 7/7 PASS |
+| `test_dream_cycle.sh` | 35/35 PASS |
+| `test_impact.sh` | 64/64 PASS |
+
+### Migration from v3.23.0
+
+No code migration required. Run `bash install.sh` to sync the new flag
+into your local `~/.claude/hooks/cortex/lib/`.
+
+Use `/cx-status --pipeline` (or
+`python3 ~/.claude/hooks/cortex/lib/distill_engine.py pipeline-stats`)
+to see what auto-validate / auto-distill / auto-evolve have done in
+the last 14 days, and what's queued for human review.
+
 ## [3.23.0] — 2026-04-30
 
 ### Sprint 7 · Pipeline automation

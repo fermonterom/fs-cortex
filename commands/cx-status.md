@@ -224,6 +224,36 @@ attributable to the current matcher). Other callers — `rotate()`,
 `outcome-ranking`, `outcome-nudge` — leave the boundary disabled and
 see raw history.
 
+### `--pipeline` — Knowledge pipeline dashboard (v3.23.1+)
+
+Skip the full dashboard and show a consolidated view of pipeline activity
+(validate → promote → evolve → maintain) over the last N days.
+
+Invokes:
+
+```bash
+python3 ~/.claude/hooks/cortex/lib/distill_engine.py pipeline-stats --days 14
+```
+
+Output sections:
+
+- **VALIDATE** — auto-accepted proposals (cx-auto-validate), manual accepts/rejects
+  (cx-validate), pending proposals broken down by domain and whitelist eligibility
+- **PROMOTE** — auto-promoted instincts to laws (cx-auto-distill), manual promotions
+  (cx-distill), candidates queued in `auto-distill-candidates.md`, active law count
+- **EVOLVE** — auto-generated skill drafts (cx-auto-evolve), manually evolved skills
+  (cx-evolve), draft files pending review in `evolved/skills/`
+- **MAINTENANCE** — decayed instincts (-0.05 each) and archived instincts (conf < 0.10)
+- **LAST RUNS** — mtimes of `.last-auto-distill`, `.last-distill`, `.last-audit`,
+  `.learn-pending` / `.last-learn-count`, and today's `daily-summaries/` entry
+
+Supports `--days N` (default 14) to change the lookback window.
+Pass `--json` for machine-readable output.
+
+Note: `auto-*` events (cx-auto-validate, cx-auto-evolve) come from Sprint 7+ (v3.23.0+).
+Pre-Sprint-7 acceptances have no `accepted_by` field in proposals.json and are counted
+under `manual_accepted` (source=cx-validate).
+
 ### `--reflexes` — Reflex health panel (v3.18.0+)
 
 Skip the full dashboard and show a per-reflex health table from
