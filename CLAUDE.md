@@ -8,10 +8,13 @@ files — it provides a complete inventory and is kept up-to-date with every rel
 
 ## Pending validation
 
-**`docs/SPRINT-5-PENDING-GATES.md`** — Gate 2 closed (PASS) and Gate 3
-dropped in v3.22.2. Only **Gate 1** (`bash-grep-use-grep-tool` ratio ≥ 3×)
-remains pending — measurable from mid-May 2026 onward when 30+ days of
-post-`resetAt` evidence accumulate. Delete the file when Gate 1 passes.
+**`docs/SPRINT-5-PENDING-GATES.md`** — Gate 2 was prematurely closed in
+v3.22.2 and reopened in v3.23.3 alongside Gate 1. Both depend on a fresh
+measurement window starting **2026-05-02** (v3.23.3 fixed two regex bugs
+in the bash-cat/bash-grep/bash-find matchers that caused 306 lost fires
+across 6 days). Estimate: enough data by 2026-05-09. Gate 3 remains
+dropped (no reconstructible baseline). Delete this file when Gate 1+2
+both PASS with fresh post-v3.23.3 data.
 
 ## Release workflow
 

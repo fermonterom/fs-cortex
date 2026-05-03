@@ -21,7 +21,7 @@ COMMANDS_DIR="$CLAUDE_DIR/commands"
 HOOKS_DIR="$CLAUDE_DIR/hooks/cortex"
 SETTINGS_FILE="$CLAUDE_DIR/settings.json"
 CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
-NEW_VERSION="3.23.2"
+NEW_VERSION="3.23.3"
 
 print_header() {
     echo ""
@@ -206,6 +206,17 @@ try:
                 if field in d and u.get(field) != d[field]:
                     u[field] = d[field]
                     changed = True
+            # v3.23.3+ also propagate evaluator.anti_pattern (matcher fix needs both)
+            if 'evaluator' in d and isinstance(d['evaluator'], dict):
+                u_eval = u.get('evaluator', {})
+                if isinstance(u_eval, dict):
+                    for sub in ('anti_pattern', 'expected_tool', 'anti_tool',
+                                'precondition_tool', 'match_field', 'lookback',
+                                'window', 'error_pattern', 'type'):
+                        if sub in d['evaluator'] and u_eval.get(sub) != d['evaluator'][sub]:
+                            u_eval[sub] = d['evaluator'][sub]
+                            changed = True
+                    u['evaluator'] = u_eval
             if changed:
                 updated += 1
     if added or updated:

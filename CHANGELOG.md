@@ -4,6 +4,118 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.23.3] — 2026-05-04
+
+### Hotfix — fix 2 silent regex bugs in 3 reflex matchers (Sprint 5 regression)
+
+Triggered by Fer questioning the "0 fires post-`resetAt`" interpretation
+that v3.22.2 had used to claim Sprint 5 Gate 2 PASS. Forensic on
+`observations.jsonl` revealed 306 real-world Bash commands across
+6 days that the matchers should have caught but didn't.
+
+### Root cause — Sprint 5 (v3.20.0) matchers were too aggressive
+
+The "matcher refinement" introduced in Sprint 5 had two regex bugs:
+
+1. **Anchor `^` rejected compound commands.** Real-world Bash usage is
+   90%+ compound: `cmd1; cmd2`, `cmd1 && cmd2`, `cmd1 | cmd2`. The `^`
+   only matches when the suspect command is at the very beginning of
+   the entire Bash input string, missing all compound forms.
+
+2. **`-[a-zA-Z]*[rR]` for grep flags required `r/R` as the LAST letter
+   of the flag prefix.** Real-world Bash uses `-rn`, `-rE`, `-RE`,
+   `-rni` (where `r/R` is first or middle, not last). The regex
+   backtrack failed for all of these.
+
+Effect across 6 days of intensive Bash use:
+- 95 `cat/head/tail` on source files → 0 fires
+- 133 `grep -r/-R/-rn/-rE` recursive → 0 fires
+- 78 `find -name` → 0 fires
+- **Total: 306 fires lost**, useful/noise stuck at 0/0
+
+The previous "Gate 2 PASS" conclusion in v3.22.2 was an artifact of the
+broken matchers, not real signal.
+
+### Fixed
+
+- **`core/reflexes.default.json`** — three matchers (and their
+  `evaluator.anti_pattern` mirrors) updated:
+
+  | Reflex | Old `condition` | New `condition` |
+  |---|---|---|
+  | `bash-cat-use-read` | `^(cat\|head\|tail)\s+...\.<ext>\b` | `(?:^\|[;&\|]\s*)(cat\|head\|tail)\s+(-[0-9]+\s+)?...\.<ext>\b` |
+  | `bash-grep-use-grep-tool` | `^grep\s+(-[a-zA-Z]*[rR])` | `(?:^\|[;&\|]\s*)grep\s+(-[a-zA-Z]*[rR][a-zA-Z]*)` |
+  | `bash-find-use-glob` | `^find\s+\S+\s+-name\s+...` | `(?:^\|[;&\|]\s*)find\s+\S+\s+-name\s+...` |
+
+- **Bonus**: extension list of `bash-cat-use-read` extended with
+  `jsonl` (JSON Lines, heavily used by Cortex itself for
+  `observations.jsonl` and `impact.jsonl`). Optional numeric arg
+  `(-[0-9]+\s+)?` accepts `head -50 file.md`, `tail -100 file.json`.
+
+- **User-local `~/.claude/cortex/reflexes.json`** patched in-place
+  during the install.sh run that ships this release. The fix is
+  forward-looking: existing 0/0 counters from v3.20.0+ stay at 0/0
+  (those events never registered); new fires from 2026-05-02 onward
+  populate cleanly.
+
+### Added
+
+- **`tests/test_reflex_matchers.sh`** — 28 tests covering:
+  - Compound commands with `;` / `&&` / `|`
+  - `r/R` flag positions: `-r`, `-R`, `-rn`, `-rE`, `-nR`, `-rni`
+  - Numeric args: `head -50 file.md`, `tail -100 file.json`
+  - Edge cases: `find ... -delete`, `find ... -exec` (excluded),
+    `cat /etc/hosts` (no recognized extension), etc.
+  - Real-world examples from `observations.jsonl` (the cases the old
+    matchers missed)
+
+  All 28 PASS post-fix.
+
+### Changed
+
+- **`docs/SPRINT-5-PENDING-GATES.md`** — rewritten:
+  - **Gate 2 reopened**. v3.22.2's "Gate 2 PASS" was based on
+    `noiseCount < 3`, but with 0 fires that was trivially met for the
+    wrong reason. New Gate 2 criterion: `enabled: true AND
+    fireCount post-resetAt ≥ 30 AND usefulCount/max(noiseCount,1) ≥ 2.0`.
+  - **Gate 1 still pending**, but the reason is now "fresh
+    measurement window starts 2026-05-02 with fixed matcher" instead
+    of "wait for fresh post-resetAt evidence" (the old framing
+    assumed the matcher worked).
+  - Estimate: enough data on both gates by 2026-05-09 (~7 days of
+    fresh fires).
+- **`CLAUDE.md`** — Pending validation block updated to reflect both
+  gates reopened.
+
+### Cleanup (side action)
+
+Archived duplicate instinct `pattern-sandbox-installer-test-mktemp`
+(added by `/cx-validate` earlier today) — Jaccard 0.36 with the
+pre-existing `pattern-sandbox-installer-test`. Same concept,
+duplicated. Source-of-truth retained on the older one.
+
+### Tests at release
+
+| Suite | Result |
+|---|---|
+| `test_reflex_matchers.sh` | **28/28 PASS** (new) |
+| `test_security.sh` | 7/7 PASS |
+| `test_dream_cycle.sh` | 35/35 PASS |
+| `test_distill_engine.sh` | 27/27 PASS |
+| `test_impact.sh` | 64/64 PASS |
+| `test_yaml_normalize.sh` | 12/12 PASS |
+| `test_yaml_utils.sh` | 13/13 PASS |
+
+**Total: 186/186 PASS** (was 158 in v3.23.2 + 28 new).
+
+### Migration from v3.23.2
+
+Run `bash install.sh`. Existing user-local `reflexes.json` matchers
+will be patched in-place by this release's installer. No data loss —
+the existing 0/0 useful/noise counters stay (those events never
+registered with the broken matcher); new fires from now on populate
+correctly.
+
 ## [3.23.2] — 2026-05-01
 
 ### Restore zero-deps invariant — drop PyYAML from `yaml_normalize.py`

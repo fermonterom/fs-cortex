@@ -140,7 +140,7 @@
     {
       "id": "bash-cat-use-read",
       "matcher": "Bash",
-      "condition": "^(cat|head|tail)\\s+[\\.\\/~]?\\S*\\.(py|js|jsx|ts|tsx|md|json|ya?ml|sh|html|css|toml|cfg|ini|conf|sql|env)\\b",
+      "condition": "(?:^|[;&|]\\s*)(cat|head|tail)\\s+(-[0-9]+\\s+)?[\\.\\/~]?\\S*\\.(py|js|jsx|ts|tsx|md|json|jsonl|ya?ml|sh|html|css|toml|cfg|ini|conf|sql|env)\\b",
       "action": "Use Read tool (with limit/offset) instead of cat/head/tail for source files.",
       "severity": "medium",
       "enabled": true,
@@ -152,14 +152,14 @@
         "type": "tool-substitution",
         "expected_tool": "Read",
         "anti_tool": "Bash",
-        "anti_pattern": "^(cat|head|tail)\\s+[\\.\\/~]?\\S*\\.(py|js|jsx|ts|tsx|md|json|ya?ml|sh|html|css|toml|cfg|ini|conf|sql|env)\\b",
+        "anti_pattern": "(?:^|[;&|]\\s*)(cat|head|tail)\\s+(-[0-9]+\\s+)?[\\.\\/~]?\\S*\\.(py|js|jsx|ts|tsx|md|json|jsonl|ya?ml|sh|html|css|toml|cfg|ini|conf|sql|env)\\b",
         "window": 3
       }
     },
     {
       "id": "bash-grep-use-grep-tool",
       "matcher": "Bash",
-      "condition": "^grep\\s+(-[a-zA-Z]*[rR])",
+      "condition": "(?:^|[;&|]\\s*)grep\\s+(-[a-zA-Z]*[rR][a-zA-Z]*)",
       "action": "Use Grep tool instead of recursive grep — structured output, faster, no permission issues.",
       "severity": "medium",
       "enabled": true,
@@ -171,14 +171,14 @@
         "type": "tool-substitution",
         "expected_tool": "Grep",
         "anti_tool": "Bash",
-        "anti_pattern": "^grep\\s+(-[a-zA-Z]*[rR])",
+        "anti_pattern": "(?:^|[;&|]\\s*)grep\\s+(-[a-zA-Z]*[rR][a-zA-Z]*)",
         "window": 3
       }
     },
     {
       "id": "bash-find-use-glob",
       "matcher": "Bash",
-      "condition": "^find\\s+\\S+\\s+-name\\s+\\S+(?!.*-(exec|delete|newer|mtime|print0|prune))",
+      "condition": "(?:^|[;&|]\\s*)find\\s+\\S+\\s+-name\\s+\\S+(?!.*-(exec|delete|newer|mtime|print0|prune))",
       "action": "Use Glob tool instead of find for plain -name searches — faster, no permission issues.",
       "severity": "medium",
       "enabled": true,
@@ -190,7 +190,7 @@
         "type": "tool-substitution",
         "expected_tool": "Glob",
         "anti_tool": "Bash",
-        "anti_pattern": "^find\\s+\\S+\\s+-name\\s+\\S+(?!.*-(exec|delete|newer|mtime|print0|prune))",
+        "anti_pattern": "(?:^|[;&|]\\s*)find\\s+\\S+\\s+-name\\s+\\S+(?!.*-(exec|delete|newer|mtime|print0|prune))",
         "window": 3
       }
     }

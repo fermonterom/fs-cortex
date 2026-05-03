@@ -20,7 +20,7 @@ $CommandsDir = Join-Path $ClaudeDir "commands"
 $HooksDir = Join-Path (Join-Path $ClaudeDir "hooks") "cortex"
 $SettingsFile = Join-Path $ClaudeDir "settings.json"
 $ClaudeMd = Join-Path $ClaudeDir "CLAUDE.md"
-$NewVersion = "3.23.2"
+$NewVersion = "3.23.3"
 
 # --- Helpers ---
 
