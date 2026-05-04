@@ -4,6 +4,34 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.23.6] — 2026-05-04
+
+### Documentation — Sprint-5 measurement window timeline
+
+No code changes. Updates the operational documentation to reflect the
+real cadence of the operator (Claude Code runs across many projects
+in parallel daily), and to anchor the Sprint-5 measurement window on
+the v3.23.4 deployment date instead of v3.23.3 (which still left
+`bash-cat-use-read` blocked by the runtime guard).
+
+### Changed
+
+- **`docs/SPRINT-5-PENDING-GATES.md`** — measurement-window estimate
+  shortened from "by 2026-05-09" (5–7 days) to "by 2026-05-05 /
+  2026-05-06" (1–2 days). Header now references both v3.23.4 (guard
+  fix) and v3.23.5 (Windows parity) as the basis for the honest
+  fresh-data window starting 2026-05-04.
+- Cleanup section now points at "post-v3.23.4 data" instead of
+  "post-v3.23.3 data" — same logical meaning, but less ambiguous about
+  which release actually unlocked the trio.
+
+### Notes
+
+- Code surface unchanged from v3.23.5. `tests/run_all.sh` skipped (no
+  hooks, no library, no command, no installer logic touched).
+- Bumped version solely to satisfy the pre-push CHANGELOG-discipline
+  guard; otherwise this would have been a doc-only commit.
+
 ## [3.23.5] — 2026-05-04
 
 ### Hotfix — Windows installer parity for evaluator.* propagation
