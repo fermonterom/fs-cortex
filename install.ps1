@@ -20,7 +20,7 @@ $CommandsDir = Join-Path $ClaudeDir "commands"
 $HooksDir = Join-Path (Join-Path $ClaudeDir "hooks") "cortex"
 $SettingsFile = Join-Path $ClaudeDir "settings.json"
 $ClaudeMd = Join-Path $ClaudeDir "CLAUDE.md"
-$NewVersion = "3.23.4"
+$NewVersion = "3.23.5"
 
 # --- Helpers ---
 
@@ -194,6 +194,31 @@ else {
                     if ($d.PSObject.Properties[$field] -and $u.$field -ne $d.$field) {
                         $u.$field = $d.$field
                         $changed = $true
+                    }
+                }
+                # v3.23.5+ propagate evaluator.* (matcher fix needs both — parity with install.sh:210)
+                if ($d.PSObject.Properties['evaluator'] -and $d.evaluator -is [PSCustomObject]) {
+                    if (-not $u.PSObject.Properties['evaluator'] -or -not ($u.evaluator -is [PSCustomObject])) {
+                        $u | Add-Member -NotePropertyName 'evaluator' -NotePropertyValue $d.evaluator -Force
+                        $changed = $true
+                    } else {
+                        $uEval = $u.evaluator
+                        foreach ($sub in @('type', 'anti_pattern', 'expected_tool', 'anti_tool',
+                                           'precondition_tool', 'match_field', 'lookback',
+                                           'window', 'error_pattern')) {
+                            if (-not $d.evaluator.PSObject.Properties[$sub]) { continue }
+                            $newVal = $d.evaluator.$sub
+                            $hasOld = [bool]$uEval.PSObject.Properties[$sub]
+                            $oldVal = if ($hasOld) { $uEval.$sub } else { $null }
+                            if (-not $hasOld -or $oldVal -ne $newVal) {
+                                if ($hasOld) {
+                                    $uEval.$sub = $newVal
+                                } else {
+                                    $uEval | Add-Member -NotePropertyName $sub -NotePropertyValue $newVal -Force
+                                }
+                                $changed = $true
+                            }
+                        }
                     }
                 }
                 if ($changed) { $updated++ }

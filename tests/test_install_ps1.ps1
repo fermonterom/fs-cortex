@@ -203,6 +203,33 @@ finally {
     if (Test-Path $sandbox) { Remove-Item $sandbox -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
+# ── TEST 10: evaluator.* propagation parity with install.sh (v3.23.5+) ───
+
+Write-Host "--- Reflex evaluator propagation parity ---"
+# install.sh:209-219 propagates evaluator.{type, anti_pattern, expected_tool,
+# anti_tool, precondition_tool, match_field, lookback, window, error_pattern}
+# to existing reflexes during migration. install.ps1 must do the same — the
+# v3.23.3 fix to bash-cat-use-read et al. updated both `condition` AND
+# `evaluator.anti_pattern`; without this propagation, Windows users would get
+# the new condition but keep the stale anti_pattern (matcher-evaluator drift).
+$evalSubFields = @("anti_pattern", "expected_tool", "anti_tool",
+                   "precondition_tool", "match_field", "lookback",
+                   "window", "error_pattern")
+$evalMissing = 0
+if ($content -notmatch "PSObject\.Properties\['evaluator'\]") {
+    Test-Fail "install.ps1 missing evaluator propagation block"
+    $evalMissing++
+}
+foreach ($sub in $evalSubFields) {
+    if ($content -notmatch [regex]::Escape($sub)) {
+        Test-Fail "evaluator sub-field not referenced: $sub"
+        $evalMissing++
+    }
+}
+if ($evalMissing -eq 0) {
+    Test-Pass "evaluator.* propagation present (parity with install.sh)"
+}
+
 # ── Summary ───────────────────────────────────────────────────────
 
 Write-Host ""

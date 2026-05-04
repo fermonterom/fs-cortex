@@ -4,6 +4,43 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.23.5] — 2026-05-04
+
+### Hotfix — Windows installer parity for evaluator.* propagation
+
+v3.23.3 added evaluator-field propagation to the bash installer
+(`install.sh:209-219`) so the matcher fix on `bash-cat-use-read` /
+`bash-grep-use-grep-tool` / `bash-find-use-glob` would also update
+`evaluator.anti_pattern` on existing user installs. The PowerShell
+installer was never patched in lockstep, so Windows users running
+`bash install.ps1` after v3.23.3 (or v3.23.4) would receive the new
+`condition` but keep the stale `evaluator.anti_pattern` — silent
+matcher-evaluator drift, identical to the bug v3.23.3 was supposed to
+close.
+
+### Fixed
+
+- **`install.ps1`** — reflex migration now propagates the same nine
+  `evaluator.*` sub-fields that `install.sh` does (`type`,
+  `anti_pattern`, `expected_tool`, `anti_tool`, `precondition_tool`,
+  `match_field`, `lookback`, `window`, `error_pattern`). If the user
+  reflex has no `evaluator` object at all, the whole one from the
+  default is grafted in via `Add-Member`. Atomic on a per-field basis,
+  preserves all runtime data (`fireCount`, `lastFired`, `usefulCount`,
+  `noiseCount`, `enabled`).
+- **`tests/test_install_ps1.ps1`** — new test 10 asserts that the nine
+  evaluator sub-fields and the `PSObject.Properties['evaluator']` guard
+  are all present in the source. Catches future regressions where the
+  bash and PowerShell migrators drift apart silently.
+
+### Notes
+
+- bash `tests/run_all.sh` remains 16 suites green (no Python or Node
+  changes; only Windows-only file edits + a Windows-only test).
+- `test_install_ps1.ps1` only runs on `windows-latest` in CI — local
+  validation on macOS / Linux is by static grep against `install.ps1`
+  source. The CI workflow is unchanged.
+
 ## [3.23.4] — 2026-05-04
 
 ### Hotfix — third silent bug in the bash-cat-use-read regression
