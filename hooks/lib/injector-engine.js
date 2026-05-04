@@ -30,29 +30,8 @@ function sanitizeInjection(text, maxLen) {
   return clean;
 }
 
-/** Check if a regex pattern is safe (no ReDoS risk) */
-function isSafeRegex(pattern) {
-  if (typeof pattern !== "string" || pattern.length > 100) return false;
-  if (/\([^)]*[+*]\)[+*?]/.test(pattern)) return false;
-  if ((pattern.match(/\|/g) || []).length > 5) return false;
-  try {
-    const re = new RegExp(pattern);
-    const start = Date.now();
-    re.test("a".repeat(100));
-    if (Date.now() - start > 50) return false;
-  } catch { return false; }
-  return true;
-}
-
-/** Safe regex test — returns false on invalid or unsafe pattern */
-function safeRegexTest(pattern, text) {
-  try {
-    if (!isSafeRegex(pattern)) return false;
-    return new RegExp(pattern, "i").test(text);
-  } catch {
-    return false;
-  }
-}
+// Regex safety helpers — centralized in lib/regex-guard.js (v3.23.4+).
+const { isSafeRegex, safeRegexTest, unsafeReason } = require('./regex-guard');
 
 // Import shared YAML utilities
 const yamlUtils = require(path.join(__dirname, 'yaml-utils'));
@@ -133,8 +112,8 @@ function main() {
       const MAX_REFLEXES = memoryConfig.max_reflexes_per_injection || 2;
       for (const r of reflexes) {
         if (!r.enabled) continue;
-        if (!r.matcher || !safeRegexTest(r.matcher, toolName)) continue;
-        if (r.condition && !safeRegexTest(r.condition, toolInputStr)) continue;
+        if (!r.matcher || !safeRegexTest(r.matcher, toolName, { tag: `reflex:${r.id}:matcher` })) continue;
+        if (r.condition && !safeRegexTest(r.condition, toolInputStr, { tag: `reflex:${r.id}:condition` })) continue;
         matchedReflexes.push({ id: r.id, action: r.action, severity: r.severity || "medium" });
         if (matchedReflexes.length >= MAX_REFLEXES) break;
       }
@@ -301,7 +280,7 @@ function main() {
         const daysSince = (NOW_MS - new Date(lastSeen).getTime()) / 86400000;
         if (daysSince > STALE_DAYS) continue;
       }
-      if (!safeRegexTest(inst.trigger, matchTarget)) continue;
+      if (!safeRegexTest(inst.trigger, matchTarget, { tag: `instinct:${inst.id}:trigger` })) continue;
       if (inst.confidence < 0.30) {
         draftMatches.push({ ...inst, _file: file });
       } else {

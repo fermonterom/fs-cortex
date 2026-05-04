@@ -30,6 +30,8 @@ Interactive review of pending proposals and weak instincts. Lets the user confir
 
 Read `~/.claude/cortex/proposals.json`. Filter to status: "pending".
 
+Also load proposals with status: "held" and keep them separate for display-only context.
+
 If the file does not exist or has zero pending proposals AND there are no weak instincts (Step 2), inform the user: "No hay propuestas pendientes. Ejecuta /cx-analyze primero." and stop.
 
 ### Step 2: Load Weak Instincts
@@ -71,6 +73,18 @@ Ejemplo: "1A, 2A, 3X, 4A, 5X, 6A, 7S" o "all-A" para aceptar todas
 
 Tu respuesta:
 ```
+
+Then show held proposals in a separate informational section (not part of shorthand actions):
+
+```
+## Held proposals (unsafe trigger)
+- [id] | hold_reason: [hold_reason] | held_by: [held_by]
+```
+
+Rules for held proposals:
+- Do not include them in numbering.
+- Do not include them in accept/reject/skip prompts.
+- They are informational only; operator can manually edit `proposals.json` to unhold or delete them.
 
 If the user provides invalid shorthand (unknown letters, out-of-range numbers, unparseable format), ask them to repeat with the correct format.
 

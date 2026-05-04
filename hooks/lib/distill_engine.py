@@ -38,6 +38,13 @@ import time
 from pathlib import Path
 from typing import Any
 
+# Robust import: ensure lib/ is on sys.path even when invoked from a foreign cwd.
+_LIB_DIR = os.path.dirname(os.path.abspath(__file__))
+if _LIB_DIR not in sys.path:
+    sys.path.insert(0, _LIB_DIR)
+
+from regex_guard import unsafe_reason as _guard_unsafe_reason
+
 # ── Environment & paths ─────────────────────────────────────────────────────
 
 CORTEX_DIR = Path(os.environ.get("CORTEX_DIR", str(Path.home() / ".claude" / "cortex")))
@@ -803,6 +810,25 @@ def auto_validate_proposals(dry_run: bool = False) -> dict:
             skipped.append({"id": iid, "reason": "needs-human-judgment"})
             continue
 
+        # v3.23.4: validate trigger regex BEFORE creating an instinct that would
+        # be silently filtered by the runtime guard. A proposal with an unsafe
+        # trigger is HELD (persisted to proposals.json with status=held) so the
+        # operator can review and reshape it via /cx-validate. We never want
+        # auto-validate to silently drop a proposal.
+        trigger_value = str(proposal.get("trigger", "")).strip()
+        guard_reason = _guard_unsafe_reason(trigger_value) if trigger_value else "empty"
+        if guard_reason:
+            hold_label = f"unsafe-trigger:{guard_reason}"
+            skipped.append({"id": iid, "reason": hold_label})
+            if not dry_run:
+                updated_proposals[i] = dict(proposal)
+                updated_proposals[i]["status"] = "held"
+                updated_proposals[i]["hold_reason"] = hold_label
+                updated_proposals[i]["held_by"] = "cx-auto-validate"
+                updated_proposals[i]["held_at"] = today
+                _log_knowledge("held", iid, f"reason={hold_label} | cx-auto-validate")
+            continue
+
         # Accept: write instinct YAML
         scope = proposal.get("scope", "global")
         project_id = proposal.get("project_id", "global")
@@ -826,7 +852,11 @@ def auto_validate_proposals(dry_run: bool = False) -> dict:
 
         accepted.append({"id": iid, "conf": conf, "domain": domain})
 
-    if not dry_run and accepted:
+    has_holds = any(
+        isinstance(p, dict) and p.get("status") == "held" and p.get("held_by") == "cx-auto-validate"
+        for p in updated_proposals
+    )
+    if not dry_run and (accepted or has_holds):
         _save_proposals(updated_proposals)
 
     return {"accepted": accepted, "skipped": skipped, "errors": errors}
@@ -1233,8 +1263,10 @@ def compute_pipeline_stats(days: int = 14) -> dict:
             manual_rejected += 1
 
     proposals = _load_proposals()
-    pending = [p for p in proposals if p.get("status") == "pending"]
+    pending = [p for p in proposals if p.get("status", "pending") == "pending"]
+    held = [p for p in proposals if p.get("status") == "held"]
     pending_count = len(pending)
+    held_count = len(held)
     pending_by_domain: dict[str, int] = {}
     for p in pending:
         d = str(p.get("domain", "unknown"))
@@ -1324,6 +1356,7 @@ def compute_pipeline_stats(days: int = 14) -> dict:
             "manual_accepted": manual_accepted,
             "manual_rejected": manual_rejected,
             "pending": pending_count,
+            "held": held_count,
             "pending_by_domain": pending_by_domain,
             "pending_in_whitelist": pending_in_whitelist,
             "pending_outside_whitelist": pending_outside_whitelist,
@@ -1374,7 +1407,7 @@ def _cmd_pipeline_stats(days: int, as_json: bool) -> None:
     dc = stats["decay"]
     lr = stats["last_runs"]
 
-    v_activity = "" if any([v["auto_accepted"], v["manual_accepted"], v["manual_rejected"], v["pending"]]) else " (no activity)"
+    v_activity = "" if any([v["auto_accepted"], v["manual_accepted"], v["manual_rejected"], v["pending"], v["held"]]) else " (no activity)"
     pr_activity = "" if any([pr["auto_promoted"], pr["manual_promoted"], pr["candidates_queued"]]) else " (no activity)"
     ev_activity = "" if any([ev["auto_drafts_generated"], ev["manual_evolved"], ev["drafts_pending_install"], ev["manual_drafts_pending"]]) else " (no activity)"
     dc_activity = "" if any([dc["decayed"], dc["archived"]]) else " (no activity)"
@@ -1390,7 +1423,7 @@ def _cmd_pipeline_stats(days: int, as_json: bool) -> None:
         f"  ✓ Auto-accepted:    {v['auto_accepted']} proposals → instincts (cx-auto-validate)",
         f"  ✓ Manual accepted:  {v['manual_accepted']} proposals (cx-validate)",
         f"  ✗ Manual rejected:  {v['manual_rejected']} proposals",
-        f"  ⚠ Pending:          {v['pending']} total",
+        f"  ⚠ Queue depth:      {v['pending']} pending, {v['held']} held (unsafe trigger)",
     ]
 
     if v["pending_by_domain"]:

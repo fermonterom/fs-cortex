@@ -12,6 +12,7 @@ const crypto = require('crypto');
 const { parseYamlFrontmatter, updateYamlField, listYamlFiles: findYamlFiles } = require(
   path.join(__dirname, 'lib', 'yaml-utils')
 );
+const { isSafeRegex, unsafeReason } = require(path.join(__dirname, 'lib', 'regex-guard'));
 
 // Optional impact funnel writer — never blocks learner if require fails.
 let impactLog = null;
@@ -557,16 +558,16 @@ function updateInstincts(observations) {
       const parsed = parseYamlFrontmatter(content);
       if (!parsed || !parsed.fields.trigger) continue;
 
-      // ReDoS guard (matching injector.sh's isSafeRegex pattern)
+      // ReDoS guard — centralized in lib/regex-guard.js (v3.23.4+).
       const trigger = parsed.fields.trigger;
-      if (typeof trigger !== 'string' || trigger.length > 100) continue;
-      if (/\([^)]*[+*]\)[+*?]/.test(trigger)) continue;
+      const triggerReason = unsafeReason(trigger);
+      if (triggerReason) {
+        log(`Skipping unsafe trigger in ${parsed.fields.id || yamlPath}: ${triggerReason}`);
+        continue;
+      }
       let triggerRegex;
       try {
         triggerRegex = new RegExp(trigger);
-        const start = Date.now();
-        triggerRegex.test('a'.repeat(100));
-        if (Date.now() - start > 50) continue;
       } catch { continue; }
 
       let matched = false;
@@ -646,21 +647,27 @@ function updateReflexes(observations) {
   for (const reflex of reflexData.reflexes) {
     if (!reflex.matcher) continue;
     try {
-      // ReDoS guard
-      if (reflex.matcher.length > 100 || /\([^)]*[+*]\)[+*?]/.test(reflex.matcher)) continue;
+      // ReDoS guard — centralized in lib/regex-guard.js (v3.23.4+).
+      const matcherReason = unsafeReason(reflex.matcher);
+      if (matcherReason) {
+        log(`Skipping unsafe matcher in reflex ${reflex.id}: ${matcherReason}`);
+        continue;
+      }
       const matcherRe = new RegExp(reflex.matcher);
       let matched = false;
+      let condRe = null;
+      if (reflex.condition) {
+        const condReason = unsafeReason(reflex.condition);
+        if (condReason) {
+          log(`Skipping unsafe condition in reflex ${reflex.id}: ${condReason}`);
+          continue;
+        }
+        condRe = new RegExp(reflex.condition, 'i');
+      }
 
       for (let i = 0; i < toolNames.length; i++) {
         if (!matcherRe.test(toolNames[i])) continue;
-
-        // Check condition if present
-        if (reflex.condition) {
-          if (reflex.condition.length > 100 || /\([^)]*[+*]\)[+*?]/.test(reflex.condition)) continue;
-          const condRe = new RegExp(reflex.condition, 'i');
-          if (!condRe.test(toolInputs[i] || '')) continue;
-        }
-
+        if (condRe && !condRe.test(toolInputs[i] || '')) continue;
         matched = true;
         break;
       }

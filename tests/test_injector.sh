@@ -43,25 +43,42 @@ console.log(r.length <= 200 ? 'OK' : 'FAIL:' + r.length);
 
 # --- Test 4: isSafeRegex blocks ReDoS patterns ---
 echo "--- ReDoS Protection ---"
+GUARD="$PROJECT_ROOT/hooks/lib/regex-guard.js"
 result=$(node -e "
-$(sed -n '/function isSafeRegex/,/^}/p' "$ENGINE")
+const { isSafeRegex } = require('$GUARD');
 console.log(!isSafeRegex('(a+)+') ? 'OK' : 'FAIL');
 ")
 [ "$result" = "OK" ] && pass "nested quantifiers blocked" || fail "redos: $result"
 
-# --- Test 5: isSafeRegex blocks too many alternations ---
+# Also verify (a+)? remains accepted (the v3.23.4 regression that silenced bash-cat-use-read)
 result=$(node -e "
-$(sed -n '/function isSafeRegex/,/^}/p' "$ENGINE")
-console.log(!isSafeRegex('a|b|c|d|e|f|g') ? 'OK' : 'FAIL');
+const { isSafeRegex } = require('$GUARD');
+console.log(isSafeRegex('(a+)?') ? 'OK' : 'FAIL');
 ")
-[ "$result" = "OK" ] && pass ">5 alternations blocked" || fail "alt: $result"
+[ "$result" = "OK" ] && pass "optional capture (a+)? accepted (no exponential paths)" || fail "optional: $result"
+
+# --- Test 5: isSafeRegex blocks excessive alternations (>25 pipes, v3.23.4 limit) ---
+result=$(node -e "
+const { isSafeRegex } = require('$GUARD');
+const lots = Array.from({length: 27}, (_, i) => 'a' + i).join('|');
+console.log(!isSafeRegex(lots) ? 'OK' : 'FAIL');
+")
+[ "$result" = "OK" ] && pass ">25 alternations blocked" || fail "alt: $result"
 
 # --- Test 6: isSafeRegex accepts simple patterns ---
 result=$(node -e "
-$(sed -n '/function isSafeRegex/,/^}/p' "$ENGINE")
+const { isSafeRegex } = require('$GUARD');
 console.log(isSafeRegex('Bash|Edit|Write') ? 'OK' : 'FAIL');
 ")
 [ "$result" = "OK" ] && pass "simple pattern accepted" || fail "simple: $result"
+
+# --- Test 6b: real-world bash-cat-use-read condition accepted (v3.23.4 fix) ---
+result=$(node -e "
+const { isSafeRegex } = require('$GUARD');
+const cond = require('$PROJECT_ROOT/core/reflexes.default.json').reflexes.find(r => r.id === 'bash-cat-use-read').condition;
+console.log(isSafeRegex(cond) ? 'OK' : 'FAIL:' + cond.length);
+")
+[ "$result" = "OK" ] && pass "bash-cat-use-read condition accepted" || fail "bash-cat: $result"
 
 # --- Test 7: CORTEX-MANAGED marker present ---
 echo "--- Hook Markers ---"

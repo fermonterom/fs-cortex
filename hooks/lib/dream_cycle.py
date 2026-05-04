@@ -13,8 +13,22 @@ Modules:
 import json
 import os
 import re
+import sys
 import time
 import datetime
+
+# Robust import: ensure lib/ is on sys.path even when invoked from a foreign cwd.
+_LIB_DIR = os.path.dirname(os.path.abspath(__file__))
+if _LIB_DIR not in sys.path:
+    sys.path.insert(0, _LIB_DIR)
+
+from regex_guard import (
+    MAX_LEN,
+    MAX_PIPES,
+    is_safe_regex,
+    unsafe_reason,
+    validate_instinct_trigger as _guard_validate_trigger,
+)
 
 
 # ── Module 1: Jaccard Dedup ─────────────────────────────────────────
@@ -208,24 +222,9 @@ def apply_staleness_decay(instincts, archive_threshold=90):
 
 def validate_trigger_regex(pattern):
     """Validate instinct trigger regex for safety and correctness.
-    Returns (is_valid, reason).
+    Returns (is_valid, reason). Delegates to lib/regex_guard.py (v3.23.4+).
     """
-    if not pattern or not isinstance(pattern, str):
-        return False, "Empty or non-string trigger"
-    if len(pattern) > 100:
-        return False, f"Trigger too long ({len(pattern)} chars, max 100)"
-    # Ban nested quantifiers (ReDoS)
-    if re.search(r'\([^)]*[+*]\)[+*?]', pattern):
-        return False, "Nested quantifiers (ReDoS risk)"
-    # Ban excessive alternations
-    if pattern.count('|') > 5:
-        return False, "Too many alternations (max 5)"
-    # Try compile
-    try:
-        re.compile(pattern)
-    except re.error as e:
-        return False, f"Invalid regex: {e}"
-    return True, "OK"
+    return _guard_validate_trigger(pattern)
 
 
 # ── Module 5: Health Score ─────────────────────────────────────────

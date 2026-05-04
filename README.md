@@ -141,6 +141,8 @@ Cortex reminds you when action is needed:
 /cx-validate   ← Review proposals: A=accept, X=reject, S=skip
 ```
 
+Note: triggers that fail the ReDoS guard are held as `status='held'` and shown in `/cx-validate` output (informational only).
+
 **Weekly** — when you see `[MAINT]`:
 
 ```

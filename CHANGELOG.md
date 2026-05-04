@@ -4,6 +4,109 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.23.4] — 2026-05-04
+
+### Hotfix — third silent bug in the bash-cat-use-read regression
+
+v3.23.3 fixed two regex bugs in three Sprint-5 matchers but only restored
+two of them in production. Empirical verification (8 days post-fix, 97
+matches in observations) confirmed `bash-cat-use-read` was still dead:
+`fireCount` stuck at 696, `lastFired` frozen on 2026-04-26. Two of three
+silent failure modes were in the runtime guard, not the regex.
+
+### Root cause — over-aggressive ReDoS guard with false positives
+
+`hooks/lib/injector-engine.js:33-45` and three duplicated copies in
+`hooks/session-learner.js` rejected any regex that:
+
+1. Had `length > 100` chars. The v3.23.3 fix legitimately grew the
+   `bash-cat-use-read` condition to **136 chars** (compound-command
+   prefix + 17 file extensions). Crossing 100 silenced it post-fix.
+2. Matched `\([^)]*[+*]\)[+*?]`. The `?` in the outer quantifier was
+   wrong — `(...+)?` is **safe** (zero-or-one cannot backtrack
+   exponentially). Only `+` and `*` outer quantifiers are catastrophic.
+3. (injector only) Had more than 5 `|` alternations. Real-world
+   regexes legitimately list 17+ extensions or 6+ tool families.
+
+`bash-cat-use-read` failed all three checks. `bash-find-use-glob` failed
+only the pipe check, which silenced its **runtime injection** (the user
+never saw the reminder) but not its `fireCount` counter — explaining why
+its `usefulCount` was perpetually 0. Three global instincts
+(`gotcha-bash-cat-instead-of-read`, `pattern-macos-path-prefix-npm-node`,
+`pref-fix-all-lint-test-issues`) had also been silenced by the same
+pipe>5 false positive without any operator-visible signal.
+
+### Fixed
+
+- **`hooks/lib/regex-guard.js` (NEW)** + **`hooks/lib/regex_guard.py` (NEW)** —
+  single source of truth for the guard, used by injector-engine,
+  session-learner, distill_engine and dream_cycle. Constants raised:
+  `MAX_LEN` 100 → **200**, `MAX_PIPES` 5 → **25**, `REDOS_DETECTOR`
+  `\([^)]*[+*]\)[+*?]` → **`\([^)]*[+*]\)[+*]`** (the `?` removed). The
+  live timeout (50ms against `'a' × 100`) is the canonical safety net.
+- **`hooks/lib/injector-engine.js`** — eliminated 23 LOC of inline
+  `isSafeRegex` / `safeRegexTest`; imports from `./regex-guard`. Each
+  call site (`reflex:<id>:matcher`, `reflex:<id>:condition`,
+  `instinct:<id>:trigger`) now passes a `tag` so structured rejection
+  logs carry the offending id.
+- **`hooks/session-learner.js`** — replaced 3 inline copies of the guard
+  with the shared module. Refactored the inner reflex-match loop so
+  `condRe` is compiled once per reflex (not once per observation) — pure
+  speed-up, no semantic change.
+- **`hooks/lib/dream_cycle.py`** — `validate_trigger_regex()` now
+  delegates to `regex_guard.validate_instinct_trigger()`. Limits stay in
+  sync automatically.
+- **3 silenced global instincts** unblocked: `gotcha-bash-cat-instead-of-read`,
+  `pattern-macos-path-prefix-npm-node`, `pref-fix-all-lint-test-issues`.
+
+### Changed
+
+- **`hooks/lib/distill_engine.py:auto_validate_proposals`** —
+  Sprint-7 auto-validate now runs each proposal's `trigger` through the
+  guard before writing the YAML. Rejected proposals are persisted with
+  `status="held"`, `hold_reason="unsafe-trigger:<reason>"`,
+  `held_by="cx-auto-validate"`, `held_at=<today>` so the operator can
+  review them via `/cx-validate` rather than them being silently dropped
+  on disk and lost. `_save_proposals` now flushes when there are any
+  holds (not only accepts).
+- **`commands/cx-validate.md`** + **`README.md`** — document the new
+  `held` status (informational section, not part of accept/reject
+  shorthand).
+
+### Added
+
+- **`tests/test_guard_corpus.sh` (NEW, 9 PASS)** — closes the gap that
+  let the v3.23.3 silent regression ship. The corpus passes every
+  shipped reflex matcher/condition AND every `~/.claude/cortex/instincts/global/*.yaml`
+  trigger through both Node and Python guards, asserts identical reasons
+  in both languages, runs an adversarial corpus that must STILL be
+  rejected (`(a+)+`, 201 chars, 27 pipes, invalid regex), a safe corpus
+  that must STILL be accepted (`(a+)?b`, 200 chars, 25 pipes, the
+  Sprint-5 conditions), and a "known gap" assertion for `(a|aa)+` (the
+  static detector misses alternation overlap; the live timeout catches
+  it dynamically — documented in `regex-guard.js` header).
+- **Structured stderr logging on guard rejections**, deduped per
+  `(tag, reason, pattern[:64])` to avoid spamming PreToolUse. A future
+  silent-silencing event will leave a visible trace.
+
+### Test summary
+
+`bash tests/run_all.sh` → 16 suites, all green. New: `test_guard_corpus`
+9/9. Updated: `test_injector` 16 → **18** (added `(a+)?` accepted +
+real-world `bash-cat-use-read` accepted). Updated: `test_dream_cycle`
+35 → **38** (boundary cases at MAX_LEN/MAX_PIPES + optional capture
+accepted).
+
+### Concerns / known gaps
+
+- The static REDOS_DETECTOR does not catch alternation-overlap ReDoS
+  like `(a|aa)+`. The live 50ms timeout is the only protection there.
+  Tracked for v3.24.0+. Documented in `hooks/lib/regex-guard.js` header
+  and verified by `tests/test_guard_corpus.sh` "known gaps" section.
+- `Sprint 5` Gate 1+2 measurement window remains valid — 8 days post-
+  v3.23.3, two of three reflexes accumulated honest fires. Post-
+  v3.23.4, all three will. Estimate to gates: 5–7 more days.
+
 ## [3.23.3] — 2026-05-04
 
 ### Hotfix — fix 2 silent regex bugs in 3 reflex matchers (Sprint 5 regression)

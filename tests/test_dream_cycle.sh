@@ -252,13 +252,21 @@ print(valid)
 ")
 [ "$result" = "True" ] && pass "valid regex accepted" || fail "valid=$result"
 
-# Test 19: Too long
+# Test 19: Too long (v3.23.4: limit raised to 200)
 result=$(python3 -c "
 from dream_cycle import validate_trigger_regex
-valid, reason = validate_trigger_regex('a' * 101)
+valid, reason = validate_trigger_regex('a' * 201)
 print(valid, reason)
 ")
 echo "$result" | grep -q "False" && pass "too long rejected" || fail "long=$result"
+
+# Test 19b: Length 136 accepted (real-world bash-cat-use-read condition fits)
+result=$(python3 -c "
+from dream_cycle import validate_trigger_regex
+valid, _ = validate_trigger_regex('a' * 136)
+print(valid)
+")
+[ "$result" = "True" ] && pass "len=136 accepted (no false-positive on bash-cat)" || fail "136=$result"
 
 # Test 20: Nested quantifiers (ReDoS)
 result=$(python3 -c "
@@ -268,13 +276,29 @@ print(valid)
 ")
 [ "$result" = "False" ] && pass "ReDoS rejected" || fail "redos=$result"
 
-# Test 21: Excessive alternations
+# Test 21: Excessive alternations (v3.23.4: limit raised to 25)
 result=$(python3 -c "
 from dream_cycle import validate_trigger_regex
-valid, _ = validate_trigger_regex('a|b|c|d|e|f|g')
+valid, _ = validate_trigger_regex('|'.join(['a' + str(i) for i in range(27)]))
 print(valid)
 ")
-[ "$result" = "False" ] && pass "excessive alternations rejected" || fail "alt=$result"
+[ "$result" = "False" ] && pass "excessive alternations rejected (>25)" || fail "alt=$result"
+
+# Test 21b: 7 pipes accepted (bash-find-use-glob has 7 — no longer false-positive)
+result=$(python3 -c "
+from dream_cycle import validate_trigger_regex
+valid, _ = validate_trigger_regex('a|b|c|d|e|f|g|h')
+print(valid)
+")
+[ "$result" = "True" ] && pass "7 pipes accepted (no false-positive on bash-find)" || fail "7pipes=$result"
+
+# Test 21c: optional capture (a+)? remains accepted (root cause of bash-cat fix)
+result=$(python3 -c "
+from dream_cycle import validate_trigger_regex
+valid, _ = validate_trigger_regex('(a+)?b')
+print(valid)
+")
+[ "$result" = "True" ] && pass "(a+)? accepted (? not catastrophic)" || fail "optional=$result"
 
 # Test 22: Invalid regex
 result=$(python3 -c "
