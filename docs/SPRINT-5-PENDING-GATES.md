@@ -1,13 +1,23 @@
 # Sprint 5 — Pending Validation Gates
 
-**Status update 2026-05-02 (v3.23.3):** Gate 2 reopened. Both Gate 1 and
-Gate 2 require a **new measurement window** starting 2026-05-02 because
-the matchers had silent bugs that produced **0 fires across 6 days** of
-intensive Bash use. v3.23.3 ships the matcher fix; data only becomes
-meaningful after that.
+**Status update 2026-05-04 (v3.23.4 + v3.23.5):** Gate 2 reopened. Both
+Gate 1 and Gate 2 require a **new measurement window** because the
+matchers had silent bugs that produced **0 fires across 6 days** of
+intensive Bash use. v3.23.3 fixed the regex; v3.23.4 fixed the runtime
+guard that was *also* silencing `bash-cat-use-read`. Honest signal only
+starts accumulating once both fixes are deployed.
 
-When Gate 1 + Gate 2 both pass with fresh data (estimate: 2026-05-09 onward),
-delete this file and remove the reference from `CLAUDE.md`.
+**Effective measurement window starts 2026-05-04** (post-v3.23.4 install
+on the operator's main machine; the previous v3.23.3 window was tainted
+because `bash-cat-use-read` was still blocked by the guard).
+
+**Estimate to enough data: 1–2 days** — the operator runs Claude Code
+across many projects in parallel daily, so the 30 fires + 50 events
+floors should be reached by **2026-05-05 / 2026-05-06**. Re-check
+sooner if `/cx-status --reflexes` shows the trio passing the gates.
+
+When Gate 1 + Gate 2 both pass, delete this file and remove the
+reference from `CLAUDE.md`.
 
 ---
 
@@ -35,8 +45,8 @@ fixed matcher and starts populating useful/noise from 2026-05-02 onward.
 
 ## Gate 1 — `bash-grep-use-grep-tool` useful/noise ratio ≥ 3×
 
-**Status:** ⏳ PENDING — re-measurement window starts 2026-05-02 (fresh
-matcher). Estimate: enough data by 2026-05-09.
+**Status:** ⏳ PENDING — re-measurement window starts 2026-05-04 (fresh
+matcher + fresh guard). Estimate: enough data by 2026-05-05 / 2026-05-06.
 
 **Pass criterion:** `useful / noise ≥ 3.0` over a rolling 14-day window
 where `useful + noise ≥ 50`. The 50-event floor protects against
@@ -134,7 +144,7 @@ specific ratio.
 
 ## Cleanup
 
-When Gate 1 + Gate 2 both pass with fresh post-v3.23.3 data:
+When Gate 1 + Gate 2 both pass with fresh post-v3.23.4 data:
 
 1. Delete this file: `rm docs/SPRINT-5-PENDING-GATES.md`
 2. Remove the reference from `CLAUDE.md` (the line under "Pending validation").
