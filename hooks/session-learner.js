@@ -173,9 +173,15 @@ function resolveProjectAndObservations(stdinData) {
   // Filter by session
   let sessionObs;
   if (sessionId) {
-    sessionObs = allObs.filter((o) => o.sid === sessionId);
+    // v3.24.0: tolerate truncated sids via sidMatches (parity with the
+    // correlation paths). Pre-v3.19.3 observations carried sid[:24] while
+    // the harness Stop event sends the full 36-char UUID. Exact-match
+    // filter silently fell back to the last 200 cross-project lines —
+    // wrong proposals, wrong instinct updates, wrong reflex attribution.
+    const candidateSids = buildCandidateSids(sessionId, allObs);
+    sessionObs = allObs.filter((o) => sidMatches(o.sid, candidateSids));
     if (sessionObs.length === 0) {
-      log(`Session ${sessionId} not found, falling back to last 200 lines`);
+      log(`Session ${sessionId} not found (after sid normalization), falling back to last 200 lines`);
       sessionObs = allObs.slice(-200);
     }
   } else {
@@ -570,9 +576,22 @@ function updateInstincts(observations) {
         triggerRegex = new RegExp(trigger);
       } catch { continue; }
 
+      // v3.24.0: match trigger against `tool + " " + input` (parity with the
+      // injector's matchTarget at injector-engine.js:110). Pre-v3.24.0 this
+      // tested only against the bare tool name, so:
+      //   - composite triggers like 'Bash.*\.py' never matched (regex requires
+      //     content after Bash) → false negatives, occurrences stuck at 0
+      //   - alternation triggers like 'Bash|grep' matched every Bash call
+      //     (the literal "Bash" alternative matched the tool name) → false
+      //     positives ratcheting up by ~200/day
+      // The injector and session-learner now share the same match semantics.
       let matched = false;
-      for (const toolName of toolNames) {
-        if (triggerRegex.test(toolName)) {
+      for (const o of observations) {
+        const toolName = o.tool || '';
+        if (!toolName) continue;
+        const inputStr = String(o.input || '');
+        const matchTarget = toolName + ' ' + inputStr;
+        if (triggerRegex.test(matchTarget)) {
           matched = true;
           break;
         }
@@ -1034,20 +1053,42 @@ function correlateImpactEvents(observations, sidOrSids) {
 // See docs/AUTO-EVALUATION.md.
 
 function evalToolSubstitution(ev, sortedObs, currentIdx) {
-  // Look at events AFTER the matched call (currentIdx is the anti-behavior).
+  // v3.23.7: parity with evalErrorMonitor's "aligned-or-ignored" semantics.
+  // Pre-v3.23.7 this only emitted 'useful' on an immediate pivot to
+  // expected_tool — but agents rarely re-execute a Bash with the recommended
+  // alternative once the original cat/find/grep already returned the data
+  // they needed. Real-world audit on fs-cortex showed bash-grep-use-grep-tool
+  // at 0% pivot rate and bash-find-use-glob at 9% despite the warning being
+  // pedagogically useful. Same structural bias toward 'ignore' that
+  // evalErrorMonitor had before v3.19.4. New shape:
+  //   1. Immediate pivot to expected_tool → useful (strong positive signal)
+  //   2. Reincidence with anti_pattern in window → noise (warning ignored)
+  //   3. Window has follow-up observations and no reincidence → useful
+  //      (the warning either prevented the anti-behavior or was absorbed
+  //      without harm — at minimum the session continued normally)
+  //   4. Empty window (no follow-up) → ignore (cannot judge)
+  //
+  // Bias remains conservative: noise only fires on an actual reincidence,
+  // never on absence of pivot.
   const window = ev.window || 3;
   const slice = sortedObs.slice(currentIdx + 1, currentIdx + 1 + window);
   let antiPattern = null;
   if (ev.anti_pattern) {
     try { antiPattern = new RegExp(ev.anti_pattern, 'i'); } catch {}
   }
+  // Pass 1: scan for pivot AND reincidence in the window. Reincidence wins
+  // over pivot if both happen (the model partially listened but kept the bug).
+  let sawPivot = false;
   for (const o of slice) {
-    if (o.tool === ev.expected_tool) return 'useful';
+    if (o.tool === ev.expected_tool) sawPivot = true;
     if (o.tool === ev.anti_tool && antiPattern && antiPattern.test(String(o.input || ''))) {
       return 'noise';
     }
   }
-  return 'ignore';
+  if (sawPivot) return 'useful';
+  // No reincidence, no pivot — judge by whether the agent kept working.
+  if (slice.length === 0) return 'ignore';
+  return 'useful';
 }
 
 function evalPreconditionCheck(ev, sortedObs, currentIdx) {
@@ -1090,11 +1131,20 @@ function evalErrorMonitor(ev, sortedObs, currentIdx) {
   // the reminder either prevented the error or was redundant-but-aligned.
   // Bias remains conservative: an empty window (no follow-up) still emits
   // 'ignore' because we have no evidence either way.
+  //
+  // v3.24.0: extend the noise-detection slice to ALSO scan the next `window`
+  // observations strictly AFTER the inject (not just the inject itself + the
+  // first window-sized slot starting at currentIdx). With window=1 reflexes
+  // (read-large-md-limit, large-doc-edit-anchor) the old logic checked exactly
+  // 1 cell — `obs[currentIdx]` — so errors that happened on the next call were
+  // invisible. The new noise slice covers `[currentIdx, currentIdx+1+window)`
+  // — the inject itself (when the inject IS the failing call) plus the entire
+  // post-inject window. window=1 now scans 2 cells; window=10 scans 11.
   const window = ev.window || 10;
-  const slice = sortedObs.slice(currentIdx, currentIdx + window);
   let pattern;
   try { pattern = new RegExp(ev.error_pattern, 'i'); } catch { return 'ignore'; }
-  for (const o of slice) {
+  const noiseSlice = sortedObs.slice(currentIdx, currentIdx + 1 + window);
+  for (const o of noiseSlice) {
     if ((o.err === true || o.err === 'true') && pattern.test(String(o.err_msg || ''))) {
       return 'noise';
     }
@@ -1169,6 +1219,14 @@ function correlateReflexFeedback(observations, sidOrSids) {
 
   const reflexInjects = [];
   const alreadyRated = new Set();
+  // v3.24.0: rebuild counter from impact.jsonl when resetAt is present.
+  // Pre-v3.24.0, when a reflex's counters were reset (manually or via the
+  // v3.20.0 auto-heal) but impact.jsonl retained its feedback history, the
+  // alreadyRated set blocked re-emission and the counters never recovered.
+  // Now we count post-resetAt feedback events directly into rebuild totals,
+  // and apply max(current, rebuilt) at the end so the counters self-heal.
+  const rebuildUseful = Object.create(null);
+  const rebuildNoise = Object.create(null);
   for (const line of raw.split('\n')) {
     if (!line.trim()) continue;
     try {
@@ -1181,6 +1239,39 @@ function correlateReflexFeedback(observations, sidOrSids) {
       }
     } catch {}
   }
+  // Second pass: rebuild totals from ALL feedback events (any sid), bounded
+  // by each reflex's own resetAt timestamp. Source-of-truth for counters
+  // when impact.jsonl outlives a reset.
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const ev = JSON.parse(line);
+      if (ev.ev !== 'feedback' || ev.source !== 'agent') continue;
+      if (typeof ev.iid !== 'string' || !ev.iid.startsWith('reflex:')) continue;
+      const rid = ev.iid.slice('reflex:'.length);
+      const r = reflexById[rid];
+      if (!r) continue;
+      if (r.resetAt && (ev.ts || '') < r.resetAt) continue;
+      if (ev.rating === 'useful') rebuildUseful[rid] = (rebuildUseful[rid] || 0) + 1;
+      else if (ev.rating === 'noise') rebuildNoise[rid] = (rebuildNoise[rid] || 0) + 1;
+    } catch {}
+  }
+  // Apply rebuild totals where they exceed current counters (self-heal).
+  for (const r of reflexData.reflexes) {
+    const u = rebuildUseful[r.id] || 0;
+    const n = rebuildNoise[r.id] || 0;
+    if (u > (r.usefulCount || 0)) {
+      log(`Rebuilt usefulCount for ${r.id}: ${r.usefulCount || 0} -> ${u}`);
+      r.usefulCount = u;
+      autoHealed = true;
+    }
+    if (n > (r.noiseCount || 0)) {
+      log(`Rebuilt noiseCount for ${r.id}: ${r.noiseCount || 0} -> ${n}`);
+      r.noiseCount = n;
+      autoHealed = true;
+    }
+  }
+  if (autoHealed) writeJsonFile(REFLEXES_PATH, reflexData);
   if (reflexInjects.length === 0) return 0;
 
   const sortedObs = [...observations].sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));

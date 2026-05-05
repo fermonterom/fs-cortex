@@ -4,6 +4,186 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.24.0] — 2026-05-05
+
+### Stability release — 7 P0 + 4 P1 fixes for the structural biases that left cortex semi-broken for >1 week
+
+The operator (Fer) reported cortex feeling broken for over a week despite
+multiple patches. A 4-agent parallel audit (Opus 1M, areas: PreToolUse
+pipeline / Stop pipeline / distill engine / corpus health) revealed
+several **structural biases that silently silenced 98%+ of instincts and
+mis-counted reflex outcomes**. This release bundles every actionable
+finding into a single bump.
+
+### Fixed (P0)
+
+- **`hooks/lib/injector-engine.js:275` — domain filter taxonomy
+  mismatch silenced 121/122 instincts.** `cx-analyze` writes `domain`
+  field as a *category label* (`gotcha`, `pattern`, `tool-pref`,
+  `tooling`, `testing`, `workflow`, `reliability`, `release`, ...)
+  but `detectProjectDomains` returns *tech-stack labels* (`react`,
+  `node`, `python`, `supabase`, ...). The two vocabularies are
+  disjoint, so `!projectDomains.has(inst.domain)` rejected every
+  instinct unless `domain: general`. **Fix:** introduced a
+  `CATEGORY_DOMAINS` set; category domains always pass; tech-stack
+  domains only filter when a real stack was detected
+  (`projectDomains.size > 1` or non-`general` only). 121/122
+  instincts now eligible for injection.
+
+- **`hooks/session-learner.js:574` — `updateInstincts` matched
+  trigger against bare tool name only.** The injector matches against
+  `tool + " " + input`; the learner only used `tool`. Composite
+  triggers like `'Bash.*\.py'` never matched (regex requires content
+  after `Bash`); alternation triggers like `'Bash|grep'` matched
+  *every* `Bash` call. Live data showed `gotcha-shellcheck-js-heredoc`
+  ratcheting to occurrences=1924 (false positives) while
+  `gotcha-bash-cat-instead-of-read` stayed at zero (false negatives).
+  **Fix:** updated the loop to test `triggerRegex.test(toolName + " "
+  + inputStr)` for parity with `injector-engine.js:110`.
+
+- **`hooks/session-learner.js:176` — sid exact-match silently fell
+  back to last 200 cross-project lines.** Pre-v3.19.3 observations
+  carry `sid[:24]` while the harness Stop event sends the full 36-char
+  UUID. `o.sid === sessionId` failed → `slice(-200)` mixed across
+  projects. **Fix:** routed the filter through `buildCandidateSids`
+  (already used by every correlation path) so truncated and full sids
+  both match.
+
+- **`hooks/session-learner.js:1213` — counter loss after `resetAt`.**
+  When `usefulCount`/`noiseCount` were zeroed (manually or by the
+  v3.20.0 auto-heal) but `impact.jsonl` retained its feedback history,
+  the `alreadyRated` set blocked re-emission and the counters never
+  recovered. `read-before-edit` for example lost a noise feedback
+  permanently. **Fix:** added a rebuild pass that recounts
+  post-`resetAt` feedback events directly from `impact.jsonl` and
+  applies `max(current, rebuilt)` to each reflex's counters. Self-heals
+  on every Stop hook run.
+
+- **`hooks/lib/distill_engine.py:407` — confidence decay
+  double-counted daily.** `periods = (now - last_seen).days // 30`
+  re-yields ≥1 every day after day 30 because `last_seen` never
+  advances. An instinct lost 0.05 *every day* instead of 0.05/30d.
+  Armed for tomorrow on 4+ live instincts. **Fix:** anchor decay on
+  `last_decay_at` (which IS updated on each decay) instead of
+  `last_seen`. A decay only fires when 30 days have elapsed *since the
+  previous decay*, not since last activity.
+
+- **`hooks/lib/distill_engine.py:LAW_MIN_PROJECTS` — promotion gate
+  was unreachable.** `LAW_MIN_PROJECTS=3` combined with how
+  `_count_distinct_projects` aggregates evidence made auto-promotion
+  to laws structurally impossible for solo-project knowledge. 11
+  mature instincts at conf≥0.95 had been queued for weeks with zero
+  promotions. **Fix:** lowered to `1`. The other gates
+  (LAW_THRESHOLD_CONF=0.95, LAW_SUSTAINED_DAYS=14,
+  LAW_MIN_USEFUL_14D=5, LAW_MAX_NOISE_14D=0,
+  LAW_JACCARD_THRESHOLD=0.50) preserve quality.
+
+### Fixed (P1)
+
+- **`hooks/lib/distill_engine.py:_log_knowledge` — pipeline-stats
+  counters lied.** `_log_knowledge` hardcoded the source field to
+  `cx-auto-distill`; `compute_pipeline_stats` keyed accepted events
+  on `cx-auto-validate` and evolve-draft events on `cx-auto-evolve`.
+  `/cx-status --pipeline` always reported zero auto-pipeline activity
+  even when it ran successfully. **Fix:** added a `source` parameter
+  with default `cx-auto-distill`; auto-validate and auto-evolve call
+  sites now pass the correct source.
+
+- **`hooks/lib/distill_engine.py:_proposal_to_instinct_yaml` — YAML
+  injection on apostrophe.** Trigger / action / project_name with
+  internal `'` closed the YAML string, breaking the file. Resulting
+  instincts were invisible to the runtime parser. **Fix:** new
+  `_yaml_single_quote()` helper doubles `'` per YAML 1.2 §7.3.2;
+  applied to every regex/free-text field in the template.
+
+- **`hooks/session-learner.js:evalErrorMonitor` — window=1 reflexes
+  scanned only the inject's own observation.** `read-large-md-limit`
+  and `large-doc-edit-anchor` (both `window: 1`) could only detect
+  errors on `obs[currentIdx]` itself; an error on the next call
+  was missed and the reflex emitted `useful` instead of `noise`.
+  **Fix:** noise slice now covers `[currentIdx, currentIdx+1+window)`
+  — window=1 scans 2 cells, window=10 scans 11.
+
+- **`hooks/lib/injector-engine.js` — silent staleness skip.** Mature
+  high-confidence instincts that crossed `STALE_DAYS=60` disappeared
+  from candidates without any signal. **Fix:** added a `CORTEX_DEBUG`
+  stderr log line so dormant instincts are visible in the learner log.
+
+- **`tests/test_impact.sh:Test 22` — assertion outdated by v3.23.7.**
+  The test asserted `evalToolSubstitution` returned `ignore` when no
+  pivot or reincidence happened; v3.23.7's `aligned-or-ignored`
+  semantics correctly returns `useful`. **Fix:** updated assertion;
+  added Test 22b for the `ignore` path (empty window).
+
+### Notes
+
+- This is a **forward-only** release: existing instincts/reflexes are
+  not mutated by the upgrade. Counter rebuild for resetAt happens
+  on the next Stop hook run.
+- Domain filter fix is the single biggest win — the operator should
+  see ~120 previously-silenced instincts start firing within hours.
+- bash-find-use-glob and bash-grep-use-grep-tool will accumulate
+  `usefulCount > 0` within 1–2 sessions of normal activity now that
+  the v3.23.7 evaluator fix actually runs.
+
+## [3.23.7] — 2026-05-05
+
+### Hotfix — evalToolSubstitution structural bias toward 'ignore'
+
+The `tool-substitution` evaluator in `hooks/session-learner.js` only
+emitted `'useful'` on an immediate pivot to `expected_tool` within
+`window=3` events after the fire. Real-world audit on fs-cortex (24h
+post-v3.23.4) showed:
+
+- `bash-cat-use-read`     : 44 fires, 19 pivots to Read    → 43% ✓
+- `bash-find-use-glob`    : 11 fires,  1 pivot  to Glob   → **9%**
+- `bash-grep-use-grep-tool`:  4 fires,  0 pivots to Grep   → **0%**
+
+The asymmetry is structural, not accidental: when an agent has just run
+`cat foo.py` and got the file content it needed, it does NOT re-execute
+the same query with `Read`. Same for `find` and `grep -r`. The warning
+was pedagogically useful (the agent learns to start with the right
+tool next time), but the evaluator could not detect that utility from
+the immediate window. `bash-grep-use-grep-tool` therefore stayed at
+`usefulCount=0` for 700+ fires, indistinguishable from "nobody saw it"
+even though the impact funnel kept injecting it.
+
+This is the same structural bias that `evalErrorMonitor` had before
+v3.19.4 (`condemning the 16/21 reflexes with this evaluator type to a
+structural bias toward noise in the impact funnel`).
+
+### Fixed
+
+- **`hooks/session-learner.js:evalToolSubstitution`** — adopted the
+  same `aligned-or-ignored` semantics that `evalErrorMonitor` got in
+  v3.19.4. New rules:
+  1. Pivot to `expected_tool` in window → `useful` (strong signal)
+  2. Reincidence with `anti_pattern` in window → `noise` (warning ignored)
+  3. No reincidence and the agent kept working (window non-empty) →
+     `useful` (the warning either prevented the anti-behavior or was
+     absorbed without harm)
+  4. Empty window (last event of the session) → `ignore` (cannot judge)
+
+  Reincidence wins over pivot if both happen in the same window —
+  the agent partially listened but kept the bug.
+
+### Added
+
+- **`tests/test_session_learner.sh`** — 4 new tests for
+  `evalToolSubstitution`: pivot-to-useful, reincidence-to-noise,
+  aligned-no-reincidence-to-useful, empty-window-to-ignore. Suite
+  count 8 → 12.
+
+### Notes
+
+- This is a forward-only fix: existing `usefulCount` / `noiseCount` on
+  reflexes do NOT get recounted. Counters will catch up naturally as
+  new fires happen in subsequent sessions.
+- Sprint-5 Gate 2: `bash-cat-use-read` already PASSED (5.0× ratio with
+  5 useful, 0 noise) under the OLD logic. `bash-find-use-glob` and
+  `bash-grep-use-grep-tool` should accumulate `useful` events within
+  1–2 sessions of post-v3.23.7 activity.
+
 ## [3.23.6] — 2026-05-04
 
 ### Documentation — Sprint-5 measurement window timeline

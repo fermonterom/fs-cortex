@@ -267,18 +267,53 @@ function main() {
 
   const candidates = [];
   const draftMatches = [];
+  // v3.24.0: domain filter taxonomy fix.
+  //
+  // Pre-v3.24.0 the filter `inst.domain !== "general" && !projectDomains.has(...)`
+  // dropped 121/122 instincts in fs-cortex. Root cause: cx-analyze writes the
+  // YAML `domain` field with category labels (gotcha, pattern, tool-pref, ...)
+  // while detectProjectDomains returns tech-stack labels (react, node, python,
+  // ...). The two vocabularies never overlap, so the filter rejected every
+  // instinct unless `domain: general`.
+  //
+  // Fix: split the comparison into two lanes.
+  //   • Category domains (gotcha, pattern, workflow, tooling, tool-pref,
+  //     testing, reliability, release, security, etc.) ALWAYS pass — they
+  //     describe the kind of knowledge, not where it applies.
+  //   • Tech-stack domains (react, node, python, supabase, ...) ONLY pass
+  //     when the project actually uses that stack — but only filter when we
+  //     actually detected a stack beyond the default "general" sentinel.
+  const CATEGORY_DOMAINS = new Set([
+    "general", "gotcha", "pattern", "workflow", "workflow-general",
+    "tooling", "tool-pref", "testing", "reliability", "release",
+    "security", "saas-development", "development", "claude-code-skills",
+    "documentation", "performance", "observability", "cli-tool",
+  ]);
+
   for (const file of instinctFiles) {
     try {
       const content = fs.readFileSync(file, "utf8");
       const inst = parseInstinctYaml(content);
       if (!inst) continue;
-      if (inst.domain && inst.domain !== "general" && !projectDomains.has(inst.domain)) continue;
+      // Category domains always pass. Tech-stack domains only filter when
+      // the project actually has detected stacks beyond "general".
+      if (inst.domain && !CATEGORY_DOMAINS.has(inst.domain)) {
+        const detectedStack = projectDomains.size > 1 || (projectDomains.size === 1 && !projectDomains.has("general"));
+        if (detectedStack && !projectDomains.has(inst.domain)) continue;
+      }
       if (inst.scope === "project" && inst.project_id && projectId && inst.project_id !== projectId) continue;
-      // Inline staleness: skip instincts not seen in 60+ days (no file writes)
+      // Inline staleness: skip instincts not seen in 60+ days (read-only decay)
       const lastSeen = tracking[inst.id]?.last_seen;
       if (lastSeen) {
         const daysSince = (NOW_MS - new Date(lastSeen).getTime()) / 86400000;
-        if (daysSince > STALE_DAYS) continue;
+        if (daysSince > STALE_DAYS) {
+          // v3.24.0: log silent staleness skips so dormant high-conf instincts
+          // are visible in the learner log instead of disappearing without trace.
+          if (process.env.CORTEX_DEBUG) {
+            try { process.stderr.write(`[cortex:injector] skip stale instinct ${inst.id} (${daysSince.toFixed(0)}d > ${STALE_DAYS}d)\n`); } catch {}
+          }
+          continue;
+        }
       }
       if (!safeRegexTest(inst.trigger, matchTarget, { tag: `instinct:${inst.id}:trigger` })) continue;
       if (inst.confidence < 0.30) {

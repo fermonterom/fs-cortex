@@ -310,15 +310,18 @@ else
 fi
 rm -rf "$T7"
 
-# ── Test 8: promote-rejects-single-project ───────────────────────────────────
-echo "--- Test 8: promote-rejects-single-project ---"
+# ── Test 8: promote-accepts-single-project (v3.24.0+) ────────────────────────
+# v3.24.0: LAW_MIN_PROJECTS lowered from 3 to 1 (Audit C P0). Single-project
+# knowledge IS promotable now provided every other gate passes. The previous
+# test asserted the opposite — kept here renamed and inverted.
+echo "--- Test 8: promote-accepts-single-project (v3.24.0+) ---"
 T8="$(mktemp -d -t distill-t8-XXXXXX)"
 export CORTEX_DIR="$T8"
 TODAY=$(python3 -c "from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime('%Y-%m-%d'))")
 FIFTEEN_AGO=$(python3 -c "from datetime import datetime, timezone, timedelta; print((datetime.now(timezone.utc)-timedelta(days=15)).strftime('%Y-%m-%d'))")
 make_instinct "$T8/instincts/global" "t8-single" "0.9500" "$TODAY" \
   "at_law_threshold_since: $FIFTEEN_AGO"
-# Only 1 project (project_id=proj-alpha, no projects_seen)
+# Only 1 project (project_id=proj-alpha, no projects_seen) — should now PASS
 make_impact_events "$T8/impact.jsonl" "t8-single" 6 0
 
 result=$(python3 -c "
@@ -335,14 +338,14 @@ de.CANDIDATES_FILE = de.CORTEX_DIR / 'auto-distill-candidates.md'
 de.MARKER_FILE = de.CORTEX_DIR / '.last-auto-distill'
 de.LOCK_FILE = de.CORTEX_DIR / '.distill-engine.lock'
 promoted, candidates = de.auto_promote_to_law()
-in_cand = any(c['id'] == 't8-single' for c in candidates)
-reason_ok = any('projects' in r for c in candidates if c['id'] == 't8-single' for r in c['reasons'])
-print(in_cand, reason_ok)
+got_promoted = any(p['id'] == 't8-single' for p in promoted)
+in_cand_for_projects = any('projects' in r for c in candidates if c['id'] == 't8-single' for r in c['reasons'])
+print(got_promoted, in_cand_for_projects)
 ")
-if echo "$result" | grep -q "True True"; then
-  pass "promote-rejects-single-project: 1 project → candidate with 'projects < 3'"
+if echo "$result" | grep -q "True False"; then
+  pass "promote-accepts-single-project: 1 project → promoted (LAW_MIN_PROJECTS=1)"
 else
-  fail "promote-rejects-single-project: got '$result'"
+  fail "promote-accepts-single-project: got '$result' (expected 'True False')"
 fi
 rm -rf "$T8"
 

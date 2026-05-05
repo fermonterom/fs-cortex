@@ -218,5 +218,64 @@ console.log(cmds.length === 2 && cmds.includes('cx-dream') && cmds.includes('cx-
 [ "$result" = "OK" ] && pass "timeline detects cx-* commands only" || fail "timeline: $result"
 
 echo ""
+echo "--- evalToolSubstitution (v3.23.7+ aligned-or-ignored) ---"
+
+# Extract evalToolSubstitution from session-learner.js and run 4 scenarios
+LEARNER="$PROJECT_ROOT/hooks/session-learner.js"
+result=$(node -e "
+$(sed -n '/^function evalToolSubstitution/,/^}/p' "$LEARNER")
+
+const ev = {
+  expected_tool: 'Read',
+  anti_tool: 'Bash',
+  anti_pattern: '(?:^|[;&|]\\\\s*)(cat|head|tail)\\\\s+\\\\S+\\\\.(py|js|md)',
+  window: 3,
+};
+
+// Scenario 1: pivot to Read in window → useful
+const obs1 = [
+  { tool: 'Bash', input: '{\"command\":\"cat foo.py\"}' },
+  { tool: 'Read', input: '{\"file_path\":\"foo.py\"}' },
+  { tool: 'Edit', input: '{}' },
+  { tool: 'Bash', input: '{}' },
+];
+const r1 = evalToolSubstitution(ev, obs1, 0);
+
+// Scenario 2: reincidence with anti_pattern → noise
+// Note: anti_pattern requires a separator (semicolon/ampersand/pipe) or
+// start-of-string before cat/head/tail. Use a compound command — single
+// cat/head/tail in JSON-encoded input rarely matches because of the
+// leading wrapper before the command value.
+const obs2 = [
+  { tool: 'Bash', input: '{\"command\":\"ls; cat foo.py\"}' },
+  { tool: 'Bash', input: '{\"command\":\"echo X\"}' },
+  { tool: 'Bash', input: '{\"command\":\"echo Y | head bar.js\"}' },  // reincidence
+  { tool: 'Edit', input: '{}' },
+];
+const r2 = evalToolSubstitution(ev, obs2, 0);
+
+// Scenario 3: no pivot, no reincidence, but window has follow-up → useful (aligned)
+const obs3 = [
+  { tool: 'Bash', input: '{\"command\":\"cat foo.py\"}' },
+  { tool: 'Edit', input: '{}' },
+  { tool: 'TodoWrite', input: '{}' },
+  { tool: 'Agent', input: '{}' },
+];
+const r3 = evalToolSubstitution(ev, obs3, 0);
+
+// Scenario 4: no follow-up at all (last event in observations) → ignore
+const obs4 = [
+  { tool: 'Bash', input: '{\"command\":\"cat foo.py\"}' },
+];
+const r4 = evalToolSubstitution(ev, obs4, 0);
+
+console.log(JSON.stringify({r1, r2, r3, r4}));
+")
+echo "$result" | grep -q '\"r1\":\"useful\"' && pass "pivot to expected_tool → useful" || fail "scenario 1: $result"
+echo "$result" | grep -q '\"r2\":\"noise\"' && pass "reincidence with anti_pattern → noise" || fail "scenario 2: $result"
+echo "$result" | grep -q '\"r3\":\"useful\"' && pass "aligned (follow-up, no reincidence) → useful (v3.23.7 fix)" || fail "scenario 3: $result"
+echo "$result" | grep -q '\"r4\":\"ignore\"' && pass "no follow-up → ignore" || fail "scenario 4: $result"
+
+echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

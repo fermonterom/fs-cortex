@@ -65,7 +65,14 @@ DECAY_PERIOD_DAYS = 30
 ARCHIVE_THRESHOLD = 0.10
 LAW_THRESHOLD_CONF = 0.95
 LAW_SUSTAINED_DAYS = 14
-LAW_MIN_PROJECTS = 3
+LAW_MIN_PROJECTS = 1  # v3.24.0: was 3 — unreachable for solo-project knowledge.
+                      # Audit C found: 11 mature instincts at conf>=0.95 but
+                      # zero promoted ever, because most learnings happen in
+                      # 1-2 projects and `_count_distinct_projects >= 3` was a
+                      # permanent dead-end. Lowered to 1: the other gates
+                      # (LAW_THRESHOLD_CONF=0.95, LAW_SUSTAINED_DAYS=14,
+                      # LAW_MIN_USEFUL_14D=5, LAW_MAX_NOISE_14D=0,
+                      # LAW_JACCARD_THRESHOLD=0.50) still preserve quality.
 LAW_MIN_USEFUL_14D = 5
 LAW_MAX_NOISE_14D = 0
 LAW_MAX_ACTIVE = 10
@@ -273,10 +280,18 @@ def _lock_release(fh) -> None:
 
 # ── Knowledge log ─────────────────────────────────────────────────────────────
 
-def _log_knowledge(event: str, iid: str, detail: str) -> None:
-    """Append one line to knowledge-log.md."""
+def _log_knowledge(event: str, iid: str, detail: str, source: str = "cx-auto-distill") -> None:
+    """Append one line to knowledge-log.md.
+
+    v3.24.0: source is now a real parameter — pre-v3.24.0 it was hardcoded
+    to "cx-auto-distill" so accepted/held events from cx-auto-validate and
+    evolve-draft events from cx-auto-evolve were mis-sourced, and
+    `compute_pipeline_stats` couldn't find them (the parser keys on the
+    last `|`-separated field). Counters silently reported zero auto-pipeline
+    activity even when it ran successfully.
+    """
     today = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
-    line = f"{today} | {event} | {iid} | {detail} | cx-auto-distill\n"
+    line = f"{today} | {event} | {iid} | {detail} | {source}\n"
     try:
         KNOWLEDGE_LOG.parent.mkdir(parents=True, exist_ok=True)
         with open(KNOWLEDGE_LOG, "a", encoding="utf-8") as fh:
@@ -393,20 +408,31 @@ def apply_decay(now: _dt.datetime | None = None, dry_run: bool = False) -> list[
         if last_decay_at == today_str:
             continue
 
-        # Determine last active date
-        date_str = str(fields.get("last_seen", "") or fields.get("first_seen", "") or "")
-        if not date_str:
+        # v3.24.0: anchor decay window on last_decay_at when present, not on
+        # last_seen. Pre-v3.24.0 the formula `(now - last_seen).days // 30`
+        # kept yielding >=1 every day after day 30 because last_seen never
+        # advanced — so an instinct decayed -0.05 daily instead of -0.05/30d.
+        # By preferring last_decay_at as the baseline, we measure "days since
+        # the previous decay" and a fresh decay only applies once the next
+        # 30-day window has elapsed.
+        baseline_str = str(
+            fields.get("last_decay_at", "")
+            or fields.get("last_seen", "")
+            or fields.get("first_seen", "")
+            or ""
+        )
+        if not baseline_str:
             continue
         try:
-            last_active = _dt.datetime.strptime(date_str[:10], "%Y-%m-%d").replace(
+            baseline = _dt.datetime.strptime(baseline_str[:10], "%Y-%m-%d").replace(
                 tzinfo=_dt.timezone.utc
             )
         except ValueError:
             continue
 
-        days_unused = (now - last_active).days
+        days_unused = (now - baseline).days
         if days_unused < DECAY_PERIOD_DAYS:
-            continue  # Not old enough to decay
+            continue  # Not old enough to decay (one period since last decay/seen)
 
         periods = days_unused // DECAY_PERIOD_DAYS
         decay = periods * DECAY_PER_30_DAYS
@@ -712,8 +738,27 @@ def _instinct_exists(iid: str) -> bool:
     return False
 
 
+def _yaml_single_quote(s: str) -> str:
+    """Escape a value for YAML single-quoted form: double internal apostrophes.
+
+    Per YAML 1.2 §7.3.2, `''` is the only escape inside single-quoted strings.
+    Without this, a value like `git push --force-with-lease --no-verify`'s
+    apostrophe would close the YAML string and produce invalid frontmatter,
+    making the resulting instinct invisible to the runtime parser.
+    """
+    if s is None:
+        return ""
+    return str(s).replace("'", "''")
+
+
 def _proposal_to_instinct_yaml(proposal: dict, today: str) -> str:
-    """Generate instinct YAML content from a proposal dict."""
+    """Generate instinct YAML content from a proposal dict.
+
+    v3.24.0: every regex-bearing or free-text field is now properly
+    single-quote-escaped via `_yaml_single_quote`. Pre-v3.24.0 a single
+    apostrophe in trigger/action/evidence broke the YAML frontmatter and
+    silently produced an invisible instinct (parsed as None by yaml-utils).
+    """
     iid = proposal.get("id", "")
     trigger = proposal.get("trigger", "")
     action = proposal.get("action", "")
@@ -734,28 +779,28 @@ def _proposal_to_instinct_yaml(proposal: dict, today: str) -> str:
     }
     inst_type = domain_type_map.get(domain, "pattern")
 
-    tags_yaml = "\n".join(f"  - {t}" for t in tags) if tags else "  []"
+    tags_yaml = "\n".join(f"  - {_yaml_single_quote(t)}" for t in tags) if tags else "  []"
     if not tags:
         tags_yaml = "[]"
 
-    evidence_line = f"  - '{today}: Auto-validated from proposal at conf {conf:.2f}'"
+    evidence_line = f"  - '{_yaml_single_quote(today)}: Auto-validated from proposal at conf {conf:.2f}'"
 
     lines = [
         "---",
         f"id: {iid}",
-        f"trigger: '{trigger}'",
-        f"action: '{action}'",
+        f"trigger: '{_yaml_single_quote(trigger)}'",
+        f"action: '{_yaml_single_quote(action)}'",
         f"confidence: {conf:.4f}",
         f"domain: {domain}",
         f"type: {inst_type}",
         f"source: cx-auto-validate",
         f"scope: {scope}",
-        f"project_id: '{project_id}'",
-        f"project_name: '{project_name}'",
+        f"project_id: '{_yaml_single_quote(project_id)}'",
+        f"project_name: '{_yaml_single_quote(project_name)}'",
         f"tags: {tags_yaml}",
-        f"created: '{today}'",
-        f"first_seen: '{today}'",
-        f"last_seen: '{today}'",
+        f"created: '{_yaml_single_quote(today)}'",
+        f"first_seen: '{_yaml_single_quote(today)}'",
+        f"last_seen: '{_yaml_single_quote(today)}'",
         f"occurrences: 1",
         f"evidence:",
         f"{evidence_line}",
@@ -826,7 +871,7 @@ def auto_validate_proposals(dry_run: bool = False) -> dict:
                 updated_proposals[i]["hold_reason"] = hold_label
                 updated_proposals[i]["held_by"] = "cx-auto-validate"
                 updated_proposals[i]["held_at"] = today
-                _log_knowledge("held", iid, f"reason={hold_label} | cx-auto-validate")
+                _log_knowledge("held", iid, f"reason={hold_label}", source="cx-auto-validate")
             continue
 
         # Accept: write instinct YAML
@@ -848,7 +893,7 @@ def auto_validate_proposals(dry_run: bool = False) -> dict:
             updated_proposals[i]["accepted_by"] = "cx-auto-validate"
             updated_proposals[i]["accepted_at"] = today
 
-            _log_knowledge("accepted", iid, f"conf={conf:.2f} | cx-auto-validate")
+            _log_knowledge("accepted", iid, f"conf={conf:.2f}", source="cx-auto-validate")
 
         accepted.append({"id": iid, "conf": conf, "domain": domain})
 
@@ -1064,7 +1109,7 @@ def auto_evolve_detect(dry_run: bool = False) -> dict:
                 draft_content = _build_cluster_draft(cid, domain, cluster_records, today)
                 draft_path = EVOLVED_SKILLS_DIR / f"{cid}.draft.md"
                 _atomic_write(draft_path, draft_content)
-                _log_knowledge("evolve-draft", cid, f"{len(cluster_records)} instincts | cx-auto-evolve")
+                _log_knowledge("evolve-draft", cid, f"{len(cluster_records)} instincts", source="cx-auto-evolve")
 
             drafts_generated.append({
                 "cluster_id": cid,

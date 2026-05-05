@@ -425,7 +425,12 @@ console.log(sl.evalToolSubstitution(
 [ "$RESULT" = "noise" ] && pass "tool-substitution noise on repeat" || fail "expected noise, got $RESULT"
 
 # -----------------------------------------------------------------------------
-echo "--- Test 22: evalToolSubstitution returns ignore when neither path taken ---"
+echo "--- Test 22: evalToolSubstitution returns useful when window has follow-up but no reincidence (v3.23.7+) ---"
+# v3.23.7 changed semantics from "useful only on pivot" to "aligned-or-ignored":
+# follow-up activity in the window without a reincidence is treated as useful
+# (same shape as evalErrorMonitor post-v3.19.4). Pre-v3.23.7 this returned
+# 'ignore'; that was the structural bias that left bash-find-use-glob and
+# bash-grep-use-grep-tool stuck at usefulCount=0 for hundreds of fires.
 RESULT=$(node -e "
 const sl = require('$REPO_ROOT/hooks/session-learner.js');
 const obs = [
@@ -437,7 +442,20 @@ console.log(sl.evalToolSubstitution(
   obs, 0
 ));
 ")
-[ "$RESULT" = "ignore" ] && pass "tool-substitution ignore" || fail "expected ignore, got $RESULT"
+[ "$RESULT" = "useful" ] && pass "tool-substitution aligned (no reincidence) → useful" || fail "expected useful (v3.23.7), got $RESULT"
+
+echo "--- Test 22b: evalToolSubstitution returns ignore when window is empty ---"
+RESULT=$(node -e "
+const sl = require('$REPO_ROOT/hooks/session-learner.js');
+const obs = [
+  { tool:'Bash', input:'find . -name x', ts:'t0' }
+];
+console.log(sl.evalToolSubstitution(
+  { type:'tool-substitution', expected_tool:'Glob', anti_tool:'Bash', anti_pattern:'find ', window:3 },
+  obs, 0
+));
+")
+[ "$RESULT" = "ignore" ] && pass "tool-substitution ignore (empty window)" || fail "expected ignore, got $RESULT"
 
 # -----------------------------------------------------------------------------
 echo "--- Test 23: evalPreconditionCheck returns useful when Read precedes Edit ---"
