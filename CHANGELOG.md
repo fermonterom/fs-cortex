@@ -4,6 +4,41 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.24.1] — 2026-05-05
+
+### Hotfix — auto-disable threshold ignored useful/noise ratio
+
+Within hours of v3.24.0 deploying, `bash-cat-use-read` was auto-disabled
+in production with `usefulCount=111` and `noiseCount=3` — a ratio of
+37×, clearly working as intended. The auto-disable gate at
+`session-learner.js:1315` only checked absolute thresholds
+(`noiseCount >= 3 && fireCount >= 10`), ignoring the useful counter
+entirely. Same structural conservatism we have been removing all day.
+
+### Fixed
+
+- **`hooks/session-learner.js:1313-1325`** — auto-disable now requires
+  `usefulCount < noiseCount` (ratio < 1.0) in addition to the existing
+  absolute thresholds. A reflex with 111 useful + 3 noise no longer
+  gets disabled. Knowledge-log entry expanded with `usefulCount=...`
+  and the resulting ratio so the disable history is auditable.
+
+### Changed
+
+- Re-enabled `bash-cat-use-read` in `~/.claude/cortex/reflexes.json`
+  during this release (it had been auto-disabled by the old gate).
+  Future Stop hooks under v3.24.1 will not re-disable it because the
+  new gate correctly evaluates 111/3 as healthy.
+
+### Notes
+
+- `CORTEX_AGENT_DISABLE_REFLEXES=1` remains the opt-in env var that
+  arms the auto-disable path. Without it, session-learner only tracks
+  thresholds and never mutates `enabled`.
+- Forward-only fix: existing `enabled: false` records were not
+  auto-restored — only `bash-cat-use-read` was re-enabled manually
+  because its ratio is provably healthy.
+
 ## [3.24.0] — 2026-05-05
 
 ### Stability release — 7 P0 + 4 P1 fixes for the structural biases that left cortex semi-broken for >1 week

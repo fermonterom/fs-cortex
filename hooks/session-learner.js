@@ -1312,12 +1312,25 @@ function correlateReflexFeedback(observations, sidOrSids) {
 
       if (autoDisable) {
         const fireCount = reflex.fireCount || 0;
-        if (reflex.noiseCount >= 3 && fireCount >= 10 && reflex.enabled !== false) {
+        const useful = reflex.usefulCount || 0;
+        const noise = reflex.noiseCount || 0;
+        // v3.24.1: require useful < noise (ratio < 1.0) in addition to the
+        // existing absolute thresholds. Pre-v3.24.1 a reflex that earned
+        // 111 useful and only 3 noise (ratio 37x — clearly working) still
+        // got auto-disabled because the threshold only looked at the noise
+        // counter in isolation. The new gate disables only reflexes whose
+        // signal is genuinely noise-dominated.
+        if (
+          noise >= 3 &&
+          fireCount >= 10 &&
+          useful < noise &&
+          reflex.enabled !== false
+        ) {
           reflex.enabled = false;
-          log(`Auto-disabled reflex ${reflexId} (noiseCount=${reflex.noiseCount} fireCount=${fireCount})`);
+          log(`Auto-disabled reflex ${reflexId} (noiseCount=${noise} usefulCount=${useful} fireCount=${fireCount} ratio=${(useful / Math.max(noise, 1)).toFixed(2)})`);
           try {
             const today = new Date().toISOString().slice(0, 10);
-            const klogLine = `${today} | reflex-auto-disable | ${reflexId} | noiseCount=${reflex.noiseCount} fireCount=${fireCount} | session-learner\n`;
+            const klogLine = `${today} | reflex-auto-disable | ${reflexId} | noiseCount=${noise} usefulCount=${useful} fireCount=${fireCount} | session-learner\n`;
             fs.appendFileSync(path.join(CORTEX_DIR, 'knowledge-log.md'), klogLine);
           } catch {}
         }
