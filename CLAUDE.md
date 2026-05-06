@@ -6,15 +6,18 @@
 hooks, modules, and capabilities of this project. Read it before exploring source
 files — it provides a complete inventory and is kept up-to-date with every release.
 
-## Pending validation
+## Pending review
 
-**`docs/SPRINT-5-PENDING-GATES.md`** — Gate 2 was prematurely closed in
-v3.22.2 and reopened in v3.23.3 alongside Gate 1. Both depend on a fresh
-measurement window starting **2026-05-02** (v3.23.3 fixed two regex bugs
-in the bash-cat/bash-grep/bash-find matchers that caused 306 lost fires
-across 6 days). Estimate: enough data by 2026-05-09. Gate 3 remains
-dropped (no reconstructible baseline). Delete this file when Gate 1+2
-both PASS with fresh post-v3.23.3 data.
+**Read `docs/REVIEW-QUEUE.md` at the start of every session.** It tracks
+time-bound items, process improvements, and ideas that should not depend
+on operator memory. Update or remove entries as they are resolved.
+
+Currently load-bearing:
+
+- **`docs/SPRINT-5-PENDING-GATES.md`** — Gates 1+2 already pass on data
+  (2026-05-06) but formal close is held to **2026-05-09** to honour the
+  agreed 7-day clean window. After 2026-05-09: re-run the evaluators
+  inside the file, then delete it and remove this bullet.
 
 ## Release workflow
 

@@ -1,23 +1,37 @@
 # Sprint 5 — Pending Validation Gates
 
-**Status update 2026-05-04 (v3.23.4 + v3.23.5):** Gate 2 reopened. Both
-Gate 1 and Gate 2 require a **new measurement window** because the
-matchers had silent bugs that produced **0 fires across 6 days** of
-intensive Bash use. v3.23.3 fixed the regex; v3.23.4 fixed the runtime
-guard that was *also* silencing `bash-cat-use-read`. Honest signal only
-starts accumulating once both fixes are deployed.
+**Status update 2026-05-06:** both gates' raw counters PASS thresholds
+by a wide margin. Holding formal closure to 2026-05-09 to honour the
+original 7-day clean window agreed when the measurement window restarted
+on 2026-05-04 (post-v3.23.4). Latest reading from `reflexes.json`:
 
-**Effective measurement window starts 2026-05-04** (post-v3.23.4 install
-on the operator's main machine; the previous v3.23.3 window was tainted
-because `bash-cat-use-read` was still blocked by the guard).
+| Reflex                  | fires | useful | noise | ratio  | Gate 2 (≥2.0×, fires≥30, enabled) |
+|-------------------------|------:|-------:|------:|-------:|:----------------------------------|
+| bash-cat-use-read       |   850 |    114 |     5 |  22.8× | **PASS** (data)                   |
+| bash-find-use-glob      |   628 |     12 |     2 |   6.0× | **PASS** (data)                   |
+| bash-grep-use-grep-tool |   797 |     50 |     1 |  50.0× | **PASS** (data) — also Gate 1 ✅  |
 
-**Estimate to enough data: 1–2 days** — the operator runs Claude Code
-across many projects in parallel daily, so the 30 fires + 50 events
-floors should be reached by **2026-05-05 / 2026-05-06**. Re-check
-sooner if `/cx-status --reflexes` shows the trio passing the gates.
+Gate 1 floor: useful+noise = 51 ≥ 50 ✅. Ratio 50× ≫ 3× threshold.
 
-When Gate 1 + Gate 2 both pass, delete this file and remove the
-reference from `CLAUDE.md`.
+**Background — original plan (kept for reference below).** Gate 2 was
+prematurely closed in v3.22.2 and reopened in v3.23.3 alongside Gate 1
+because the matchers had silent regex bugs that produced **0 fires
+across 6 days** of intensive Bash use. v3.23.3 fixed the regex;
+v3.23.4 fixed the runtime guard that was *also* silencing
+`bash-cat-use-read`. Effective measurement window starts 2026-05-04.
+
+**Formal close action on 2026-05-09 (or earlier if user approves):**
+
+1. Re-run the evaluators below; confirm all three reflexes still PASS.
+2. Delete this file (`rm docs/SPRINT-5-PENDING-GATES.md`).
+3. Remove the "Pending validation" reference from `CLAUDE.md`.
+4. Note the closure in `CHANGELOG.md` under the next release entry.
+
+A separate Gate 1 evaluator bug was identified during the 2026-05-06
+read: the script below was looking for a non-existent `per_iid` key in
+the `impact_log.py stats --json` output. The fix below reads from
+`reflexes.json` directly and reports the same numbers as the Gate 2
+evaluator.
 
 ---
 
@@ -45,27 +59,39 @@ fixed matcher and starts populating useful/noise from 2026-05-02 onward.
 
 ## Gate 1 — `bash-grep-use-grep-tool` useful/noise ratio ≥ 3×
 
-**Status:** ⏳ PENDING — re-measurement window starts 2026-05-04 (fresh
-matcher + fresh guard). Estimate: enough data by 2026-05-05 / 2026-05-06.
+**Status:** ✅ DATA PASS (2026-05-06) — formal close held to 2026-05-09
+to honour the agreed 7-day clean window. Latest read: useful=50 noise=1
+ratio=50.0× floor=51.
 
-**Pass criterion:** `useful / noise ≥ 3.0` over a rolling 14-day window
+**Pass criterion:** `useful / noise ≥ 3.0` over the post-resetAt window
 where `useful + noise ≥ 50`. The 50-event floor protects against
 false-pass on tiny samples.
 
-**How to re-measure:**
+**How to re-measure (fixed evaluator — reads `reflexes.json` directly):**
 
 ```bash
-python3 ~/.claude/hooks/cortex/lib/impact_log.py stats --days 14 --json \
-  | python3 -c "
-import json, sys
-d = json.load(sys.stdin)
-useful = next((x['useful'] for x in d.get('per_iid', []) if x['iid'] == 'reflex:bash-grep-use-grep-tool'), 0)
-noise  = next((x['noise']  for x in d.get('per_iid', []) if x['iid'] == 'reflex:bash-grep-use-grep-tool'), 0)
+python3 -c "
+import json
+data = json.load(open('/Users/fmm/.claude/cortex/reflexes.json'))
+items = data.get('reflexes', data)
+items = list(items.values()) if isinstance(items, dict) else items
+r = next((x for x in items if x['id'] == 'bash-grep-use-grep-tool'), None)
+if not r:
+    print('reflex not found'); raise SystemExit(1)
+useful = r.get('usefulCount', 0)
+noise  = r.get('noiseCount', 0)
+fires  = r.get('fireCount', 0)
 ratio  = useful / max(noise, 1)
-print(f'bash-grep-use-grep-tool: useful={useful} noise={noise} ratio={ratio:.2f}x')
-print('PASS' if ratio >= 3.0 and (useful + noise) >= 50 else 'PENDING')
+floor  = useful + noise
+ok     = ratio >= 3.0 and floor >= 50
+print(f'bash-grep-use-grep-tool: fires={fires} useful={useful} noise={noise} ratio={ratio:.2f}x floor={floor}')
+print('PASS' if ok else 'PENDING')
 "
 ```
+
+**Why the previous evaluator was wrong:** `impact_log.py stats --json`
+returns top-level keys `top_useful` / `top_noisy` (lists), not `per_iid`.
+The old script silently returned 0/0 → false PENDING signal.
 
 **Action if it fails:**
 
@@ -82,7 +108,10 @@ print('PASS' if ratio >= 3.0 and (useful + noise) >= 50 else 'PENDING')
 
 ## Gate 2 — Three reactivated NOISY reflexes stay enabled and have signal
 
-**Status:** ⏳ REOPENED 2026-05-02. Was prematurely closed in v3.22.2.
+**Status:** ✅ DATA PASS (2026-05-06) — formal close held to 2026-05-09
+to honour the agreed 7-day clean window. All three reflexes pass with
+margin (cat 22.8×, find 6.0×, grep 50.0×). Was prematurely closed in
+v3.22.2; reopened 2026-05-02.
 
 **Why reopened:** the original Gate 2 condition (`enabled: true AND
 noiseCount < 3`) was technically met since 2026-04-26, but the reason
