@@ -21,7 +21,28 @@ COMMANDS_DIR="$CLAUDE_DIR/commands"
 HOOKS_DIR="$CLAUDE_DIR/hooks/cortex"
 SETTINGS_FILE="$CLAUDE_DIR/settings.json"
 CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
-NEW_VERSION="3.25.0"
+NEW_VERSION="3.25.1"
+
+# v3.25.1 — explicit downgrade flag. The installer is a copy-not-merge of
+# hooks/commands, so running an older `install.sh` over a newer install
+# silently rewinds your hooks while preserving counters — the failure mode
+# that hit on 2026-05-07 when the local repo was not pulled before
+# `bash install.sh`. Default is now: abort on downgrade unless the operator
+# explicitly opts in.
+ALLOW_DOWNGRADE=false
+for arg in "$@"; do
+    case "$arg" in
+        --allow-downgrade) ALLOW_DOWNGRADE=true ;;
+    esac
+done
+
+# version_lt A B → return 0 (true) iff A < B in semver order. Uses sort -V
+# which is GNU+BSD sort -V on macOS 14+ and stock Linux. Identical versions
+# return 1 (false) so the caller can branch into a no-op or upgrade path.
+version_lt() {
+    [ "$1" = "$2" ] && return 1
+    [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n1)" = "$1" ]
+}
 
 print_header() {
     echo ""
@@ -99,6 +120,30 @@ if [ -d "$CORTEX_DIR" ]; then
     if [ "$INSTALLED_VERSION" = "none" ]; then
         print_warn "Legacy cortex installation detected (${LAW_COUNT} laws, ${INSTINCT_COUNT} instincts)"
         print_step "Upgrading to v${NEW_VERSION}"
+    elif version_lt "$NEW_VERSION" "$INSTALLED_VERSION"; then
+        # Downgrade detected. Abort unless explicitly opted in.
+        echo "" >&2
+        echo -e "${RED}${BOLD}DOWNGRADE BLOCKED${NC}" >&2
+        echo -e "${RED}  Installed: v${INSTALLED_VERSION}${NC}" >&2
+        echo -e "${RED}  This installer ships: v${NEW_VERSION}${NC}" >&2
+        echo "" >&2
+        echo -e "${YELLOW}Likely cause: this repository copy is behind the remote.${NC}" >&2
+        echo -e "${YELLOW}Try:${NC}" >&2
+        echo -e "${YELLOW}  cd $(pwd) && git pull origin main${NC}" >&2
+        echo -e "${YELLOW}  bash install.sh${NC}" >&2
+        echo "" >&2
+        if [ "$ALLOW_DOWNGRADE" = "true" ]; then
+            echo -e "${YELLOW}--allow-downgrade was passed — proceeding anyway.${NC}" >&2
+            print_step "Downgrading from v${INSTALLED_VERSION} → v${NEW_VERSION}"
+            print_ok "${LAW_COUNT} laws, ${INSTINCT_COUNT} instincts (preserved)"
+        else
+            echo -e "${RED}If this is intentional, re-run with --allow-downgrade.${NC}" >&2
+            echo "" >&2
+            exit 1
+        fi
+    elif [ "$INSTALLED_VERSION" = "$NEW_VERSION" ]; then
+        print_step "fs-cortex v${INSTALLED_VERSION} already installed — refreshing files"
+        print_ok "${LAW_COUNT} laws, ${INSTINCT_COUNT} instincts (preserved)"
     else
         print_step "Detected fs-cortex v${INSTALLED_VERSION} → upgrading to v${NEW_VERSION}"
         print_ok "${LAW_COUNT} laws, ${INSTINCT_COUNT} instincts (preserved)"

@@ -20,7 +20,21 @@ $CommandsDir = Join-Path $ClaudeDir "commands"
 $HooksDir = Join-Path (Join-Path $ClaudeDir "hooks") "cortex"
 $SettingsFile = Join-Path $ClaudeDir "settings.json"
 $ClaudeMd = Join-Path $ClaudeDir "CLAUDE.md"
-$NewVersion = "3.25.0"
+$NewVersion = "3.25.1"
+
+# v3.25.1 — explicit downgrade flag (parity with install.sh).
+# A behind-remote repo would silently rewind hooks otherwise.
+$AllowDowngrade = ($args -contains '--allow-downgrade') -or ($args -contains '-AllowDowngrade')
+
+function Test-VersionLessThan {
+    param([string]$A, [string]$B)
+    try {
+        return [version]$A -lt [version]$B
+    } catch {
+        # Non-semver fallback: string compare
+        return $A -lt $B
+    }
+}
 
 # --- Helpers ---
 
@@ -91,6 +105,31 @@ if (Test-Path $CortexDir) {
     if ($InstalledVersion -eq "none") {
         Print-Warn "Legacy cortex installation detected ($lawCount laws, $instinctCount instincts)"
         Print-Step "Upgrading to v$NewVersion"
+    }
+    elseif (Test-VersionLessThan $NewVersion $InstalledVersion) {
+        Write-Host ""
+        Write-Host "DOWNGRADE BLOCKED" -ForegroundColor Red
+        Write-Host "  Installed: v$InstalledVersion" -ForegroundColor Red
+        Write-Host "  This installer ships: v$NewVersion" -ForegroundColor Red
+        Write-Host ""
+        Write-Host "Likely cause: this repository copy is behind the remote." -ForegroundColor Yellow
+        Write-Host "Try:" -ForegroundColor Yellow
+        Write-Host "  cd $ScriptDir; git pull origin main" -ForegroundColor Yellow
+        Write-Host "  powershell -ExecutionPolicy Bypass -File install.ps1" -ForegroundColor Yellow
+        Write-Host ""
+        if ($AllowDowngrade) {
+            Write-Host "--allow-downgrade was passed — proceeding anyway." -ForegroundColor Yellow
+            Print-Step "Downgrading from v$InstalledVersion -> v$NewVersion"
+            Print-Ok "$lawCount laws, $instinctCount instincts (preserved)"
+        } else {
+            Write-Host "If this is intentional, re-run with --allow-downgrade." -ForegroundColor Red
+            Write-Host ""
+            exit 1
+        }
+    }
+    elseif ($InstalledVersion -eq $NewVersion) {
+        Print-Step "fs-cortex v$InstalledVersion already installed -- refreshing files"
+        Print-Ok "$lawCount laws, $instinctCount instincts (preserved)"
     }
     else {
         Print-Step "Detected fs-cortex v$InstalledVersion -> upgrading to v$NewVersion"
