@@ -24,6 +24,7 @@ Command          Cost        Purpose
 ─────────────────────────────────────────────────────────────
 /cx-status       ~200 tok    Dashboard: laws, instincts, projects, tracking, health
                               flags: --impact, --reflexes, --pipeline (v3.23.1+)
+/cx-dashboard    ~300 tok    HTML dashboard generator (visual, brand-styled)
 /cx-analyze      ~5K tok     Detect patterns in observations → proposals (Opus 1M agent)
 /cx-validate     ~500 tok    Review and accept/reject proposals interactively
 /cx-distill      ~800 tok    Promote instincts to laws, apply decay, Jaccard promotions
@@ -32,6 +33,8 @@ Command          Cost        Purpose
 /cx-audit        ~400 tok    Token overhead, duplicates, conflicts, cleanup
 /cx-eod          ~300 tok    End-of-day summary for next session
 /cx-gotcha       ~200 tok    Capture error→fix as high-priority instinct
+/cx-feedback     ~100 tok    Mark last injection useful/noise (closes human funnel loop)
+/cx-feedback-auto ~50 tok    Agent self-rating on tool-choice reflexes (source=agent)
 /cx-promote      ~300 tok    Promote project instinct to global (cross-project)
 /cx-export       ~500 tok    Generate portable skill for Claude.ai or sharing
 /cx-backup       ~100 tok    Create .tar.gz backup for machine transfer

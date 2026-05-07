@@ -50,7 +50,7 @@ function detectErrorResolutions(observations) {
       if (isFix) {
         const fixSummary = String(candidate.input || '').slice(0, 200);
         const hash = shortHash(`${errorTool}-${obs.ts || i}`);
-        proposals.push({ id: `gotcha-${errorTool}-${hash}`, trigger: errorTool, action: `When ${errorTool} fails: ${fixSummary}`, confidence: 0.40, domain: 'error-recovery', source: 'session-learner:error-fix', status: 'pending', detected: TODAY, session: obs.sid || 'unknown' });
+        proposals.push({ id: `gotcha-${errorTool}-${hash}`, trigger: errorTool, action: `When ${errorTool} fails: ${fixSummary}`, confidence: 0.50, domain: 'error-recovery', source: 'session-learner:error-fix', status: 'pending', detected: TODAY, session: obs.sid || 'unknown' });
         break;
       }
     }

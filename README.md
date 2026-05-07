@@ -203,9 +203,12 @@ You work → Cortex observes → /cx-analyze detects patterns → /cx-validate y
 | `/cx-gotcha` | Capture error→fix as high-priority instinct |
 | `/cx-downvote` | Negative feedback on incorrect instinct injection (reduces confidence) |
 | `/cx-retro` | Weekly retrospective: command usage, instinct activations, health trend |
+| `/cx-dashboard` | Generate a visual HTML dashboard of Cortex state with Fersora brand — open in browser |
 | `/cx-export` | Generate portable skill for Claude.ai or sharing |
 | `/cx-backup` | Create portable .tar.gz backup for machine transfer |
 | `/cx-restore` | Import knowledge from a backup archive |
+| `/cx-feedback` | Cierra el loop humano del funnel de impacto — marca la última inyección como útil o ruido |
+| `/cx-feedback-auto` | Agent self-rating on tool-choice reflexes — emits feedback with source=agent |
 
 ### Interactive Shorthand
 
