@@ -4,6 +4,12 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.25.2] — 2026-05-07
+
+### Fixed
+
+- **`commands/cx-analyze.md` — Step 3 compressor schema corrected**: The pre-processing pseudocode referenced a stale schema (`timestamp`, `args.*`, `result`, `status`) that never matched what `observe.sh` actually writes to `observations.jsonl`. Real schema: `ts`, `ev` (`"ts"` = tool-start / `"tc"` = tool-complete), `input` (serialized JSON string containing `command`/`file_path`/etc.), `output` (on `tc` events only), `err` (boolean). Wrong compressor stripped all signal and delivered lines like `{"tool":"Bash"}` to the Opus agent — resulting in 0 proposals. Fixed pseudocode now parses `input` as JSON to extract key args, distinguishes `ts`/`tc` event types, and preserves truncated `output` on `err=true` completions. Reduces 10 MB → ~0.5 MB with actual actionable content.
+
 ## [3.25.1] — 2026-05-07
 
 ### Hotfix — silent downgrade through stale local repo

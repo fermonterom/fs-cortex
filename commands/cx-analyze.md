@@ -77,19 +77,54 @@ Git-derived proposals get source: "git-history" and initial confidence 0.30-0.50
 
 Observations JSONL files can be very large (up to 10MB). Most of the weight comes from tool output (full file contents from Read, command output from Bash) which is not needed for pattern detection. Pre-process to reduce size while preserving ALL signal.
 
-Run a Python script to create a compressed JSONL file:
+Run a Python script to create a compressed JSONL file.
+
+The real JSONL schema written by `observe.sh` is:
+- `ts` — timestamp (not `timestamp`)
+- `ev` — event type: `"ts"` (tool start) or `"tc"` (tool complete)
+- `tool` — tool name
+- `err` — boolean error flag (not `status`)
+- `input` — serialized JSON string containing `command`, `file_path`, `description`, etc. (not `args` object)
+- `output` — present only on `tc` events, contains tool result
 
 ```python
-# For each observation in observations.jsonl:
-# 1. KEEP intact: tool, timestamp, _project, _hash, status/success/error
-# 2. KEEP intact: args.file_path, args.command, args.pattern (the action taken)
-# 3. TRUNCATE: result/output → first 200 chars (captures error messages without full output)
-# 4. OMIT: args.content, args.new_string, args.old_string (code written/edited — not useful for patterns)
-# 5. OMIT: args.new_source (notebook content)
-# 6. Keep everything else intact
+import json, sys
+
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    obs = json.loads(line)
+    ev = obs.get('ev', '')
+    out = {
+        'ts': obs.get('ts', '')[:16],
+        'ev': ev,
+        'tool': obs.get('tool', ''),
+        'err': obs.get('err', False),
+        'sid': obs.get('sid', '')[:8],
+        'pname': obs.get('pname', ''),
+    }
+
+    if ev == 'ts':
+        raw_input = obs.get('input', '')
+        if raw_input:
+            try:
+                inp = json.loads(raw_input)
+                for key in ('command', 'file_path', 'pattern', 'description', 'query', 'url'):
+                    if key in inp:
+                        out[key] = str(inp[key])[:200]
+            except Exception:
+                out['input_raw'] = str(raw_input)[:200]
+
+    elif ev == 'tc' and obs.get('err'):
+        raw_output = obs.get('output', '')
+        if raw_output:
+            out['output'] = str(raw_output)[:300]
+
+    print(json.dumps(out))
 ```
 
-This typically reduces 10MB → 2-3MB without losing any error messages, tool sequences, or file paths. The agent sees WHAT was done and WHETHER it failed, just not the full code content.
+This typically reduces 10MB → 0.5-1MB without losing any error messages, tool sequences, or file paths. The agent sees WHAT was done (tool + key args) and WHETHER it failed (`err`), but not full output content.
 
 Write the compressed file to a temporary location within the project directory.
 
