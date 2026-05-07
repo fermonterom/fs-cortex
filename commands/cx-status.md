@@ -275,15 +275,22 @@ REFLEX HEALTH (v3.18.0+):
 
   Healthy   : 7   (useful >= 10 AND noise < 3)
   Borderline: 2   (noise == 1 OR noise == 2)
-  Noisy     : 1   (noise >= 3 AND fireCount >= 10 — auto-disable candidate)
+  Noisy     : 1   (noise >= 3 AND fireCount >= 10 AND useful < noise — auto-disable candidate)
   Unknown   : 0   (fireCount < 10 — not enough data)
 ```
 
-`STATUS` rules:
+`STATUS` rules (must mirror the auto-disable gate at
+`hooks/session-learner.js:1313-1336`):
 - `healthy`     → `usefulCount >= 10 AND noiseCount < 3`
 - `borderline`  → `noiseCount == 1 OR noiseCount == 2`
-- `NOISY`       → `noiseCount >= 3 AND fireCount >= 10` (auto-disable candidate)
+- `NOISY`       → `noiseCount >= 3 AND fireCount >= 10 AND usefulCount < noiseCount` (auto-disable candidate)
 - `unknown`     → `fireCount < 10` (insufficient data to judge)
+
+The `usefulCount < noiseCount` clause was added in v3.24.2 to keep this
+panel in sync with the v3.24.1 auto-disable gate. Pre-v3.24.2 the
+panel would label a healthy-but-noisy reflex (e.g. `useful=116,
+noise=5`) as a candidate even though the runtime would never disable
+it. The label and the gate now agree.
 
 If `CORTEX_AGENT_DISABLE_REFLEXES=1` is set, NOISY reflexes are
 auto-disabled by `session-learner.js` at next Stop event. Without the

@@ -54,11 +54,12 @@ When the system prompt contains `EOD RESUME`, Claude MUST proactively present it
 4. **Priorities** — List PRIORITIES as numbered list
 5. **Ask** — Ask where to start (user's language from memory.json)
 
-### Commands (16)
+### Commands (20)
 
 | Command | Purpose |
 |---------|---------|
 | `/cx-status` | Dashboard: laws, instincts, projects, reflexes, health |
+| `/cx-dashboard` | Generate a visual HTML dashboard of Cortex state with Fersora brand — open in browser |
 | `/cx-analyze` | Detect patterns in observations → proposals |
 | `/cx-distill` | Distill laws, apply decay, check Jaccard promotions |
 | `/cx-validate` | Review/confirm/reject proposals and weak instincts |
@@ -68,12 +69,15 @@ When the system prompt contains `EOD RESUME`, Claude MUST proactively present it
 | `/cx-gotcha` | Capture error→fix as high-priority instinct |
 | `/cx-downvote` | Negative feedback on incorrect instinct injection |
 | `/cx-retro` | Weekly retrospective: command usage, health trend |
+| `/cx-timeline` | Knowledge event log: creations, promotions, decays, archives, evolutions |
 | `/cx-export` | Portable skill for Claude.ai or sharing |
 | `/cx-backup` | .tar.gz backup for machine transfer |
 | `/cx-restore` | Import backup with intelligent merge |
 | `/cx-router` | Show command catalog with token costs and next action suggestion |
 | `/cx-promote` | Promote project instincts to global when found in 2+ projects |
 | `/cx-dream` | Dream Cycle: dedup, contradictions, staleness, regex, health, cleanup |
+| `/cx-feedback` | Cierra el loop humano del funnel de impacto — marca la última inyección como útil o ruido |
+| `/cx-feedback-auto` | Agent self-rating on tool-choice reflexes — emits feedback with source=agent |
 
 ### Learning Pipeline
 

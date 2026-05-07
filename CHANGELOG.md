@@ -4,6 +4,93 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.25.0] — 2026-05-07
+
+### Two P0/P1 fixes that unlock autonomous operation
+
+After a Codex GPT-5.5 adversarial review of the full pipeline, two
+structural issues were surfacing as the user pain "Cortex is not
+autonomous, I have to /cx-validate everything by hand": (a) the
+highest-signal detector was emitting proposals one tick below the
+auto-validate threshold, parking every gotcha in `proposals.json`
+forever; and (b) SessionStart was injecting pipeline status as silent
+`additionalContext`, so the user never saw the validate / promote /
+evolve work that Cortex had already done or was waiting on.
+
+### Fixed
+
+- **`hooks/session-learner.js:266`** — `error-fix` detector confidence
+  raised from `0.40` to `0.50`. Domain `error-recovery` is already in
+  `VALIDATE_AUTO_DOMAINS` (`hooks/lib/distill_engine.py:84`), but the
+  threshold at `VALIDATE_MIN_CONF=0.50` was rejecting the proposal by
+  exactly one tick. Net effect of the change: the autonomous pipeline
+  *observation → error-fix detector → auto-validate → instinct →
+  distill → law* now flows end-to-end without manual intervention.
+  The other detectors (`repeat`, `correction`, `workflow`) remain in
+  `VALIDATE_HUMAN_DOMAINS` by design — they encode taste/judgment that
+  benefits from human review.
+- **`hooks/session-start.py:282-360`** — pipeline activity, learn-pending
+  banners, and `[ACTION]`/`[MAINT]` reminders now arm a single
+  trailing `[CORTEX ATTENTION — present to user in FIRST response]`
+  block whenever they have content. Pre-v3.25.0 only `EOD Resume`
+  carried that "surface to user" instruction; everything else was
+  silently injected as `additionalContext` and the agent buried it.
+- **`commands/cx-status.md`** (`--reflexes` panel) — `STATUS` rules
+  updated to mirror the v3.24.1 auto-disable gate. The panel was
+  labelling reflexes with `useful=116, noise=5` (ratio 23×) as
+  "auto-disable candidate" even though the runtime would never
+  disable them. New rule: `NOISY` requires `noiseCount >= 3 AND
+  fireCount >= 10 AND usefulCount < noiseCount`. Label and gate now
+  agree.
+
+### Changed
+
+- **`commands/cx-router.md`** — added the three commands that were
+  silently missing from the catalog: `/cx-dashboard`, `/cx-feedback`,
+  `/cx-feedback-auto`. Catalog now has 20 entries, matching
+  `commands/cx-*.md` and `docs/FEATURES.md`.
+- **`hooks/session-start.py:294`** — commands hint string updated to
+  list all 20 commands. Pre-v3.25.0 it listed 16 (missing
+  `/cx-dashboard`, `/cx-feedback`, `/cx-feedback-auto`,
+  `/cx-timeline`).
+
+### Caught by the Codex AD pass and folded in
+
+The same Codex GPT-5.5 review that signed the patch off as `SHIP` also
+auto-applied three follow-on fixes that are part of this release:
+
+- **`hooks/session-start.py:384`** — the new `[CORTEX ATTENTION]` block
+  was gated behind `elif user_actionable:`, so EOD and ATTENTION could
+  never coexist in the same SessionStart. Changed to `if`. Now an EOD
+  morning that also has pending pipeline work surfaces both blocks.
+- **`tests/test_session_learner.sh:53`** — the `error-fix` fixture used
+  the pre-v3.25.0 `confidence: 0.40`. Bumped to `0.50` so the test
+  reflects the shipped detector value and future regressions are
+  catchable.
+- **`README.md` and `skills/cortex/SKILL.md`** — catalog drift
+  cleaned. `README.md` was missing `/cx-dashboard`, `/cx-feedback`,
+  `/cx-feedback-auto`. `skills/cortex/SKILL.md` was missing those
+  three plus `/cx-timeline`; the row count was also corrected
+  16 → 20.
+
+### Notes
+
+- No regressions vs v3.24.1: full 16-suite test run passes (16/16).
+- Local-only counter tightening was applied to
+  `~/.claude/cortex/reflexes.json` for two non-shipped reflexes
+  (`python3-bypass-write-tool`, `nextjs-suspense-boundary`) — those
+  reflexes are user-local customisations and were *not* added to the
+  repo defaults. Backup at
+  `/tmp/reflexes-backup-20260507-092415.json`.
+- Adversarial Defense review run by Codex GPT-5.5 (model auto-routed
+  via the `fs-codex` plugin). Codex's full report is in the PR
+  description; the P0 in this changelog is the top-priority item it
+  surfaced.
+- Command consolidation (20 → 5 canonical) is **deferred** to v3.26.0.
+  It is the largest and most invasive change Codex proposed and
+  warrants its own release with explicit deprecation aliases for the
+  13 commands that would be folded.
+
 ## [3.24.1] — 2026-05-05
 
 ### Hotfix — auto-disable threshold ignored useful/noise ratio

@@ -282,6 +282,17 @@ def main():
     # Build context string
     parts = []
 
+    # v3.25.0 — track whether anything in this SessionStart deserves explicit
+    # surfacing to the user on the first response. Pre-v3.25.0 only the EOD
+    # block carried that "present in first response" flag, so pipeline activity
+    # (proposals validated, instincts promoted, evolve drafts ready) and
+    # maintenance reminders ([ACTION]/[MAINT]) were silently injected as
+    # additionalContext and the user only saw them if they ran /cx-status by
+    # hand. Now any actionable signal — pending validate, pending distill,
+    # promotions, evolve drafts, learn-pending, [ACTION]/[MAINT] reminders —
+    # arms a single trailing IMPORTANT block telling the agent to surface it.
+    user_actionable: list[str] = []
+
     # 1. Laws
     laws = load_laws()
     if laws:
@@ -290,11 +301,15 @@ def main():
     else:
         parts.append('CORTEX: No laws configured yet. Add .txt files to ~/.claude/cortex/laws/')
 
-    # 1b. Commands hint
+    # 1b. Commands hint — keep this list in sync with commands/cx-*.md and
+    # commands/cx-router.md. v3.25.0 added the four that were silently
+    # missing: /cx-dashboard /cx-feedback /cx-feedback-auto /cx-timeline.
     parts.append(
-        'Cortex commands: /cx-status /cx-analyze /cx-distill /cx-validate /cx-evolve '
-        '/cx-dream /cx-audit /cx-eod /cx-gotcha /cx-downvote /cx-retro /cx-export '
-        '/cx-backup /cx-restore /cx-router /cx-promote. Use /cx-status for system state.'
+        'Cortex commands: /cx-status /cx-dashboard /cx-analyze /cx-distill '
+        '/cx-validate /cx-evolve /cx-dream /cx-timeline /cx-audit /cx-eod '
+        '/cx-gotcha /cx-feedback /cx-feedback-auto /cx-downvote /cx-retro '
+        '/cx-export /cx-backup /cx-restore /cx-router /cx-promote. '
+        'Use /cx-status for system state.'
     )
 
     # 2. New day check
@@ -307,11 +322,16 @@ def main():
     # 3. Learn-pending
     has_pending, count = check_learn_pending()
     if has_pending:
-        parts.append(f'\nYou have {count}+ new observations. Run /cx-analyze to detect patterns.')
+        msg = f'You have {count}+ new observations. Run /cx-analyze to detect patterns.'
+        parts.append(f'\n{msg}')
+        user_actionable.append(f'• {msg}')
 
     # 3b. Maintenance reminders
     for reminder in check_maintenance():
         parts.append(f'\n{reminder}')
+        # [ACTION] and [MAINT] markers signal the user should know about it.
+        if '[ACTION]' in reminder or '[MAINT]' in reminder:
+            user_actionable.append(f'• {reminder.strip()}')
 
     # 3d. Knowledge pipeline summary (Sprint 7)
     try:
@@ -327,6 +347,18 @@ def main():
         if s.get("skipped_validate"): lines.append(f"  ⚠ Pending review: {s['skipped_validate']} proposal(s) need judgment — run /cx-validate")
         if lines:
             parts.append("\n[CORTEX KNOWLEDGE PIPELINE]\n" + "\n".join(lines))
+            # Pipeline lines that move state (validated/promoted/evolve_drafts)
+            # OR demand action (candidates/skipped_validate) are surfaced.
+            for key, label in (
+                ("validated",        "instincts auto-promoted"),
+                ("promoted",         "laws auto-promoted"),
+                ("evolve_drafts",    "skills ready to review at evolved/skills/ (run /cx-evolve)"),
+                ("candidates",       "law candidates pending — run /cx-distill"),
+                ("skipped_validate", "proposals need judgment — run /cx-validate"),
+            ):
+                v = s.get(key)
+                if v:
+                    user_actionable.append(f"• {v} {label}")
     except Exception:
         pass  # never block session-start on engine errors
 
@@ -348,6 +380,15 @@ def main():
             'IMPORTANT: Present the EOD resume and priorities to the user in your '
             'FIRST response. Do NOT wait for the user to ask. Greet, summarize '
             'yesterday, list priorities, ask where to start.'
+        )
+    if user_actionable:
+        # No EOD to anchor the first response, but the pipeline / reminders
+        # produced actionable signal. Force the agent to surface it.
+        bullets = "\n".join(user_actionable)
+        parts.append(
+            f'\n[CORTEX ATTENTION — present to user in FIRST response]\n{bullets}\n'
+            'IMPORTANT: Greet briefly, list these items, and ask which (if any) '
+            'they want to act on now. Do not silently bury them in context.'
         )
 
     # Output JSON

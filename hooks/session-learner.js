@@ -263,7 +263,17 @@ function detectErrorResolutions(observations) {
           id: `gotcha-${errorTool}-${hash}`,
           trigger: errorTool,
           action: `When ${sanitizeProposalAction(errorTool)} fails with similar pattern, try: ${sanitizeProposalAction(fixSummary)}`,
-          confidence: 0.40,
+          // v3.25.0 — raised 0.40 -> 0.50. The error-fix detector is the
+          // highest-signal heuristic in the pipeline (an explicit error
+          // followed by an explicit fix is very specific evidence). The
+          // previous 0.40 value sat just under VALIDATE_MIN_CONF=0.50, so
+          // every gotcha sat in proposals.json forever waiting for manual
+          // /cx-validate. Domain `error-recovery` is already in
+          // VALIDATE_AUTO_DOMAINS, so 0.50 unblocks the autonomous path:
+          // observation -> error-fix detector -> auto-validate -> instinct
+          // -> distill -> law. Decay (-0.05/cycle) and noise tracking still
+          // self-correct false positives.
+          confidence: 0.50,
           domain: 'error-recovery',
           source: 'session-learner:error-fix',
           status: 'pending',
