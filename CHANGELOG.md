@@ -4,6 +4,53 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.25.1] — 2026-05-07
+
+### Hotfix — silent downgrade through stale local repo
+
+After v3.25.0 was merged to `main` (commit `a2b304d`), the operator's
+local clone of the repo was still at `f9f6bed` (v3.24.1) because no
+`git pull` had run. Re-running `bash install.sh` from that stale repo
+silently DOWNGRADED a fresh v3.25.0 installation back to v3.24.1
+without any warning. The installer is a copy-not-merge of
+`hooks/`/`commands/`, so it overwrote the new SessionStart and
+session-learner code with the older versions, while preserving
+counters — exactly the kind of partial-rewind that is hard to notice
+afterwards.
+
+### Fixed
+
+- **`install.sh`** — added explicit downgrade detection. New helper
+  `version_lt A B` (uses `sort -V`) is called when an existing
+  installation is detected. If the shipped version is older than the
+  installed one, the script now aborts with a `DOWNGRADE BLOCKED`
+  message that names both versions and suggests `git pull origin main`
+  as the likely fix. Pass `--allow-downgrade` to override deliberately.
+- **`install.ps1`** — Windows parity. New `Test-VersionLessThan`
+  helper (uses `[version]` cast) and the same abort behaviour.
+  Accepts `--allow-downgrade` (also `-AllowDowngrade`).
+- **`install.sh` / `install.ps1`** — also added a same-version branch:
+  re-running the installer with the same version no longer prints
+  "Upgrading…" — it now says "already installed — refreshing files".
+
+### Added
+
+- **`tests/test_install_downgrade.sh`** — 5 sandbox tests
+  (clean install / same-version refresh / downgrade blocked /
+  `--allow-downgrade` override / real upgrade path) using
+  `mktemp -d` + `HOME=$SANDBOX` isolation. Reads `NEW_VERSION` from
+  `install.sh` so the tests track future bumps automatically. 5/5
+  PASS.
+
+### Notes
+
+- Forward-only: existing installations are not migrated. The
+  safeguard takes effect on the next `bash install.sh` run.
+- Total tests: 17 suites green (the new `test_install_downgrade.sh`
+  joined the 16 pre-existing).
+- `install.ps1` change was sandbox-tested only via `install.sh` (the
+  shared shape); a Windows runner exists in CI and will exercise it.
+
 ## [3.25.0] — 2026-05-07
 
 ### Two P0/P1 fixes that unlock autonomous operation
