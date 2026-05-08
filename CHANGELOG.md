@@ -4,6 +4,13 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.25.4] — 2026-05-08
+
+### Fixed
+
+- `commands/cx-analyze.md` — Step 6 added: after displaying results, delete `~/.claude/cortex/.learn-pending` and rewrite `~/.claude/cortex/.last-learn-count` with the current observation total, so session-start does not re-fire the "50+ new observations" banner until ≥50 genuinely new observations accumulate.
+- `commands/cx-distill.md` — Step 6 extended: after `touch .last-distill`, truncate `~/.claude/cortex/auto-distill-candidates.md` to empty, so session-start `[MAINT]` reminder suppresses until `distill_engine.py` finds new candidates on the next SessionStart.
+
 ## [3.25.3] — 2026-05-08
 
 ### Fixed

@@ -255,6 +255,36 @@ Each line MUST include `— short description` after the scope. The description 
 
 **CONFIRMAR ANTES DE EJECUTAR**: After presenting results, STOP. NEVER chain opinion or execution in the same turn. Wait for the user to decide what to do next (`/cx-validate`, `--accept`, or dismiss). The summary is informational only.
 
+### Step 6: Cleanup state flags
+
+After displaying the summary, clean up the trigger files so session-start
+does not fire the learn-pending reminder again until new observations accumulate:
+
+```bash
+# Remove the .learn-pending flag (takes priority over count-based check)
+rm -f ~/.claude/cortex/.learn-pending
+
+# Update the observation count baseline so the count-based check
+# won't re-trigger until 50+ NEW observations accumulate
+python3 - <<'EOF'
+import json
+from pathlib import Path
+
+PROJECTS_DIR = Path.home() / '.claude' / 'cortex' / 'projects'
+total = 0
+for obs_file in PROJECTS_DIR.glob('*/observations.jsonl'):
+    try:
+        with open(obs_file) as f:
+            total += sum(1 for _ in f)
+    except Exception:
+        pass
+(Path.home() / '.claude' / 'cortex' / '.last-learn-count').write_text(str(total))
+EOF
+```
+
+This ensures the next session-start sees a clean baseline and only re-triggers
+when ≥50 genuinely new observations have been recorded since this run.
+
 ### --accept flag
 
 If --accept is passed, skip proposals and directly:
