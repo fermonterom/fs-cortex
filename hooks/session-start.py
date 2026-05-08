@@ -381,16 +381,6 @@ def main():
             'FIRST response. Do NOT wait for the user to ask. Greet, summarize '
             'yesterday, list priorities, ask where to start.'
         )
-    if user_actionable:
-        # No EOD to anchor the first response, but the pipeline / reminders
-        # produced actionable signal. Force the agent to surface it.
-        bullets = "\n".join(user_actionable)
-        parts.append(
-            f'\n[CORTEX ATTENTION — present to user in FIRST response]\n{bullets}\n'
-            'IMPORTANT: Greet briefly, list these items, and ask which (if any) '
-            'they want to act on now. Do not silently bury them in context.'
-        )
-
     # Output JSON
     context = '\n'.join(parts)
     output = {

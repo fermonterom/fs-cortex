@@ -9,6 +9,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - `commands/cx-analyze.md`: stale reference to `observe.sh` updated to `observe.py` — fixes `test_integrity.sh` failure across all 8 CI matrix jobs (Python 3.11/3.13 × Node 22/24 × ubuntu/macos)
+- `hooks/session-start.py`: remove `[CORTEX ATTENTION]` forced injection — Cortex pending items no longer interrupt every session start; data remains in context for passive awareness
+- `.githooks/pre-push`: new pre-push hook running `test_integrity.sh` + `test_security.sh` + version sync check + AI code review (via `claude` CLI) before every push
+- `docs/FEATURES-visual.html`: removed — `docs/FEATURES.md` is the single source of truth for feature inventory
 
 ## [3.25.2] — 2026-05-07
 
