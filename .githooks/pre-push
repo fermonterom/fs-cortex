@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Pre-push hook — fast structural checks before every push.
+# Catches broken file references, version mismatches, and security regressions
+# without running the full slow suite (LLM-calling tests stay in CI only).
+#
+# One-time setup: git config core.hooksPath .githooks
+set -euo pipefail
+
+REPO_ROOT=$(git rev-parse --show-toplevel)
+
+echo "=== Pre-push checks ==="
+
+echo "→ Integrity (file references, version sync, command inventory)..."
+bash "$REPO_ROOT/tests/test_integrity.sh" || { echo "BLOCKED: fix integrity failures before pushing."; exit 1; }
+
+echo "→ Security (secret scrubbing, regex guard)..."
+bash "$REPO_ROOT/tests/test_security.sh" || { echo "BLOCKED: fix security failures before pushing."; exit 1; }
+
+echo "✓ Pre-push checks passed — safe to push."

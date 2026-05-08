@@ -27,11 +27,10 @@ node_modules/
 # OS
 Thumbs.db
 
-# Docs — public surface kept narrow: feature reference + visual + canonical ADRs
+# Docs — public surface kept narrow: feature reference + canonical ADRs
 # Use `docs/*` not `docs/` so per-file negations below take effect
 docs/*
 !docs/FEATURES.md
-!docs/FEATURES-visual.html
 !docs/IMPACT-METRICS.md
 !docs/AGENT-FEEDBACK.md
 !docs/AUTO-EVALUATION.md
