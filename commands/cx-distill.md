@@ -230,10 +230,21 @@ CORTEX DISTILL — Results
 
 ### Step 6: Update Maintenance Marker
 
-After completing distillation, update the marker so session-start knows when this last ran:
+After completing distillation, update the marker and clear the candidates file
+so session-start does not re-trigger the MAINT reminder:
+
 ```bash
+# Mark distill as run
 touch ~/.claude/cortex/.last-distill
+
+# Clear candidates file — session-start checks bool(content.strip())
+# so an empty file suppresses the reminder until auto-distill finds new candidates
+> ~/.claude/cortex/auto-distill-candidates.md
 ```
+
+Clearing the file is safe: `distill_engine.py` → `_write_candidates_file()`
+repopulates it on the next SessionStart if new candidates emerge. Truncating
+here just signals "the user has reviewed what was pending".
 
 ## Recommended schedule
 
