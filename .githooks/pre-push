@@ -1,19 +1,94 @@
 #!/usr/bin/env bash
-# Pre-push hook — fast structural checks before every push.
-# Catches broken file references, version mismatches, and security regressions
-# without running the full slow suite (LLM-calling tests stay in CI only).
+# Pre-push hook — structural checks + AI code review before every push.
+# Catches stale refs, version mismatches, security regressions, and obvious bugs
+# before they reach CI or get merged.
 #
-# One-time setup: git config core.hooksPath .githooks
+# One-time setup per clone: git config core.hooksPath .githooks
 set -euo pipefail
 
 REPO_ROOT=$(git rev-parse --show-toplevel)
+PASS=0
+FAIL=0
 
+_pass() { echo "  PASS: $*"; PASS=$((PASS + 1)); }
+_fail() { echo "  FAIL: $*"; FAIL=$((FAIL + 1)); }
+
+# ── Capture what's being pushed (from pre-push stdin) ─────────────────────
+DIFF_RANGE=""
+while IFS=' ' read -r _local_ref local_sha _remote_ref remote_sha; do
+    if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+        BASE=$(git merge-base "$local_sha" origin/main 2>/dev/null || echo "")
+        [ -n "$BASE" ] && DIFF_RANGE="$BASE..$local_sha"
+    else
+        DIFF_RANGE="$remote_sha..$local_sha"
+    fi
+done
+
+echo ""
 echo "=== Pre-push checks ==="
+echo ""
 
-echo "→ Integrity (file references, version sync, command inventory)..."
-bash "$REPO_ROOT/tests/test_integrity.sh" || { echo "BLOCKED: fix integrity failures before pushing."; exit 1; }
+# ── 1. Integrity: file refs, command inventory, core files ────────────────
+echo "--- Integrity ---"
+if bash "$REPO_ROOT/tests/test_integrity.sh" 2>&1 | grep -qE "^=== Results: [0-9]+ passed, 0 failed"; then
+    _pass "test_integrity.sh — all checks passed"
+else
+    bash "$REPO_ROOT/tests/test_integrity.sh" 2>&1 | grep -E "(FAIL|Results)" || true
+    _fail "test_integrity.sh — failures detected"
+fi
+echo ""
 
-echo "→ Security (secret scrubbing, regex guard)..."
-bash "$REPO_ROOT/tests/test_security.sh" || { echo "BLOCKED: fix security failures before pushing."; exit 1; }
+# ── 2. Security: secret scrubbing, injection guard ───────────────────────
+echo "--- Security ---"
+if bash "$REPO_ROOT/tests/test_security.sh" 2>&1 | grep -qE "^=== Results: [0-9]+ passed, 0 failed"; then
+    _pass "test_security.sh — all checks passed"
+else
+    bash "$REPO_ROOT/tests/test_security.sh" 2>&1 | grep -E "(FAIL|Results)" || true
+    _fail "test_security.sh — failures detected"
+fi
+echo ""
 
-echo "✓ Pre-push checks passed — safe to push."
+# ── 3. Version sync: install.sh = install.ps1 = FEATURES.md = CHANGELOG ──
+echo "--- Version sync ---"
+V_SH=$(grep -oE '"[0-9]+\.[0-9]+\.[0-9]+"' "$REPO_ROOT/install.sh" | head -1 | tr -d '"')
+V_PS=$(grep -oE '"[0-9]+\.[0-9]+\.[0-9]+"' "$REPO_ROOT/install.ps1" | head -1 | tr -d '"')
+V_FM=$(grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' "$REPO_ROOT/docs/FEATURES.md" | head -1 | tr -d 'v')
+V_CL=$(grep -oE '\[[0-9]+\.[0-9]+\.[0-9]+\]' "$REPO_ROOT/CHANGELOG.md" | head -1 | tr -d '[]')
+
+if [ "$V_SH" = "$V_PS" ] && [ "$V_SH" = "$V_FM" ] && [ "$V_SH" = "$V_CL" ]; then
+    _pass "version v$V_SH consistent across install.sh, install.ps1, FEATURES.md, CHANGELOG.md"
+else
+    _fail "version mismatch — install.sh=$V_SH install.ps1=$V_PS FEATURES.md=$V_FM CHANGELOG=$V_CL"
+fi
+echo ""
+
+# ── 4. AI code review (non-blocking — informational only) ─────────────────
+echo "--- AI code review ---"
+if [ -n "$DIFF_RANGE" ] && command -v claude &>/dev/null; then
+    DIFF_CONTENT=$(git diff "$DIFF_RANGE" 2>/dev/null | head -c 12000 || true)
+    if [ -n "$DIFF_CONTENT" ]; then
+        echo "  Reviewing diff $DIFF_RANGE with Claude..."
+        REVIEW=$(echo "$DIFF_CONTENT" | claude --dangerously-skip-permissions -p \
+            "You are a code reviewer. Review this git diff for: obvious bugs, broken logic, security issues, stale references (e.g. wrong filenames), or missing updates (e.g. version bumped in some files but not others). Be concise: 3-5 bullet points max. Skip style nits. If everything looks good, say so in one line." \
+            2>/dev/null || echo "  (claude review unavailable)")
+        echo "$REVIEW" | sed 's/^/  /'
+    else
+        echo "  (no diff to review)"
+    fi
+elif ! command -v claude &>/dev/null; then
+    echo "  (skipped — claude CLI not in PATH)"
+else
+    echo "  (skipped — no diff range detected)"
+fi
+echo ""
+
+# ── Results ───────────────────────────────────────────────────────────────
+echo "=== Results: $PASS passed, $FAIL failed ==="
+echo ""
+
+if [ "$FAIL" -gt 0 ]; then
+    echo "BLOCKED: fix the $FAIL failure(s) above before pushing."
+    exit 1
+fi
+
+echo "✓ All checks passed — safe to push."
