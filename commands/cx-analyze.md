@@ -79,7 +79,7 @@ Observations JSONL files can be very large (up to 10MB). Most of the weight come
 
 Run a Python script to create a compressed JSONL file.
 
-The real JSONL schema written by `observe.sh` is:
+The real JSONL schema written by `observe.py` is:
 - `ts` — timestamp (not `timestamp`)
 - `ev` — event type: `"ts"` (tool start) or `"tc"` (tool complete)
 - `tool` — tool name
