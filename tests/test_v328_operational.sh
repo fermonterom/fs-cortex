@@ -59,7 +59,12 @@ $SS_LOADER
 import json, pathlib
 # Setup: proposals.json, observations.jsonl, instinct yamls, law txt
 pathlib.Path('$SANDBOX/proposals.json').write_text('[{\"id\":\"a\"},{\"id\":\"b\"}]')
-pathlib.Path('$SANDBOX/projects/test-proj/observations.jsonl').write_text('{\"ts\":\"t\"}\n{\"ts\":\"t2\"}\n')
+# Mix of obs on the snapshot date (2 lines) and other dates (1 line)
+pathlib.Path('$SANDBOX/projects/test-proj/observations.jsonl').write_text(
+    '{\"ts\":\"2026-05-08T10:00\"}\n'
+    '{\"ts\":\"2026-05-08T11:00\"}\n'
+    '{\"ts\":\"2026-05-07T09:00\"}\n'
+)
 pathlib.Path('$SANDBOX/instincts/global/foo.yaml').touch()
 pathlib.Path('$SANDBOX/instincts/global/bar.yaml').touch()
 pathlib.Path('$SANDBOX/projects/test-proj/instincts/baz.yaml').touch()
@@ -73,8 +78,10 @@ assert d['proposals_count'] == 2, f'proposals_count: {d[\"proposals_count\"]}'
 assert d['instincts_global'] == 2, f'instincts_global: {d[\"instincts_global\"]}'
 assert d['instincts_project_total'] == 1, f'instincts_project_total: {d[\"instincts_project_total\"]}'
 assert d['laws_count'] == 1, f'laws_count: {d[\"laws_count\"]}'
-assert 'test-proj' in d['observations'], 'test-proj missing from observations'
-assert d['observations']['test-proj'] == 2, f'obs count: {d[\"observations\"][\"test-proj\"]}'
+# v3.28.5 — split observations into total_active vs on_date
+assert 'test-proj' in d['observations_total_active'], 'test-proj missing total_active'
+assert d['observations_total_active']['test-proj'] == 3, f'total_active: {d[\"observations_total_active\"][\"test-proj\"]}'
+assert d['observations_on_date']['test-proj'] == 2, f'on_date (filtered by 2026-05-08): {d[\"observations_on_date\"][\"test-proj\"]}'
 "
 
 run_test "snapshot: idempotent (does not overwrite existing)" "

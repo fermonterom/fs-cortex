@@ -4,6 +4,26 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.28.5] — 2026-05-09
+
+### Fixed (AD GPT-5.5 audit findings, post-v3.28.4)
+
+- **`hooks/session-learner.js` `detectRepetitions`** — emitted `source: 'session-learner'` plain (no suffix) while the other 5 detectors used `'session-learner:<name>'`. Inconsistent schema broke pipeline-stats per-detector counters and produced 210 hard-to-classify production proposals. Now emits `'session-learner:repetition'`.
+- **`hooks/session-learner.js` `detectAgentSubtypes` + `detectFileCoupling`** — both v3.27.0 detectors omitted the `status: 'pending'` field that the other 5 detectors include. `writeProposals()` dedup at line 956 (`existing.status !== 'pending'`) treats `undefined !== 'pending'` as truthy, so legacy entries without status were preserved as final/unupdateable. `/cx-validate` filters by `status === 'pending'` exactly, so the 129 file-coupling proposals were invisible to the validation queue. Both detectors now emit `status: 'pending'`. Runtime data file backfilled in this release (129 proposals → status='pending').
+- **`hooks/session-learner.js` `detectAgentSubtypes` security** — `subagent_type` from `JSON.parse(obs.input)` is user-controlled and was embedded raw in proposal id (which becomes a YAML filename). New `slugifySubtype()` allowlists `[a-z0-9_-]`, caps at 40 chars, hashes if anything was stripped. Raw value preserved only in the action text (already sanitized). Closes path-traversal vector via `subagent_type: '../../etc/passwd'`.
+- **`hooks/lib/distill_engine.py` `_prune_cross_day_tracker()`** — Python port of v3.28.4 dedup logic was missing. The Node `prune()` compacted same-day duplicates but the Python prune (called by `run_auto_distill()`) did not. Now both prune paths compact identically. Parity restored.
+- **`hooks/session-start.py` `write_daily_snapshot()`** — `observations` field was misnamed: held lifetime line-count of `observations.jsonl`, not daily volume. Field renamed to `observations_total_active`; new `observations_on_date` filters lines whose `ts` starts with `last_date`. Daily snapshot files now reflect actual daily activity vs. cumulative file size.
+
+### Added
+- 3 new schema-completeness tests in `tests/test_detectors_v327.sh` (12 → 13 PASS): agent-subtype slugify, status='pending' assertions on detectAgentSubtypes + detectFileCoupling.
+- `tests/test_v328_operational.sh` snapshot test updated for split fields.
+
+### Known limitations (documented, deferred)
+
+- **`detectFileCoupling` sid scope** — when `CORTEX_SESSION_ID` matches observations the detector receives 1 sid → cannot emit (needs 5+). Only fires in the fallback path (last-200 cross-project obs) which mixes sessions of different projects. Re-evaluate threshold/scope on the 2026-05-11 gate review with measured data; full redesign deferred to v3.29.0.
+- **`detectTimeOfDayPatterns` race** — concurrent Stop hooks reading `productivity-patterns.json` then computing merged data race on rename (last-writer-wins). Documented in code comment; full lock deferred to v3.29.0.
+- **`writeProposals` rejected retention** — 677 proposals with `status='rejected'` accumulate without archival policy. Policy + per-detector noise metrics in `/cx-status --pipeline` deferred to v3.29.0.
+
 ## [3.28.4] — 2026-05-09
 
 ### Fixed
