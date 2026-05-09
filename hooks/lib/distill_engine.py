@@ -1166,6 +1166,39 @@ def _write_marker() -> None:
     MARKER_FILE.write_text(_dt.datetime.now(_dt.timezone.utc).isoformat(), encoding="utf-8")
 
 
+def _prune_cross_day_tracker():
+    """Prune entries older than 365 days from cross-day-tracker.jsonl."""
+    tracker_path = CORTEX_DIR / "cross-day-tracker.jsonl"
+    if not tracker_path.exists():
+        return {"before": 0, "after": 0, "pruned": 0}
+
+    cutoff = (_dt.datetime.now() - _dt.timedelta(days=365)).strftime("%Y-%m-%d")
+    kept = []
+    before = 0
+    try:
+        with open(tracker_path) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                before += 1
+                try:
+                    entry = json.loads(line)
+                    if entry.get("date", "") >= cutoff:
+                        kept.append(line)
+                except json.JSONDecodeError:
+                    continue
+
+        tmp = str(tracker_path) + f".tmp.{os.getpid()}"
+        with open(tmp, "w") as f:
+            f.write("\n".join(kept) + "\n" if kept else "")
+        os.replace(tmp, str(tracker_path))
+    except OSError:
+        return {"before": before, "after": before, "pruned": 0}
+
+    return {"before": before, "after": len(kept), "pruned": before - len(kept)}
+
+
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 def run_auto_distill(dry_run: bool = False) -> dict:
@@ -1223,6 +1256,9 @@ def run_auto_distill(dry_run: bool = False) -> dict:
 
         if not dry_run:
             _write_candidates_file(candidates)
+            prune_result = _prune_cross_day_tracker()
+            if prune_result["pruned"] > 0:
+                print(f"Pruned {prune_result['pruned']} cross-day-tracker entries (>365d)")
             _write_marker()
 
         return {

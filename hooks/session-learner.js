@@ -20,6 +20,8 @@ try {
   impactLog = require(path.join(__dirname, 'lib', 'impact_log.js'));
 } catch {}
 
+const { applyCrossDayBoost } = require(path.join(__dirname, 'lib', 'cross-day-tracker'));
+
 const HOME = process.env.HOME || process.env.USERPROFILE || '/tmp';
 const CORTEX_DIR = process.env.CORTEX_DIR || path.join(HOME, '.claude', 'cortex');
 const PROJECTS_DIR = path.join(CORTEX_DIR, 'projects');
@@ -1461,9 +1463,14 @@ async function main() {
     }));
 
     // v3.15.0 · Step 6b — cross-detector dedup by incident
-    const allProposals = dedupProposalsByIncident(rawProposals);
-    const collapsed = rawProposals.length - allProposals.length;
+    const dedupedProposals = dedupProposalsByIncident(rawProposals);
+    const collapsed = rawProposals.length - dedupedProposals.length;
     if (collapsed > 0) log(`Collapsed ${collapsed} duplicate proposal(s) across detectors`);
+
+    // v3.26.0 · Step 6c — cross-day boost universal (applied AFTER dedup to avoid double-counting)
+    const allProposals = dedupedProposals.map(applyCrossDayBoost);
+    const boosted = allProposals.filter(p => p.cross_day_count > 1).length;
+    if (boosted > 0) log(`Cross-day boost applied to ${boosted} proposal(s)`);
 
     writeProposals(allProposals);
 
