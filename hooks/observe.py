@@ -33,8 +33,8 @@ try:
 except (FileNotFoundError, json.JSONDecodeError, OSError):
     pass
 
-MAX_FILE_SIZE_MB = _config.get("max_observations_mb", 10)
-ARCHIVE_DAYS = _config.get("archive_days", 30)
+MAX_FILE_SIZE_MB = _config.get("max_observations_mb", 5)
+ARCHIVE_DAYS = _config.get("archive_days", 90)
 LEARN_THRESHOLD = _config.get("learn_threshold", 100)
 
 # ── Secret Scrubbing (12 patterns) ───────────────────────────────────

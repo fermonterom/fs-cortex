@@ -4,6 +4,34 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.26.0] — 2026-05-09
+
+### Added
+
+- `hooks/lib/cross-day-tracker.js` — append-only tracker (`~/.claude/cortex/cross-day-tracker.jsonl`) for cross-day pattern detection. Generic wrapper `applyCrossDayBoost()` boosts confidence (+0.05/+0.10/+0.15) when same pattern repeats across distinct days. Survives `proposals.json` cleanup (independent file). Jaccard ≥0.70 fallback on `trigger_norm` handles regex variants. Confidence capped at 0.95.
+- `_prune_cross_day_tracker()` in `hooks/lib/distill_engine.py` — auto-prunes entries >365 days during `run_auto_distill()`.
+- `tests/test_cross_day_tracker.sh` — 9 tests (PASS): roundtrip, boost tiers (1/2/4/8 days), cap at 0.95, Jaccard match, prune, concurrent append.
+
+### Changed
+
+- `hooks/session-learner.js` — all 5 detectors that emit proposals (errorResolutions, repetitions, userCorrections, workflowChains, agentPatterns) now have their output wrapped with `applyCrossDayBoost` AFTER `dedupProposalsByIncident` and BEFORE `writeProposals`. Each emitted proposal carries `cross_day_count` and `cross-day-N` tag. `detectCommandUsage` is unchanged (it does not emit proposals).
+- `hooks/observe.py` — defaults: `MAX_FILE_SIZE_MB` 10→5, `ARCHIVE_DAYS` 30→90. Configurable via `memory.json` `config.max_observations_mb` and `config.archive_days`.
+
+### Fixed (AD GPT-5.5 findings)
+
+- `hooks/lib/cross-day-tracker.js` — Jaccard matching now requires ≥2 tokens in both triggers before activating, preventing false cross-day links between unrelated proposals with single-token triggers (e.g. `Bash`, `Edit`). New test `test_cross_day_tracker.sh` #9.
+- `docs/FEATURES.md` — Config table `max_observations_mb`/`archive_days` defaults corrected to 5/90 (were stale at 10/30).
+
+### Known limitation
+
+- `prune()` in `cross-day-tracker.js`: a concurrent `appendFileSync` between `readFile` and `renameSync` causes 1 tracker entry to be lost. Impact is negligible (cross-day-count off by 1 on one run, self-heals next session). Cross-language locking deferred.
+
+### Migration
+
+- Existing `proposals.json` entries are preserved unchanged. New proposals after upgrade carry the new fields.
+- `cross-day-tracker.jsonl` starts empty and grows organically.
+- Users with `memory.json` overrides keep their values (only defaults change).
+
 ## [3.25.5] — 2026-05-09
 
 ### Changed
