@@ -16,6 +16,15 @@ across 6 days). Estimate: enough data by 2026-05-09. Gate 3 remains
 dropped (no reconstructible baseline). Delete this file when Gate 1+2
 both PASS with fresh post-v3.23.3 data.
 
+**`docs/V3.27-DETECTOR-GATES.md`** — 5 gates (A-E) measuring whether the 3
+new v3.27.0 detectors (`detectAgentSubtypes`, `detectFileCoupling`,
+`detectTimeOfDayPatterns`) and v3.26.0's `applyCrossDayBoost` produce
+useful signal vs noise with the chosen thresholds (3 uses + 30% errors,
+5 sessions, etc.). Measurement window starts 2026-05-09 (v3.27.0
+install). Re-check **2026-05-11 (Monday)**: run the bash one-liners in
+each gate to see PASS/FAIL/PENDING. Adjust thresholds if FAIL, delete
+the file when all gates PASS.
+
 ## Release workflow
 
 All pushes to `main` must follow `.claude/rules/release-workflow.md`:
