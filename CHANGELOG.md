@@ -4,6 +4,13 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.28.3] — 2026-05-09
+
+### Added
+- `docs/V3.27-DETECTOR-GATES.md` — measurement plan with 5 gates (A-E) for the 3 new v3.27.0 detectors + the v3.26.0 cross-day boost. Each gate has a pass criterion, a measurement bash one-liner, and an action plan if FAIL. Re-check date: **2026-05-11 (Monday)**. Gates A-B measure proposal accept ratios (`detectAgentSubtypes`, `detectFileCoupling`); Gate C measures `productivity-patterns.json` aggregates; Gate D measures `cross-day-tracker.jsonl` boost activity; Gate E sanity-checks new detectors' confidence vs old detectors.
+- `.gitignore` — `!docs/V3.27-DETECTOR-GATES.md` allowlist entry.
+- `CLAUDE.md` — Pending validation section now references both `SPRINT-5-PENDING-GATES.md` and the new gates file with measurement context.
+
 ## [3.28.2] — 2026-05-09
 
 ### Documentation

@@ -36,4 +36,5 @@ docs/*
 !docs/AUTO-EVALUATION.md
 !docs/OUTCOME-RANKING.md
 !docs/SPRINT-5-PENDING-GATES.md
+!docs/V3.27-DETECTOR-GATES.md
 .claude/worktrees/
