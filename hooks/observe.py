@@ -35,7 +35,7 @@ except (FileNotFoundError, json.JSONDecodeError, OSError):
 
 MAX_FILE_SIZE_MB = _config.get("max_observations_mb", 10)
 ARCHIVE_DAYS = _config.get("archive_days", 30)
-LEARN_THRESHOLD = _config.get("learn_threshold", 50)
+LEARN_THRESHOLD = _config.get("learn_threshold", 100)
 
 # ── Secret Scrubbing (12 patterns) ───────────────────────────────────
 
