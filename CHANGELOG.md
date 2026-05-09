@@ -4,6 +4,12 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.28.7] — 2026-05-09
+
+### Fixed
+
+- `commands/cx-status.md` collector script — replace all bare `open()` calls with `with` context managers (8 sites: laws, registry, YAML parser, obs count loop, reflexes, settings, last-obs, tracking). Eliminates fd leak risk on large registries. Fix unsafe `int(sess)` cast in tracking parser: now `(int(sess) if isinstance(sess, (int, float)) else 0)` instead of bare `int(sess)` which raised on dict/None/unexpected types.
+
 ## [3.28.6] — 2026-05-09
 
 ### Changed

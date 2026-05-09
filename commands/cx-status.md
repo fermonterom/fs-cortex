@@ -49,7 +49,8 @@ laws = []
 for f in sorted(glob.glob(f"{CORTEX}/laws/*.txt")):
     lid = os.path.basename(f)[:-4]
     try:
-        content = open(f).readline().strip()
+        with open(f) as fh:
+            content = fh.readline().strip()
     except Exception:
         content = "?"
     laws.append({"id": lid, "content": content})
@@ -59,7 +60,8 @@ proj_hash = None
 proj_name = None
 registry  = {}
 try:
-    registry = json.load(open(f"{CORTEX}/projects/registry.json"))
+    with open(f"{CORTEX}/projects/registry.json") as fh:
+        registry = json.load(fh)
     for h, meta in registry.items():
         root = meta.get("root", "")
         if root and (CWD.startswith(root) or root == CWD):
@@ -73,10 +75,11 @@ except Exception:
 def parse_yaml_flat(path):
     d = {}
     try:
-        for line in open(path):
-            m = re.match(r'^([\w][\w_-]*):\s*(.+)', line.strip())
-            if m:
-                d[m.group(1)] = m.group(2).strip("\"'")
+        with open(path) as fh:
+            for line in fh:
+                m = re.match(r'^([\w][\w_-]*):\s*(.+)', line.strip())
+                if m:
+                    d[m.group(1)] = m.group(2).strip("\"'")
     except Exception:
         pass
     return d
@@ -109,7 +112,8 @@ for h, meta in registry.items():
     obs_file = f"{CORTEX}/projects/{h}/observations.jsonl"
     inst_dir = f"{CORTEX}/projects/{h}/instincts"
     try:
-        obs = sum(1 for _ in open(obs_file))
+        with open(obs_file) as fh:
+            obs = sum(1 for _ in fh)
     except Exception:
         obs = 0
     inst = len(glob.glob(f"{inst_dir}/*.yaml"))
@@ -128,14 +132,16 @@ projects.sort(key=lambda x: -x["obs"])
 # ── 5. Reflexes ───────────────────────────────────────────────────────────────
 reflexes = []
 try:
-    reflexes = json.load(open(f"{CORTEX}/reflexes.json")).get("reflexes", [])
+    with open(f"{CORTEX}/reflexes.json") as fh:
+        reflexes = json.load(fh).get("reflexes", [])
 except Exception:
     pass
 
 # ── 6. System health ──────────────────────────────────────────────────────────
 hook_count = 0
 try:
-    s = json.load(open(os.path.expanduser("~/.claude/settings.json")))
+    with open(os.path.expanduser("~/.claude/settings.json")) as fh:
+        s = json.load(fh)
     hook_count = sum(len(v) for v in s.get("hooks", {}).values())
 except Exception:
     pass
@@ -143,7 +149,8 @@ except Exception:
 last_obs = "never"
 if proj_hash:
     try:
-        lines = open(f"{CORTEX}/projects/{proj_hash}/observations.jsonl").readlines()
+        with open(f"{CORTEX}/projects/{proj_hash}/observations.jsonl") as fh:
+            lines = fh.readlines()
         if lines:
             last_obs = json.loads(lines[-1]).get("ts", "?")
     except Exception:
@@ -164,13 +171,14 @@ except Exception:
 # ── 7. Instinct tracking ──────────────────────────────────────────────────────
 tracking_top = []
 try:
-    tracking = json.load(open(f"{CORTEX}/instinct-tracking.json"))
+    with open(f"{CORTEX}/instinct-tracking.json") as fh:
+        tracking = json.load(fh)
     for k, v in sorted(tracking.items(), key=lambda x: x[1].get("count", 0), reverse=True)[:10]:
         sess = v.get("sessions", [])
         tracking_top.append({
             "id":       k,
             "count":    v.get("count", 0),
-            "sessions": len(sess) if isinstance(sess, list) else int(sess),
+            "sessions": len(sess) if isinstance(sess, list) else (int(sess) if isinstance(sess, (int, float)) else 0),
         })
 except Exception:
     pass
