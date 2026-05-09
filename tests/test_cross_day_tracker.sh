@@ -116,6 +116,17 @@ const cache = t.loadTrackerCache();
 if (cache.length !== 1 || cache[0].pattern_id !== 'new') throw new Error('wrong entry kept');
 "
 
+run_test "jaccard: single-token trigger skips jaccard matching" "
+const t = require('$TRACKER_MOD');
+t._resetCache();
+require('fs').rmSync(t.TRACKER_PATH, {force: true});
+t.appendDetection({date: '2026-05-08', pattern_id: 'other', trigger_norm: 'bash', source_detector: 'x'});
+t._resetCache();
+// Single-token trigger 'Bash' should NOT match 'bash' via Jaccard (prevents generic-trigger false positives)
+const r = t.applyCrossDayBoost({id: 'different', trigger: 'Edit', action: 'a', confidence: 0.40, source: 't'});
+if (r.cross_day_count !== 1) throw new Error('single-token Jaccard false positive: cross_day_count=' + r.cross_day_count);
+"
+
 run_test "concurrent append safety" "
 const t = require('$TRACKER_MOD');
 t._resetCache();

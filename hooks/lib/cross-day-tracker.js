@@ -74,11 +74,19 @@ function applyCrossDayBoost(proposal) {
   const triggerNorm = normalizeTrigger(proposal.trigger);
   const tracker = loadTrackerCache();
 
-  // Find matches: exact id OR Jaccard similarity above threshold
-  const matches = tracker.filter(e =>
-    e.pattern_id === proposal.id ||
-    jaccardSimilarity(e.trigger_norm || '', triggerNorm) >= JACCARD_THRESHOLD
-  );
+  // Find matches: exact id OR Jaccard similarity above threshold.
+  // Jaccard only activates for multi-token triggers (≥2 tokens) to avoid
+  // false positives between unrelated single-token triggers like 'Bash' or 'Edit'.
+  const triggerTokens = triggerNorm.split(' ').filter(Boolean);
+  const useJaccard = triggerTokens.length >= 2;
+
+  const matches = tracker.filter(e => {
+    if (e.pattern_id === proposal.id) return true;
+    if (!useJaccard) return false;
+    const eTokens = (e.trigger_norm || '').split(' ').filter(Boolean);
+    if (eTokens.length < 2) return false;
+    return jaccardSimilarity(e.trigger_norm || '', triggerNorm) >= JACCARD_THRESHOLD;
+  });
 
   const distinctDates = new Set(matches.map(m => m.date).filter(Boolean));
   distinctDates.add(today);
@@ -111,6 +119,9 @@ function applyCrossDayBoost(proposal) {
   };
 }
 
+// Known race: if Node appendFileSync runs between prune's readFile and renameSync,
+// that appended line is lost. Impact is low (one tracker entry off by 1 day, self-heals
+// on the next session). Cross-language locking (Node + Python) is deferred.
 function prune(daysToKeep = PRUNE_DAYS) {
   if (!fs.existsSync(TRACKER_PATH)) return { before: 0, after: 0, pruned: 0 };
   const cutoff = new Date(Date.now() - daysToKeep * 86400000).toISOString().slice(0, 10);

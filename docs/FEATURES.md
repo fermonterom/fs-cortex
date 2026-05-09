@@ -374,7 +374,7 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 
 ---
 
-## Tests (13 suites, 217 tests)
+## Tests (13 suites, 218 tests)
 
 | Suite | Tests | Coverage |
 |---|---|---|
@@ -390,7 +390,7 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 | `test_integrity.sh` | 14 | observe.py direct, **20 commands** validated, core file schemas, **version consistency** |
 | `test_install_ps1.ps1` | 9 | PowerShell syntax, version consistency, security features, backup categories, hook config, **CI on windows-latest** |
 | `test_impact.sh` | 32 | **Sprint 0/1 funnel** — schema v1, JS↔Python compat, concurrent writes (10 parallel → 0 loss), rotation, gate GO/NO-GO, formulas, input validation, **v3.17.0 source split** (user/agent ratios, gate input, legacy default), **v3.18.0 auto-eval** (3 evaluator types, no-evaluator default, reflex iid prefix) |
-| `test_cross_day_tracker.sh` | 9 | Roundtrip, boost tiers (1/2/4/8 days), confidence cap 0.95, Jaccard match, prune >365d, concurrent append |
+| `test_cross_day_tracker.sh` | 10 | Roundtrip, boost tiers (1/2/4/8 days), confidence cap 0.95, Jaccard match, single-token guard, prune >365d, concurrent append |
 
 ### CI
 - GitHub Actions: macOS + Linux × Python 3.11/3.13 × Node 22/24
@@ -467,8 +467,8 @@ locally (not installed to `~/.claude/`):
 
 | Key | Default | Used by | Purpose |
 |---|---|---|---|
-| `max_observations_mb` | 10 | observe.py | Auto-archive observations.jsonl when exceeds this size |
-| `archive_days` | 30 | observe.py | Auto-purge archived observations older than N days |
+| `max_observations_mb` | 5 | observe.py | Auto-archive observations.jsonl when exceeds this size |
+| `archive_days` | 90 | observe.py | Auto-purge archived observations older than N days |
 | `learn_threshold` | 50 | observe.py | Mark `.learn-pending` after N observations |
 
 ### Config values used by commands (read by Claude, not by hooks)
