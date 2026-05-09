@@ -4,6 +4,12 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.28.6] — 2026-05-09
+
+### Changed
+
+- `commands/cx-status.md` — replace 3-round multi-step data collection with a single Python3 collector script. All 7 dashboard sections (laws, instincts, projects, reflexes, health, tracking, evolved) are now gathered in one Bash call that outputs JSON, eliminating ~4 LLM turns of latency. Regex-based flat YAML parser (no pyyaml dependency). No behavior change — same dashboard, same flags, same output format.
+
 ## [3.28.5] — 2026-05-09
 
 ### Fixed (AD GPT-5.5 audit findings, post-v3.28.4)
