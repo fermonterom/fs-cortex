@@ -1175,6 +1175,10 @@ def _prune_cross_day_tracker():
     cutoff = (_dt.datetime.now() - _dt.timedelta(days=365)).strftime("%Y-%m-%d")
     kept = []
     before = 0
+    # v3.28.5 — also compact same-day same-pattern_id duplicates (parity with
+    # Node prune in cross-day-tracker.js). Keeps the first occurrence per
+    # (date, pattern_id) pair. Idempotent.
+    seen = set()
     try:
         with open(tracker_path) as f:
             for line in f:
@@ -1184,8 +1188,13 @@ def _prune_cross_day_tracker():
                 before += 1
                 try:
                     entry = json.loads(line)
-                    if entry.get("date", "") >= cutoff:
-                        kept.append(line)
+                    if entry.get("date", "") < cutoff:
+                        continue
+                    key = f"{entry.get('date', '')}|{entry.get('pattern_id', '')}"
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    kept.append(line)
                 except json.JSONDecodeError:
                     continue
 

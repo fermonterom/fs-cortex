@@ -343,7 +343,7 @@ function detectRepetitions(observations) {
         action: `Repetition detected: ${sanitizeProposalAction(data.tool)} called ${data.count}x with similar input`,
         confidence: 0.3,
         domain: 'workflow',
-        source: 'session-learner',
+        source: 'session-learner:repetition',
         status: 'pending',
         detected: TODAY,
         session: observations[0]?._resolvedSession || 'unknown',
@@ -523,14 +523,36 @@ function detectAgentSubtypes(observations) {
   const agentObs = observations.filter(o => o.tool === 'Agent' && o.input);
   if (agentObs.length < AGENT_SUBTYPE_MIN_USES) return [];
 
+  // v3.28.5 — slugify subagent_type. The raw value comes from
+  // JSON.parse(obs.input).subagent_type which is user-controlled and may
+  // contain '/', '..', spaces, quotes, or arbitrary length text. Embedding
+  // it raw in the proposal id (which becomes a filename when /cx-validate
+  // serializes to YAML) opens path-traversal and YAML-injection vectors.
+  // Allowlist [a-z0-9_-], cap at 40 chars, hash if anything was stripped.
+  function slugifySubtype(raw) {
+    const lower = String(raw).toLowerCase();
+    const slug = lower.replace(/[^a-z0-9_-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+    if (!slug) return 'unknown';
+    if (slug.length <= 40 && slug === lower.replace(/[^a-z0-9_-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')) {
+      return slug.slice(0, 40);
+    }
+    return slug.slice(0, 32) + '-' + shortHash(lower).slice(0, 7);
+  }
+
   const bySubtype = {};
+  const subtypeRaw = {};  // remember the original for the action message
   for (const obs of agentObs) {
     let subtype = 'unknown';
+    let raw = 'unknown';
     try {
       const inp = JSON.parse(obs.input);
-      if (inp.subagent_type) subtype = String(inp.subagent_type).toLowerCase();
+      if (inp.subagent_type) {
+        raw = String(inp.subagent_type);
+        subtype = slugifySubtype(raw);
+      }
     } catch {}
     if (!bySubtype[subtype]) bySubtype[subtype] = { total: 0, errors: 0 };
+    if (!subtypeRaw[subtype]) subtypeRaw[subtype] = raw;
     bySubtype[subtype].total++;
     if (isError(obs)) bySubtype[subtype].errors++;
   }
@@ -543,15 +565,17 @@ function detectAgentSubtypes(observations) {
     if (rate < AGENT_SUBTYPE_ERROR_THRESHOLD) continue;
 
     const ratePercent = Math.round(rate * 100);
+    const rawDisplay = subtypeRaw[subtype] || subtype;
     proposals.push({
       id: `agent-error-rate-${subtype}`,
       trigger: `Agent`,
       action: sanitizeProposalAction(
-        `Agent type "${subtype}" has high error rate (${ratePercent}% across ${total} uses). Consider switching to general-purpose or refining the prompt.`
+        `Agent type "${rawDisplay}" has high error rate (${ratePercent}% across ${total} uses). Consider switching to general-purpose or refining the prompt.`
       ),
       confidence: 0.45,
       domain: 'agent-quality',
       source: 'session-learner:agent-error-rate',
+      status: 'pending',
       detected: TODAY,
       tags: ['agent-quality', `subtype-${subtype}`],
       occurrences: total,
@@ -608,6 +632,7 @@ function detectFileCoupling(observations) {
       confidence: 0.40,
       domain: 'coupling',
       source: 'session-learner:file-coupling',
+      status: 'pending',
       detected: TODAY,
       tags: ['coupling'],
       occurrences: pairCounts[key],

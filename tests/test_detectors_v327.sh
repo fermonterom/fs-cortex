@@ -39,6 +39,24 @@ const result = detectAgentSubtypes(obs);
 if (result.length !== 1) throw new Error('expected 1 proposal, got ' + result.length);
 if (!result[0].id.includes('explore')) throw new Error('id mismatch: ' + result[0].id);
 if (result[0].confidence !== 0.45) throw new Error('confidence: ' + result[0].confidence);
+// v3.28.5 — schema completeness assertions
+if (result[0].status !== 'pending') throw new Error('status missing or wrong: ' + result[0].status);
+if (result[0].source !== 'session-learner:agent-error-rate') throw new Error('source mismatch: ' + result[0].source);
+"
+
+run_test "v3.28.5: agent-subtypes slugifies dangerous chars in subtype" "
+process.env.CORTEX_DIR = '$SANDBOX';
+const { detectAgentSubtypes } = require('$LEARNER');
+const obs = [
+  { tool: 'Agent', input: JSON.stringify({subagent_type: '../../etc/passwd'}), err: true,  ts: '2026-05-09T10:00:00Z', sid: 's1' },
+  { tool: 'Agent', input: JSON.stringify({subagent_type: '../../etc/passwd'}), err: true,  ts: '2026-05-09T10:01:00Z', sid: 's1' },
+  { tool: 'Agent', input: JSON.stringify({subagent_type: '../../etc/passwd'}), err: false, ts: '2026-05-09T10:02:00Z', sid: 's1' },
+];
+const result = detectAgentSubtypes(obs);
+if (result.length !== 1) throw new Error('expected 1 proposal, got ' + result.length);
+const id = result[0].id;
+if (id.includes('/') || id.includes('..')) throw new Error('id not slugified: ' + id);
+if (!/^agent-error-rate-[a-z0-9_-]+\$/.test(id)) throw new Error('id has unsafe chars: ' + id);
 "
 
 run_test "agent-subtypes: no emit with fewer than 3 uses" "
@@ -80,6 +98,9 @@ const result = detectFileCoupling(obs);
 if (result.length !== 1) throw new Error('expected 1 proposal, got ' + result.length);
 if (result[0].occurrences !== 5) throw new Error('occurrences: ' + result[0].occurrences);
 if (!result[0].action.includes('foo.ts') || !result[0].action.includes('bar.ts')) throw new Error('action missing filenames: ' + result[0].action);
+// v3.28.5 — schema completeness assertions
+if (result[0].status !== 'pending') throw new Error('status missing or wrong: ' + result[0].status);
+if (result[0].source !== 'session-learner:file-coupling') throw new Error('source mismatch: ' + result[0].source);
 "
 
 run_test "file-coupling: no emit with fewer than 5 sessions" "

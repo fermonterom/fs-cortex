@@ -97,9 +97,15 @@ def write_daily_snapshot(last_date):
     if snapshot_path.exists():
         return  # Already snapshotted
 
+    # v3.28.5 — split observation counts: total_active is lifetime size of
+    # observations.jsonl (used for capacity checks), on_date filters lines
+    # whose `ts` starts with last_date (used for daily activity reports).
+    # Pre-v3.28.5 the field was misleadingly named `observations` and held
+    # the lifetime total, suggesting daily volume.
     stats = {
         'date': last_date,
-        'observations': {},
+        'observations_total_active': {},
+        'observations_on_date': {},
         'proposals_count': 0,
         'instincts_global': 0,
         'instincts_project_total': 0,
@@ -113,8 +119,16 @@ def write_daily_snapshot(last_date):
             obs_file = proj_dir / 'observations.jsonl'
             if obs_file.exists():
                 try:
+                    total_lifetime = 0
+                    on_date = 0
                     with open(obs_file) as f:
-                        stats['observations'][proj_dir.name] = sum(1 for _ in f)
+                        for line in f:
+                            total_lifetime += 1
+                            # Cheap startswith check on raw line — skips JSON parse cost
+                            if f'"ts":"{last_date}' in line:
+                                on_date += 1
+                    stats['observations_total_active'][proj_dir.name] = total_lifetime
+                    stats['observations_on_date'][proj_dir.name] = on_date
                 except OSError:
                     pass
             inst_dir = proj_dir / 'instincts'
