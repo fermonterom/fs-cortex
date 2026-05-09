@@ -7,7 +7,7 @@ description: |
   /cx-analyze, /cx-distill, /cx-validate, /cx-evolve, /cx-eod, /cx-gotcha,
   /cx-audit, /cx-downvote, /cx-retro, /cx-timeline, /cx-export, /cx-backup,
   /cx-restore, /cx-dream, /cx-router, /cx-promote, /cx-feedback,
-  /cx-feedback-auto.
+  /cx-feedback-auto, /cx-stop.
 auto_activate: true
 ---
 
@@ -54,7 +54,7 @@ When the system prompt contains `EOD RESUME`, Claude MUST proactively present it
 4. **Priorities** — List PRIORITIES as numbered list
 5. **Ask** — Ask where to start (user's language from memory.json)
 
-### Commands (20)
+### Commands (21)
 
 | Command | Purpose |
 |---------|---------|
@@ -78,6 +78,7 @@ When the system prompt contains `EOD RESUME`, Claude MUST proactively present it
 | `/cx-dream` | Dream Cycle: dedup, contradictions, staleness, regex, health, cleanup |
 | `/cx-feedback` | Cierra el loop humano del funnel de impacto — marca la última inyección como útil o ruido |
 | `/cx-feedback-auto` | Agent self-rating on tool-choice reflexes — emits feedback with source=agent |
+| `/cx-stop` | Manually trigger session-learner pipeline without closing the chat (v3.28.0+) |
 
 ### Learning Pipeline
 
