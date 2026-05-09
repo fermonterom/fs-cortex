@@ -14,6 +14,7 @@ Reads ALL observations for the current project (or all projects with --global), 
 
 ```
 /cx-analyze              # Current project (observations only)
+/cx-analyze --deep       # Include observations.archive/*.jsonl (slower, more historical)
 /cx-analyze --git        # Also mine git history for patterns
 /cx-analyze --global     # All projects
 /cx-analyze --accept     # Auto-accept all proposals as instincts
@@ -76,6 +77,15 @@ Git-derived proposals get source: "git-history" and initial confidence 0.30-0.50
 ### Step 3: Pre-process Observations
 
 Observations JSONL files can be very large (up to 10MB). Most of the weight comes from tool output (full file contents from Read, command output from Bash) which is not needed for pattern detection. Pre-process to reduce size while preserving ALL signal.
+
+**`--deep` flag**: if `--deep` is passed, before running the compressor:
+1. Locate `observations.archive/` directory in current project (path: `~/.claude/cortex/projects/<hash>/observations.archive/`).
+2. List all `.jsonl` files inside, sorted chronologically by filename.
+3. Concatenate them with the active `observations.jsonl` for processing (archives first in chronological order, active last).
+4. Compute total size in MB across all files. If >5MB, print warning: "Deep mode: analyzing N archived files (X MB total) + active. This may use significant Opus tokens."
+5. Inform user: "Deep mode: analyzing N archived files (X MB total) + active observations".
+
+Without `--deep`, only the active `observations.jsonl` is processed (current behavior unchanged).
 
 Run a Python script to create a compressed JSONL file.
 

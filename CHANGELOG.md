@@ -4,6 +4,17 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.28.0] — 2026-05-09
+
+### Added
+- `commands/cx-stop.md` — new `/cx-stop` command that manually triggers the Stop hook pipeline (`session-learner.js`) on demand without closing the chat. Uses `uuidgen` with Python UUID fallback for portability. Writes log to `$TMPDIR`.
+- `hooks/session-start.py` — `write_daily_snapshot(last_date)` function: writes `~/.claude/cortex/daily-snapshots/YYYY-MM-DD.json` on the first SessionStart of each new day. Captures `observations` counts per project, `proposals_count`, `instincts_global`, `instincts_project_total`, `laws_count`. Idempotent (skips if file already exists). Atomic write via tmp+replace. Permissions 0o600.
+- `commands/cx-analyze.md` — `--deep` flag spec: before compressor runs, concatenates `observations.archive/*.jsonl` (archives first, chronological) with active `observations.jsonl`. Warns if total >5MB.
+- `tests/test_v328_operational.sh` — 5 tests: snapshot creates correct JSON, snapshot is idempotent, snapshot graceful with empty CORTEX_DIR, cx-stop session-learner exits 0, cx-analyze --deep spec is present.
+
+### Changed
+- `session-start.py` `main()` now calls `write_daily_snapshot(last_date)` when `is_new and last_date` fires (v3.28.0).
+
 ## [3.27.0] — 2026-05-09
 
 ### Added
