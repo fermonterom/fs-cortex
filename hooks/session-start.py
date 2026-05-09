@@ -83,6 +83,68 @@ def check_new_day():
     return today != last_date, last_date, today
 
 
+def write_daily_snapshot(last_date):
+    """Write aggregate stats for the day to daily-snapshots/YYYY-MM-DD.json. Called when check_new_day fires."""
+    if not last_date:
+        return
+    snapshot_dir = CORTEX_DIR / 'daily-snapshots'
+    try:
+        snapshot_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return
+
+    snapshot_path = snapshot_dir / f'{last_date}.json'
+    if snapshot_path.exists():
+        return  # Already snapshotted
+
+    stats = {
+        'date': last_date,
+        'observations': {},
+        'proposals_count': 0,
+        'instincts_global': 0,
+        'instincts_project_total': 0,
+        'laws_count': 0,
+    }
+
+    if PROJECTS_DIR.is_dir():
+        for proj_dir in PROJECTS_DIR.iterdir():
+            if not proj_dir.is_dir() or proj_dir.name.startswith('_'):
+                continue
+            obs_file = proj_dir / 'observations.jsonl'
+            if obs_file.exists():
+                try:
+                    with open(obs_file) as f:
+                        stats['observations'][proj_dir.name] = sum(1 for _ in f)
+                except OSError:
+                    pass
+            inst_dir = proj_dir / 'instincts'
+            if inst_dir.is_dir():
+                stats['instincts_project_total'] += sum(1 for _ in inst_dir.glob('*.yaml'))
+
+    proposals_path = CORTEX_DIR / 'proposals.json'
+    if proposals_path.exists():
+        try:
+            stats['proposals_count'] = len(json.loads(proposals_path.read_text()))
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    global_dir = CORTEX_DIR / 'instincts' / 'global'
+    if global_dir.is_dir():
+        stats['instincts_global'] = sum(1 for _ in global_dir.glob('*.yaml'))
+
+    if LAWS_DIR.is_dir():
+        stats['laws_count'] = sum(1 for _ in LAWS_DIR.glob('*.txt'))
+
+    try:
+        tmp = str(snapshot_path) + '.tmp'
+        with open(tmp, 'w') as f:
+            json.dump(stats, f, indent=2)
+        os.replace(tmp, str(snapshot_path))
+        os.chmod(str(snapshot_path), 0o600)
+    except OSError:
+        pass
+
+
 def check_learn_pending():
     """Check if there are LEARN_THRESHOLD+ new observations since last analyze."""
     if (CORTEX_DIR / '.learn-pending').exists():
@@ -324,6 +386,7 @@ def main():
     # 2. New day check
     is_new, last_date, today = check_new_day()
     if is_new and last_date:
+        write_daily_snapshot(last_date)  # v3.28.0
         parts.append(f'\nNEW DAY (last session: {last_date}). Consider running /cx-analyze to detect patterns.')
     elif is_new:
         parts.append('\nNEW DAY (first session). Welcome to Cortex.')

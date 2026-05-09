@@ -20,7 +20,7 @@ $CommandsDir = Join-Path $ClaudeDir "commands"
 $HooksDir = Join-Path (Join-Path $ClaudeDir "hooks") "cortex"
 $SettingsFile = Join-Path $ClaudeDir "settings.json"
 $ClaudeMd = Join-Path $ClaudeDir "CLAUDE.md"
-$NewVersion = "3.27.0"
+$NewVersion = "3.28.0"
 
 # v3.25.1 — explicit downgrade flag (parity with install.sh).
 # A behind-remote repo would silently rewind hooks otherwise.
