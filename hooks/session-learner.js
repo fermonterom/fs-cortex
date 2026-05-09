@@ -36,11 +36,17 @@ const TIMELINE_PATH = path.join(LOG_DIR, 'timeline.jsonl');
 const TODAY = new Date().toISOString().slice(0, 10);
 function now() { return new Date().toISOString(); }
 
+// v3.27.0 detector constants
+const AGENT_SUBTYPE_ERROR_THRESHOLD = 0.30;
+const AGENT_SUBTYPE_MIN_USES = 3;
+const FILE_COUPLING_MIN_COUNT = 5;
+
 // -- Timeout: hard cap at 15 seconds --
+// .unref() so requiring this module in tests doesn't keep the process alive 15s.
 const TIMEOUT = setTimeout(() => {
   log('Timeout reached (15s), exiting gracefully');
   process.exit(0);
-}, 15000);
+}, 15000).unref();
 
 // -------------------------------------------------------------------
 // Utilities
@@ -510,7 +516,206 @@ function detectAgentPatterns(observations) {
 }
 
 // -------------------------------------------------------------------
-// Step 3e: Detect Cortex command usage and write timeline
+// Step 3e-g: New detectors v3.27.0
+// -------------------------------------------------------------------
+
+function detectAgentSubtypes(observations) {
+  const agentObs = observations.filter(o => o.tool === 'Agent' && o.input);
+  if (agentObs.length < AGENT_SUBTYPE_MIN_USES) return [];
+
+  const bySubtype = {};
+  for (const obs of agentObs) {
+    let subtype = 'unknown';
+    try {
+      const inp = JSON.parse(obs.input);
+      if (inp.subagent_type) subtype = String(inp.subagent_type).toLowerCase();
+    } catch {}
+    if (!bySubtype[subtype]) bySubtype[subtype] = { total: 0, errors: 0 };
+    bySubtype[subtype].total++;
+    if (isError(obs)) bySubtype[subtype].errors++;
+  }
+
+  const proposals = [];
+  for (const subtype of Object.keys(bySubtype)) {
+    const { total, errors } = bySubtype[subtype];
+    if (total < AGENT_SUBTYPE_MIN_USES) continue;
+    const rate = errors / total;
+    if (rate < AGENT_SUBTYPE_ERROR_THRESHOLD) continue;
+
+    const ratePercent = Math.round(rate * 100);
+    proposals.push({
+      id: `agent-error-rate-${subtype}`,
+      trigger: `Agent`,
+      action: sanitizeProposalAction(
+        `Agent type "${subtype}" has high error rate (${ratePercent}% across ${total} uses). Consider switching to general-purpose or refining the prompt.`
+      ),
+      confidence: 0.45,
+      domain: 'agent-quality',
+      source: 'session-learner:agent-error-rate',
+      detected: TODAY,
+      tags: ['agent-quality', `subtype-${subtype}`],
+      occurrences: total,
+    });
+  }
+  return proposals;
+}
+
+function detectFileCoupling(observations) {
+  const editObs = observations.filter(o =>
+    (o.tool === 'Edit' || o.tool === 'Write') && o.input
+  );
+  if (editObs.length < FILE_COUPLING_MIN_COUNT * 2) return [];
+
+  const bySession = {};
+  for (const obs of editObs) {
+    let filePath = '';
+    try {
+      const inp = JSON.parse(obs.input);
+      filePath = inp.file_path || '';
+    } catch {}
+    if (!filePath) continue;
+    const sid = obs.sid || 'unknown';
+    if (!bySession[sid]) bySession[sid] = new Set();
+    bySession[sid].add(filePath);
+  }
+
+  const pairCounts = {};
+  for (const sid of Object.keys(bySession)) {
+    const files = [...bySession[sid]].sort();
+    for (let i = 0; i < files.length; i++) {
+      for (let j = i + 1; j < files.length; j++) {
+        const key = files[i] + '::' + files[j];
+        pairCounts[key] = (pairCounts[key] || 0) + 1;
+      }
+    }
+  }
+
+  const proposals = [];
+  for (const key of Object.keys(pairCounts)) {
+    if (pairCounts[key] < FILE_COUPLING_MIN_COUNT) continue;
+    const [a, b] = key.split('::');
+    const baseA = path.basename(a);
+    const baseB = path.basename(b);
+    const hash = shortHash(key);
+    proposals.push({
+      id: `coupling-${hash}`,
+      trigger: `Edit|${baseA}|${baseB}`,
+      action: sanitizeProposalAction(
+        `Files coupled: "${baseA}" and "${baseB}" edited together in ${pairCounts[key]} sessions. Consider reviewing both when changing one.`
+      ),
+      confidence: 0.40,
+      domain: 'coupling',
+      source: 'session-learner:file-coupling',
+      detected: TODAY,
+      tags: ['coupling'],
+      occurrences: pairCounts[key],
+    });
+  }
+  return proposals;
+}
+
+function detectTimeOfDayPatterns(observations) {
+  if (observations.length === 0) return [];
+  const PRODUCTIVITY_PATH = path.join(CORTEX_DIR, 'productivity-patterns.json');
+
+  const byHour = {};
+  for (const obs of observations) {
+    if (!obs.ts) continue;
+    const hour = String(obs.ts).slice(11, 13);
+    if (!/^\d{2}$/.test(hour)) continue;
+    if (!byHour[hour]) byHour[hour] = { tools: {}, errors: 0, total: 0 };
+    byHour[hour].total++;
+    const tool = obs.tool || 'unknown';
+    byHour[hour].tools[tool] = (byHour[hour].tools[tool] || 0) + 1;
+    if (isError(obs)) byHour[hour].errors++;
+  }
+
+  // Merge with existing
+  let existing = { by_hour: {} };
+  try {
+    if (fs.existsSync(PRODUCTIVITY_PATH)) {
+      existing = JSON.parse(fs.readFileSync(PRODUCTIVITY_PATH, 'utf8'));
+    }
+  } catch {}
+  const merged = { ...(existing.by_hour || {}) };
+  for (const hour of Object.keys(byHour)) {
+    if (!merged[hour]) merged[hour] = { tools: {}, errors: 0, total: 0 };
+    merged[hour].total += byHour[hour].total;
+    merged[hour].errors += byHour[hour].errors;
+    for (const tool of Object.keys(byHour[hour].tools)) {
+      merged[hour].tools[tool] = (merged[hour].tools[tool] || 0) + byHour[hour].tools[tool];
+    }
+  }
+
+  // Compute summary + buckets + insights
+  const summary = {};
+  for (const hour of Object.keys(merged).sort()) {
+    const h = merged[hour];
+    const sortedTools = Object.entries(h.tools).sort((a, b) => b[1] - a[1]);
+    summary[hour] = {
+      total: h.total,
+      errors: h.errors,
+      error_rate: h.total > 0 ? Math.round((h.errors / h.total) * 100) / 100 : 0,
+      top_tools: sortedTools.slice(0, 3).map(([t, c]) => `${t}(${c})`),
+    };
+  }
+
+  const buckets = {
+    morning:   { range: '06-12', total: 0, errors: 0, tools: {} },
+    afternoon: { range: '12-18', total: 0, errors: 0, tools: {} },
+    evening:   { range: '18-22', total: 0, errors: 0, tools: {} },
+    night:     { range: '22-06', total: 0, errors: 0, tools: {} },
+  };
+  for (const hour of Object.keys(merged)) {
+    const h = parseInt(hour, 10);
+    let bucket;
+    if (h >= 6 && h < 12) bucket = 'morning';
+    else if (h >= 12 && h < 18) bucket = 'afternoon';
+    else if (h >= 18 && h < 22) bucket = 'evening';
+    else bucket = 'night';
+    buckets[bucket].total += merged[hour].total;
+    buckets[bucket].errors += merged[hour].errors;
+    for (const tool of Object.keys(merged[hour].tools)) {
+      buckets[bucket].tools[tool] = (buckets[bucket].tools[tool] || 0) + merged[hour].tools[tool];
+    }
+  }
+  for (const b of Object.keys(buckets)) {
+    const bucket = buckets[b];
+    bucket.error_rate = bucket.total > 0 ? Math.round((bucket.errors / bucket.total) * 100) / 100 : 0;
+    const sorted = Object.entries(bucket.tools).sort((a, b) => b[1] - a[1]);
+    bucket.top_tools = sorted.slice(0, 3).map(([t]) => t);
+  }
+
+  const insights = [];
+  const peakErrorBucket = Object.entries(buckets).sort((a, b) => b[1].error_rate - a[1].error_rate)[0];
+  if (peakErrorBucket && peakErrorBucket[1].error_rate > 0.10) {
+    insights.push(`Pico de errores: ${peakErrorBucket[0]} (${peakErrorBucket[1].range}h, ${Math.round(peakErrorBucket[1].error_rate * 100)}%)`);
+  }
+  const topMorning = buckets.morning.top_tools.slice(0, 2).join('/');
+  const topAfternoon = buckets.afternoon.top_tools.slice(0, 2).join('/');
+  if (topMorning) insights.push(`Mañanas (${buckets.morning.range}h): top tools ${topMorning}`);
+  if (topAfternoon) insights.push(`Tardes (${buckets.afternoon.range}h): top tools ${topAfternoon}`);
+
+  const output = {
+    updated: TODAY,
+    by_hour: merged,
+    summary,
+    buckets,
+    insights,
+  };
+
+  try {
+    ensureDir(CORTEX_DIR);
+    const tmp = PRODUCTIVITY_PATH + '.tmp.' + process.pid;
+    fs.writeFileSync(tmp, JSON.stringify(output, null, 2), { mode: 0o600 });
+    fs.renameSync(tmp, PRODUCTIVITY_PATH);
+  } catch (_) {}
+
+  return [];
+}
+
+// -------------------------------------------------------------------
+// Step 3h: Detect Cortex command usage and write timeline
 // -------------------------------------------------------------------
 
 function detectCommandUsage(observations) {
@@ -1400,6 +1605,17 @@ async function main() {
     const agentProposals = detectAgentPatterns(observations);
     log(`Detected ${agentProposals.length} agent pattern(s)`);
 
+    // Step 3e: Detect agent subtypes (v3.27.0)
+    const agentSubtypeProposals = detectAgentSubtypes(observations);
+    log(`Detected ${agentSubtypeProposals.length} agent subtype issue(s)`);
+
+    // Step 3f: Detect file coupling (v3.27.0)
+    const couplingProposals = detectFileCoupling(observations);
+    log(`Detected ${couplingProposals.length} file coupling pattern(s)`);
+
+    // Step 3g: Detect time-of-day patterns (v3.27.0, side-effect to productivity-patterns.json)
+    detectTimeOfDayPatterns(observations);
+
     // Step 4: Update instinct YAML files
     updateInstincts(observations);
 
@@ -1455,6 +1671,8 @@ async function main() {
       ...correctionProposals,
       ...workflowProposals,
       ...agentProposals,
+      ...agentSubtypeProposals,   // v3.27.0
+      ...couplingProposals,        // v3.27.0
     ].map((p) => ({
       ...p,
       session_date: TODAY,
@@ -1501,6 +1719,7 @@ if (require.main === module) {
     isError, extractFilePath, sanitizeProposalAction,
     detectErrorResolutions, detectRepetitions,
     detectUserCorrections, detectWorkflowChains, detectAgentPatterns,
+    detectAgentSubtypes, detectFileCoupling, detectTimeOfDayPatterns, // v3.27.0
     detectCommandUsage, dedupProposalsByIncident,
     // v3.14.0 — impact funnel correlator (orphan-sid fix v3.19.1)
     correlateImpactEvents,
