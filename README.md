@@ -185,7 +185,7 @@ You work → Cortex observes → /cx-analyze detects patterns → /cx-validate y
 → unused knowledge decays (-0.05/month) → /cx-dream cleans up stale instincts
 ```
 
-## Commands (20)
+## Commands (21)
 
 | Command | What it does |
 |---------|-------------|
@@ -209,6 +209,7 @@ You work → Cortex observes → /cx-analyze detects patterns → /cx-validate y
 | `/cx-restore` | Import knowledge from a backup archive |
 | `/cx-feedback` | Cierra el loop humano del funnel de impacto — marca la última inyección como útil o ruido |
 | `/cx-feedback-auto` | Agent self-rating on tool-choice reflexes — emits feedback with source=agent |
+| `/cx-stop` | Manually trigger session-learner pipeline without closing the chat (v3.28.0+) |
 
 ### Interactive Shorthand
 
@@ -364,18 +365,28 @@ Key measures:
 ## Tests
 
 ```bash
-bash tests/run_all.sh              # Run 12 bash suites (211 tests) + 1 PS1 suite (9 tests)
-bash tests/test_security.sh        # 7 security regression tests
-bash tests/test_dream_cycle.sh     # 32 dream cycle tests (dedup, decay, health, cleanup)
-bash tests/test_observe.sh         # 8 observer tests (scrubbing, is_error, dedup, perf)
-bash tests/test_session_learner.sh # 8 session learner tests (detectors, proposals)
-bash tests/test_injector.sh        # 16 injector tests (sanitization, ReDoS, limits)
-bash tests/test_yaml_utils.sh      # 13 YAML parser tests (floats, strings, edge cases)
-bash tests/test_install.sh         # 38 install tests (fresh, upgrade, idempotency)
-bash tests/test_hooks_e2e.sh       # 14 end-to-end hook pipeline tests
-bash tests/test_uninstall.sh       # 11 uninstall tests (cleanup, backup, safety guard)
-bash tests/test_integrity.sh       # 14 integrity tests (commands, core files, versions)
-pwsh tests/test_install_ps1.ps1    # 9 PowerShell installer tests (CI windows-latest)
+bash tests/run_all.sh                  # Run 20 bash suites (~365 tests) + 1 PS1 suite (9 tests)
+bash tests/test_security.sh            # 7 security regression tests
+bash tests/test_dream_cycle.sh         # 38 dream cycle tests (dedup, decay, health, cleanup)
+bash tests/test_observe.sh             # 9 observer tests (scrubbing, is_error, dedup, perf)
+bash tests/test_session_learner.sh     # 12 session learner tests (detectors, proposals)
+bash tests/test_injector.sh            # 18 injector tests (sanitization, ReDoS, limits)
+bash tests/test_yaml_utils.sh          # 13 YAML parser tests (floats, strings, edge cases)
+bash tests/test_install.sh             # 42 install tests (fresh, upgrade, idempotency, 21 cmds)
+bash tests/test_hooks_e2e.sh           # 14 end-to-end hook pipeline tests
+bash tests/test_uninstall.sh           # 13 uninstall tests (cleanup, backup, safety guard)
+bash tests/test_integrity.sh           # 14 integrity tests (commands, core files, versions)
+bash tests/test_impact.sh              # 65 impact-funnel tests (schema, gates, auto-eval)
+bash tests/test_distill_engine.sh      # 27 distill engine tests (auto-validate, pipeline-stats)
+bash tests/test_yaml_normalize.sh      # 12 YAML repair tests (zero-deps, regex keys)
+bash tests/test_guard_corpus.sh        # 9 ReDoS/length guard parity tests (Node ↔ Python)
+bash tests/test_install_downgrade.sh   # 5 downgrade-block tests (--allow-downgrade flag)
+bash tests/test_migrate_legacy_iid.sh  # 12 legacy iid migration tests
+bash tests/test_reflex_matchers.sh     # 28 reflex matcher tests (regex correctness)
+bash tests/test_cross_day_tracker.sh   # 10 cross-day boost tests (v3.26.0+)
+bash tests/test_detectors_v327.sh      # 12 v3.27.0 detector tests (subtypes, coupling, ToD)
+bash tests/test_v328_operational.sh    # 5 v3.28.0 tests (cx-stop, daily snapshot, --deep spec)
+pwsh tests/test_install_ps1.ps1        # 10 PowerShell installer tests (CI windows-latest)
 ```
 
 All suites run on `git push` to main (pre-push hook) and on every PR via GitHub Actions CI (macOS + Linux + Windows, Python 3.11/3.13, Node 22/24).

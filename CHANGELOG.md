@@ -4,6 +4,13 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.28.2] — 2026-05-09
+
+### Documentation
+- `skills/cortex/SKILL.md` header bumped from stale `v3.19.2` → `v3.28.2`. Drift accumulated across 9 releases.
+- `README.md` `## Commands (20)` → `(21)`, added `/cx-stop` row.
+- `README.md` Tests section rewrite — listed all 20 bash test suites + 1 PowerShell suite (was listing 11 outdated suites with stale counts). Added: test_impact, test_distill_engine, test_yaml_normalize, test_guard_corpus, test_install_downgrade, test_migrate_legacy_iid, test_reflex_matchers, test_cross_day_tracker, test_detectors_v327, test_v328_operational. Updated all per-suite counts.
+
 ## [3.28.1] — 2026-05-09
 
 ### Fixed

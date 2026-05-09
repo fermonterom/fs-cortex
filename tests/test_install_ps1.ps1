@@ -203,6 +203,31 @@ finally {
     if (Test-Path $sandbox) { Remove-Item $sandbox -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
+# ── TEST 9b: v3.26-v3.28 source files exist for installer to copy ─────────
+# install.ps1 uses Get-ChildItem with wildcards (hooks/*.{js,py,sh}, hooks/lib/*.{js,py},
+# commands/*.md) so new files are picked up automatically. This test asserts
+# that the source repo contains the v3.26-v3.28 additions, so the installer
+# would actually copy them on a real Windows run.
+
+Write-Host "--- v3.26-v3.28 source files present ---"
+$requiredSources = @(
+    "hooks/lib/cross-day-tracker.js",   # v3.26.0
+    "commands/cx-stop.md",              # v3.28.0
+    "tests/test_cross_day_tracker.sh",  # v3.26.0
+    "tests/test_detectors_v327.sh",     # v3.27.0
+    "tests/test_v328_operational.sh"    # v3.28.0
+)
+$srcMissing = 0
+foreach ($src in $requiredSources) {
+    if (-not (Test-Path (Join-Path $ProjectRoot $src))) {
+        Test-Fail "missing source file: $src"
+        $srcMissing++
+    }
+}
+if ($srcMissing -eq 0) {
+    Test-Pass "all $($requiredSources.Count) v3.26-v3.28 source files present"
+}
+
 # ── TEST 10: evaluator.* propagation parity with install.sh (v3.23.5+) ───
 
 Write-Host "--- Reflex evaluator propagation parity ---"
