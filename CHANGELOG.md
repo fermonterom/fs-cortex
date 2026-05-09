@@ -4,6 +4,13 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.25.5] — 2026-05-09
+
+### Changed
+
+- `hooks/observe.py` — `LEARN_THRESHOLD` default raised from 50 to 100 (configurable via `memory.json` `config.learn_threshold`)
+- `hooks/session-start.py` — `check_learn_pending()` now reads `learn_threshold` from `memory.json` config instead of hardcoding 50; both the flag-path and count-path use the same threshold
+
 ## [3.25.4] — 2026-05-08
 
 ### Fixed

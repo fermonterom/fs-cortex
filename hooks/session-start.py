@@ -38,6 +38,15 @@ EOD_DIR = CORTEX_DIR / 'daily-summaries'
 PROJECTS_DIR = CORTEX_DIR / 'projects'
 CONTEXT_TTL_DAYS = 14
 
+_config = {}
+try:
+    with open(CORTEX_DIR / 'memory.json') as _f:
+        _config = json.load(_f).get('config', {})
+except (FileNotFoundError, json.JSONDecodeError, OSError):
+    pass
+
+LEARN_THRESHOLD = _config.get('learn_threshold', 100)
+
 
 def load_laws():
     """Read law files (max 10), return list of one-liners."""
@@ -75,9 +84,9 @@ def check_new_day():
 
 
 def check_learn_pending():
-    """Check if there are 50+ new observations since last analyze."""
+    """Check if there are LEARN_THRESHOLD+ new observations since last analyze."""
     if (CORTEX_DIR / '.learn-pending').exists():
-        return True, 50
+        return True, LEARN_THRESHOLD
 
     last_count = 0
     count_file = CORTEX_DIR / '.last-learn-count'
@@ -97,7 +106,7 @@ def check_learn_pending():
                 pass
 
     new_obs = total - last_count
-    return new_obs >= 50, new_obs
+    return new_obs >= LEARN_THRESHOLD, new_obs
 
 
 def check_maintenance():
