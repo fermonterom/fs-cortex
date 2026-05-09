@@ -91,12 +91,22 @@ function applyCrossDayBoost(proposal) {
   const distinctDates = new Set(matches.map(m => m.date).filter(Boolean));
   distinctDates.add(today);
 
-  appendDetection({
-    date: today,
-    pattern_id: proposal.id,
-    trigger_norm: triggerNorm,
-    source_detector: proposal.source || 'unknown',
-  });
+  // v3.28.4 — guard against same-day re-appends. Stop hook re-processes
+  // observations on every session close, so the same pattern_id can be
+  // emitted dozens of times per day. Only append once per (date, pattern_id)
+  // to bound tracker file size. Distinct-date counting (boost logic) is
+  // unaffected because the first append of the day is always made.
+  const alreadyToday = matches.some(e =>
+    e.date === today && e.pattern_id === proposal.id
+  );
+  if (!alreadyToday) {
+    appendDetection({
+      date: today,
+      pattern_id: proposal.id,
+      trigger_norm: triggerNorm,
+      source_detector: proposal.source || 'unknown',
+    });
+  }
 
   const dayCount = distinctDates.size;
   let boost = 0;
@@ -128,13 +138,21 @@ function prune(daysToKeep = PRUNE_DAYS) {
   const lines = fs.readFileSync(TRACKER_PATH, 'utf8').split('\n');
   const kept = [];
   let before = 0;
+  // v3.28.4 — also compact same-day same-pattern_id duplicates accumulated
+  // before the dedup guard was added. Keeps the first occurrence per
+  // (date, pattern_id) pair. Idempotent.
+  const seen = new Set();
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     before++;
     try {
       const entry = JSON.parse(trimmed);
-      if ((entry.date || '') >= cutoff) kept.push(trimmed);
+      if ((entry.date || '') < cutoff) continue;
+      const key = `${entry.date}|${entry.pattern_id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      kept.push(trimmed);
     } catch (_) {}
   }
   const tmp = TRACKER_PATH + '.tmp.' + process.pid;

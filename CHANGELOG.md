@@ -4,6 +4,15 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.28.4] — 2026-05-09
+
+### Fixed
+- **`hooks/lib/cross-day-tracker.js`** — `applyCrossDayBoost()` was unconditionally appending to `cross-day-tracker.jsonl` on every call. The Stop hook re-processes observations and re-emits the same proposals on each session close, so the tracker grew by 21× expected size: a real install accumulated **15,061 entries with only 703 distinct pattern_ids in a single day**. The bug was discovered immediately after v3.28.3 install via the v3.27 detector gates baseline. **Fix:** add `same-day same-pattern_id` guard before `appendDetection()` — only append the first detection per `(date, pattern_id)` pair. Distinct-date counting (the boost logic) is unaffected because the first append of the day is always made, so `cross_day_count` and the +0.05/+0.10/+0.15 tiers behave identically. **Forward-only:** existing bloated trackers self-heal on next `run_auto_distill()` (see prune fix below).
+- **`hooks/lib/cross-day-tracker.js`** — `prune()` now also compacts same-day same-pattern_id duplicates accumulated before the v3.28.4 guard was added. Idempotent: keeps the first occurrence per `(date, pattern_id)` pair. Existing tracker files with 15k bloat will compact to ~700 unique entries on the next auto-distill cycle.
+
+### Added
+- 2 new tests in `tests/test_cross_day_tracker.sh` (10 → 12 PASS): same-day re-append guard, prune() same-day dedup of legacy data.
+
 ## [3.28.3] — 2026-05-09
 
 ### Added

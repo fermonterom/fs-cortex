@@ -140,6 +140,39 @@ const cache = t.loadTrackerCache();
 if (cache.length !== 50) throw new Error('expected 50 entries, got ' + cache.length);
 "
 
+run_test "v3.28.4: same-day same-pattern_id is appended only once" "
+const t = require('$TRACKER_MOD');
+t._resetCache();
+require('fs').rmSync(t.TRACKER_PATH, {force: true});
+// Stop hook re-emits same proposals on each session close. Without the v3.28.4
+// guard, applyCrossDayBoost would append a new tracker entry on every call.
+for (let i = 0; i < 10; i++) {
+  t.applyCrossDayBoost({id: 'p-stop-hook', trigger: 'foo|bar', action: 'a', confidence: 0.40, source: 't'});
+}
+const cache = t.loadTrackerCache();
+const entries = cache.filter(e => e.pattern_id === 'p-stop-hook');
+if (entries.length !== 1) throw new Error('expected 1 same-day entry, got ' + entries.length);
+"
+
+run_test "v3.28.4: prune() compacts same-day duplicates from legacy data" "
+const t = require('$TRACKER_MOD');
+t._resetCache();
+const fs = require('fs');
+fs.rmSync(t.TRACKER_PATH, {force: true});
+// Simulate a pre-v3.28.4 tracker file with duplicates accumulated by the bug.
+require('fs').writeFileSync(t.TRACKER_PATH, [
+  '{\"date\":\"2026-05-09\",\"pattern_id\":\"dup1\",\"trigger_norm\":\"a b\",\"source_detector\":\"x\"}',
+  '{\"date\":\"2026-05-09\",\"pattern_id\":\"dup1\",\"trigger_norm\":\"a b\",\"source_detector\":\"x\"}',
+  '{\"date\":\"2026-05-09\",\"pattern_id\":\"dup1\",\"trigger_norm\":\"a b\",\"source_detector\":\"x\"}',
+  '{\"date\":\"2026-05-08\",\"pattern_id\":\"dup1\",\"trigger_norm\":\"a b\",\"source_detector\":\"x\"}',
+  '{\"date\":\"2026-05-09\",\"pattern_id\":\"unique\",\"trigger_norm\":\"c d\",\"source_detector\":\"x\"}',
+].join('\n') + '\n');
+const result = t.prune(365);
+if (result.before !== 5) throw new Error('expected before=5, got ' + result.before);
+if (result.after !== 3) throw new Error('expected after=3 (dup1@today, dup1@yesterday, unique@today), got ' + result.after);
+if (result.pruned !== 2) throw new Error('expected pruned=2, got ' + result.pruned);
+"
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ $FAIL -eq 0 ]
