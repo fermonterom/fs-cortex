@@ -43,6 +43,7 @@ Command          Cost        Purpose
 /cx-retro        ~200 tok    Weekly retrospective: activity, usage, health trend
 /cx-timeline     ~100 tok    Knowledge event log: creations, promotions, decays, archives
 /cx-router       ~50 tok     This catalog
+/cx-stop         ~100 tok    Manually trigger session-learner pipeline (v3.28.0+)
 
 Recommended flow:
   Work normally → /cx-analyze (when prompted) → /cx-validate → /cx-distill → /cx-dream

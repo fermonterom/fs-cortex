@@ -4,6 +4,15 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.28.1] — 2026-05-09
+
+### Fixed
+- `tests/test_install.sh` expected hardcoded count of 20 commands but v3.28.0 added `/cx-stop` (now 21). CI on Ubuntu+macOS × Python 3.11/3.13 × Node 22/24 was failing on `Fresh Install / commands: 21 (expected 20)`. Test corrected to 21.
+- `core/claudemd-section.md` Commands list missing `/cx-stop` — added (used by installer to write Cortex section into user CLAUDE.md).
+- `commands/cx-router.md` table missing `/cx-stop` row — added with cost estimate.
+- `hooks/session-start.py` `Cortex commands:` hint string missing `/cx-stop` — added.
+- `skills/cortex/SKILL.md` description frontmatter, command count (20→21), and table all missing `/cx-stop` — added.
+
 ## [3.28.0] — 2026-05-09
 
 ### Added
