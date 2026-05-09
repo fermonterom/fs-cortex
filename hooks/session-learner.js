@@ -584,7 +584,7 @@ function detectFileCoupling(observations) {
     const files = [...bySession[sid]].sort();
     for (let i = 0; i < files.length; i++) {
       for (let j = i + 1; j < files.length; j++) {
-        const key = files[i] + '::' + files[j];
+        const key = files[i] + '\x00' + files[j];
         pairCounts[key] = (pairCounts[key] || 0) + 1;
       }
     }
@@ -593,7 +593,9 @@ function detectFileCoupling(observations) {
   const proposals = [];
   for (const key of Object.keys(pairCounts)) {
     if (pairCounts[key] < FILE_COUPLING_MIN_COUNT) continue;
-    const [a, b] = key.split('::');
+    const sepIdx = key.indexOf('\x00');
+    const a = key.slice(0, sepIdx);
+    const b = key.slice(sepIdx + 1);
     const baseA = path.basename(a);
     const baseB = path.basename(b);
     const hash = shortHash(key);
@@ -630,82 +632,90 @@ function detectTimeOfDayPatterns(observations) {
     if (isError(obs)) byHour[hour].errors++;
   }
 
-  // Merge with existing
-  let existing = { by_hour: {} };
-  try {
-    if (fs.existsSync(PRODUCTIVITY_PATH)) {
-      existing = JSON.parse(fs.readFileSync(PRODUCTIVITY_PATH, 'utf8'));
-    }
-  } catch {}
-  const merged = { ...(existing.by_hour || {}) };
-  for (const hour of Object.keys(byHour)) {
-    if (!merged[hour]) merged[hour] = { tools: {}, errors: 0, total: 0 };
-    merged[hour].total += byHour[hour].total;
-    merged[hour].errors += byHour[hour].errors;
-    for (const tool of Object.keys(byHour[hour].tools)) {
-      merged[hour].tools[tool] = (merged[hour].tools[tool] || 0) + byHour[hour].tools[tool];
-    }
-  }
-
-  // Compute summary + buckets + insights
-  const summary = {};
-  for (const hour of Object.keys(merged).sort()) {
-    const h = merged[hour];
-    const sortedTools = Object.entries(h.tools).sort((a, b) => b[1] - a[1]);
-    summary[hour] = {
-      total: h.total,
-      errors: h.errors,
-      error_rate: h.total > 0 ? Math.round((h.errors / h.total) * 100) / 100 : 0,
-      top_tools: sortedTools.slice(0, 3).map(([t, c]) => `${t}(${c})`),
-    };
-  }
-
-  const buckets = {
-    morning:   { range: '06-12', total: 0, errors: 0, tools: {} },
-    afternoon: { range: '12-18', total: 0, errors: 0, tools: {} },
-    evening:   { range: '18-22', total: 0, errors: 0, tools: {} },
-    night:     { range: '22-06', total: 0, errors: 0, tools: {} },
-  };
-  for (const hour of Object.keys(merged)) {
-    const h = parseInt(hour, 10);
-    let bucket;
-    if (h >= 6 && h < 12) bucket = 'morning';
-    else if (h >= 12 && h < 18) bucket = 'afternoon';
-    else if (h >= 18 && h < 22) bucket = 'evening';
-    else bucket = 'night';
-    buckets[bucket].total += merged[hour].total;
-    buckets[bucket].errors += merged[hour].errors;
-    for (const tool of Object.keys(merged[hour].tools)) {
-      buckets[bucket].tools[tool] = (buckets[bucket].tools[tool] || 0) + merged[hour].tools[tool];
-    }
-  }
-  for (const b of Object.keys(buckets)) {
-    const bucket = buckets[b];
-    bucket.error_rate = bucket.total > 0 ? Math.round((bucket.errors / bucket.total) * 100) / 100 : 0;
-    const sorted = Object.entries(bucket.tools).sort((a, b) => b[1] - a[1]);
-    bucket.top_tools = sorted.slice(0, 3).map(([t]) => t);
-  }
-
-  const insights = [];
-  const peakErrorBucket = Object.entries(buckets).sort((a, b) => b[1].error_rate - a[1].error_rate)[0];
-  if (peakErrorBucket && peakErrorBucket[1].error_rate > 0.10) {
-    insights.push(`Pico de errores: ${peakErrorBucket[0]} (${peakErrorBucket[1].range}h, ${Math.round(peakErrorBucket[1].error_rate * 100)}%)`);
-  }
-  const topMorning = buckets.morning.top_tools.slice(0, 2).join('/');
-  const topAfternoon = buckets.afternoon.top_tools.slice(0, 2).join('/');
-  if (topMorning) insights.push(`Mañanas (${buckets.morning.range}h): top tools ${topMorning}`);
-  if (topAfternoon) insights.push(`Tardes (${buckets.afternoon.range}h): top tools ${topAfternoon}`);
-
-  const output = {
-    updated: TODAY,
-    by_hour: merged,
-    summary,
-    buckets,
-    insights,
-  };
-
+  // Merge + write. Read existing as late as possible to minimize race window.
+  // Known race: two concurrent Stop hooks may lose one session's contribution (same
+  // limitation as cross-day-tracker.js; full lock deferred).
   try {
     ensureDir(CORTEX_DIR);
+
+    let existingByHour = {};
+    if (fs.existsSync(PRODUCTIVITY_PATH)) {
+      let raw;
+      try {
+        raw = fs.readFileSync(PRODUCTIVITY_PATH, 'utf8');
+        existingByHour = JSON.parse(raw).by_hour || {};
+      } catch (_) {
+        return []; // Corrupted file — abort write to preserve existing data
+      }
+    }
+
+    const merged = { ...existingByHour };
+    for (const hour of Object.keys(byHour)) {
+      if (!merged[hour]) merged[hour] = { tools: {}, errors: 0, total: 0 };
+      merged[hour].total += byHour[hour].total;
+      merged[hour].errors += byHour[hour].errors;
+      for (const tool of Object.keys(byHour[hour].tools)) {
+        merged[hour].tools[tool] = (merged[hour].tools[tool] || 0) + byHour[hour].tools[tool];
+      }
+    }
+
+    // Compute summary + buckets + insights
+    const summary = {};
+    for (const hour of Object.keys(merged).sort()) {
+      const h = merged[hour];
+      const sortedTools = Object.entries(h.tools).sort((a, b) => b[1] - a[1]);
+      summary[hour] = {
+        total: h.total,
+        errors: h.errors,
+        error_rate: h.total > 0 ? Math.round((h.errors / h.total) * 100) / 100 : 0,
+        top_tools: sortedTools.slice(0, 3).map(([t, c]) => `${t}(${c})`),
+      };
+    }
+
+    const buckets = {
+      morning:   { range: '06-12', total: 0, errors: 0, tools: {} },
+      afternoon: { range: '12-18', total: 0, errors: 0, tools: {} },
+      evening:   { range: '18-22', total: 0, errors: 0, tools: {} },
+      night:     { range: '22-06', total: 0, errors: 0, tools: {} },
+    };
+    for (const hour of Object.keys(merged)) {
+      const h = parseInt(hour, 10);
+      let bucket;
+      if (h >= 6 && h < 12) bucket = 'morning';
+      else if (h >= 12 && h < 18) bucket = 'afternoon';
+      else if (h >= 18 && h < 22) bucket = 'evening';
+      else bucket = 'night';
+      buckets[bucket].total += merged[hour].total;
+      buckets[bucket].errors += merged[hour].errors;
+      for (const tool of Object.keys(merged[hour].tools)) {
+        buckets[bucket].tools[tool] = (buckets[bucket].tools[tool] || 0) + merged[hour].tools[tool];
+      }
+    }
+    for (const b of Object.keys(buckets)) {
+      const bucket = buckets[b];
+      bucket.error_rate = bucket.total > 0 ? Math.round((bucket.errors / bucket.total) * 100) / 100 : 0;
+      const sorted = Object.entries(bucket.tools).sort((a, b) => b[1] - a[1]);
+      bucket.top_tools = sorted.slice(0, 3).map(([t]) => t);
+    }
+
+    const insights = [];
+    const peakErrorBucket = Object.entries(buckets).sort((a, b) => b[1].error_rate - a[1].error_rate)[0];
+    if (peakErrorBucket && peakErrorBucket[1].error_rate > 0.10) {
+      insights.push(`Pico de errores: ${peakErrorBucket[0]} (${peakErrorBucket[1].range}h, ${Math.round(peakErrorBucket[1].error_rate * 100)}%)`);
+    }
+    const topMorning = buckets.morning.top_tools.slice(0, 2).join('/');
+    const topAfternoon = buckets.afternoon.top_tools.slice(0, 2).join('/');
+    if (topMorning) insights.push(`Mañanas (${buckets.morning.range}h): top tools ${topMorning}`);
+    if (topAfternoon) insights.push(`Tardes (${buckets.afternoon.range}h): top tools ${topAfternoon}`);
+
+    const output = {
+      updated: TODAY,
+      by_hour: merged,
+      summary,
+      buckets,
+      insights,
+    };
+
     const tmp = PRODUCTIVITY_PATH + '.tmp.' + process.pid;
     fs.writeFileSync(tmp, JSON.stringify(output, null, 2), { mode: 0o600 });
     fs.renameSync(tmp, PRODUCTIVITY_PATH);

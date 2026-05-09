@@ -186,6 +186,34 @@ if (data.insights.length === 0) throw new Error('expected insight for high error
 if (!data.insights[0].includes('evening')) throw new Error('insight does not mention evening: ' + data.insights[0]);
 "
 
+run_test "time-of-day: corrupted JSON aborts write (no clobber)" "
+const fs = require('fs');
+const path = require('path');
+const cortexDir = path.join('$SANDBOX', 'tod-corrupt-' + process.pid);
+fs.mkdirSync(cortexDir, {recursive: true});
+process.env.CORTEX_DIR = cortexDir;
+const { detectTimeOfDayPatterns } = require('$LEARNER');
+const ppPath = path.join(cortexDir, 'productivity-patterns.json');
+fs.writeFileSync(ppPath, '{invalid json{{', 'utf8');
+const result = detectTimeOfDayPatterns([{ tool: 'Bash', ts: '2026-05-09T10:00:00Z', sid: 's1' }]);
+if (!Array.isArray(result) || result.length !== 0) throw new Error('expected [] on corrupt file, got ' + JSON.stringify(result));
+const contents = fs.readFileSync(ppPath, 'utf8');
+if (contents !== '{invalid json{{') throw new Error('corrupted file was overwritten: ' + contents.slice(0, 40));
+"
+
+run_test "file-coupling: file paths containing :: do not corrupt pair split" "
+process.env.CORTEX_DIR = '$SANDBOX';
+const { detectFileCoupling } = require('$LEARNER');
+const obs = [];
+for (let i = 0; i < 5; i++) {
+  obs.push({ tool: 'Edit', input: JSON.stringify({file_path: '/a/foo::special.ts'}), sid: 'session-' + i });
+  obs.push({ tool: 'Edit', input: JSON.stringify({file_path: '/a/bar.ts'}), sid: 'session-' + i });
+}
+const result = detectFileCoupling(obs);
+if (result.length !== 1) throw new Error('expected 1 proposal, got ' + result.length);
+if (!result[0].action.includes('foo::special.ts')) throw new Error('filename mangled in action: ' + result[0].action);
+"
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ $FAIL -eq 0 ]
