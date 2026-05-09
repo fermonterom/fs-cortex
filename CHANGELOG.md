@@ -4,6 +4,25 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.27.0] — 2026-05-09
+
+### Added
+- `detectAgentSubtypes(obs)` in `hooks/session-learner.js` — emits a proposal when a specific `Agent` subagent type has ≥3 uses with >30% error rate; confidence 0.45; exported for tests.
+- `detectFileCoupling(obs)` in `hooks/session-learner.js` — emits a proposal when two files are edited together in ≥5 distinct sessions; confidence 0.40; exported for tests.
+- `detectTimeOfDayPatterns(obs)` in `hooks/session-learner.js` — accumulates tool-use counts and error rates into `~/.claude/cortex/productivity-patterns.json` (by-hour and morning/afternoon/evening/night buckets) on every Stop hook; returns `[]` (side-effect only); exported for tests.
+- `commands/cx-status.md` — `--reflect` flag reads and renders `productivity-patterns.json` with hourly breakdown, bucket stats, and auto-generated insights.
+- `commands/cx-status.md` — `--help` flag shows command reference without running the dashboard.
+- `tests/test_detectors_v327.sh` — 12 tests covering all three new detectors (emit threshold, no-emit, error-rate gate, file-path filtering, JSON structure, merge accumulation, insights generation, corrupted-file no-clobber, `::` path edge case).
+
+### Changed
+- `session-learner.js` `main()` now calls all three new detectors; `agentSubtypeProposals` and `couplingProposals` are merged into `rawProposals`; `detectTimeOfDayPatterns` called for side-effect.
+- `setTimeout` in `session-learner.js` now uses `.unref()` so `require()` in tests does not hold the Node process alive.
+- `detectFileCoupling` pair key delimiter changed from `::` to null byte (`\x00`) — file paths containing `::` no longer corrupt the pair split.
+
+### Fixed
+- `detectTimeOfDayPatterns`: JSON parse failure on existing `productivity-patterns.json` now aborts the write (returns `[]`) instead of silently clobbering historical data with an empty aggregate.
+- `detectTimeOfDayPatterns`: merge+write block restructured — existing file read moved inside the write try-block to minimize the read-modify-write race window (known race documented, same pattern as `cross-day-tracker.js`).
+
 ## [3.26.0] — 2026-05-09
 
 ### Added

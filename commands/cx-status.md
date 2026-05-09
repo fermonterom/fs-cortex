@@ -10,6 +10,25 @@ command: true
 
 Unified dashboard showing the complete state of the Cortex learning system. Replaces the need for separate status, audit, projects, and watchdog commands.
 
+## Help / Discovery
+
+Si el usuario invoca `/cx-status --help`, muestra SOLO esta lista (sin ejecutar el dashboard) y stop:
+
+```
+/cx-status — Cortex unified dashboard
+
+Sin flags:    Dashboard ASCII completo
+--impact      Sprint 0 funnel panel (impact_log.py stats)
+--pipeline    Knowledge pipeline dashboard
+--reflexes    Reflex health panel
+--reflect     Productivity patterns by time-of-day (v3.27.0+)
+--days N      Lookback window in days (default 14)
+--json        Machine-readable output
+--ascii       ASCII (default)
+--html        Placeholder v4.0
+--help        Show this help
+```
+
 ## Implementation
 
 ### Step 1: Laws (Level 3 — always active)
@@ -196,6 +215,12 @@ Use clean ASCII box format:
 
 ## Flags
 
+Available flags: `--impact` `--pipeline` `--reflexes` `--reflect` `--days N` `--json` `--ascii` `--html` `--help`
+
+### `--help` — Show command reference
+
+See [Help / Discovery](#help--discovery) section above for the complete flag list. No dashboard is rendered.
+
 ### `--impact` — Sprint 0 funnel panel (v3.14.0+)
 
 Skip the full dashboard and show only the impact funnel from `impact.jsonl`.
@@ -298,6 +323,39 @@ flag, the threshold is tracked but no state change happens — see
 [`docs/AUTO-EVALUATION.md`](../docs/AUTO-EVALUATION.md).
 
 Pass `--json` for machine-readable output (same shape as ASCII data).
+
+### `--reflect` — Productivity patterns (v3.27.0+)
+
+Read `~/.claude/cortex/productivity-patterns.json` (written by `detectTimeOfDayPatterns` in `session-learner.js` on each session close).
+
+If the file does not exist, output:
+```
+PRODUCTIVITY REFLECTION
+  No data yet. Productivity patterns are generated automatically as you work.
+  Patterns will appear after several sessions across multiple times of day.
+```
+
+If the file exists, format as:
+```
+PRODUCTIVITY REFLECTION (last updated: <date>)
+
+By Hour (top 3 tools, error rate):
+  HH: tool(N) tool(N) tool(N)   err X%   total: N
+  ...
+
+Buckets:
+  Morning   (06-12):   N obs   X% err   top: T1, T2
+  Afternoon (12-18):   N obs   X% err   top: T1, T2
+  Evening   (18-22):   N obs   X% err   top: T1, T2
+  Night     (22-06):   N obs   X% err   top: T1, T2
+
+Insights:
+  • <insight 1>
+  • <insight 2>
+  ...
+```
+
+If `--json` is also passed, output the raw JSON file contents instead.
 
 ### `--ascii` (default) vs `--html`
 
