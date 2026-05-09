@@ -29,7 +29,7 @@ Get the current session ID from environment `CORTEX_SESSION_ID` or from Claude C
 Execute via Bash:
 
 ```bash
-SID="${CORTEX_SESSION_ID:-$(uuidgen 2>/dev/null || python3 -c 'import uuid; print(uuid.uuid4())' 2>/dev/null || echo unknown)}"
+SID="${CORTEX_SESSION_ID:-$(uuidgen 2>/dev/null || python3 -c 'import uuid; print(uuid.uuid4())' 2>/dev/null || python -c 'import uuid; print(uuid.uuid4())' 2>/dev/null || echo unknown)}"
 TS=$(date +%Y%m%d-%H%M%S)
 LOG="${TMPDIR:-/tmp}/cx-stop-${TS}.log"
 printf '{"session_id": "%s"}\n' "$SID" | node ~/.claude/hooks/cortex/session-learner.js > "$LOG" 2>&1

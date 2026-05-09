@@ -135,14 +135,18 @@ def write_daily_snapshot(last_date):
     if LAWS_DIR.is_dir():
         stats['laws_count'] = sum(1 for _ in LAWS_DIR.glob('*.txt'))
 
+    tmp = str(snapshot_path) + '.tmp'
     try:
-        tmp = str(snapshot_path) + '.tmp'
         with open(tmp, 'w') as f:
             json.dump(stats, f, indent=2)
         os.replace(tmp, str(snapshot_path))
         os.chmod(str(snapshot_path), 0o600)
-    except OSError:
-        pass
+    except OSError as e:
+        print(f'[cortex:daily-snapshot] write failed: {e}', file=sys.stderr)
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
 
 
 def check_learn_pending():
