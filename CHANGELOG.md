@@ -4,6 +4,12 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.28.8] — 2026-05-13
+
+### Changed
+
+- `commands/cx-analyze.md` — added `Step 0: Preflight — MUST run on Opus 1M` at the top of the Implementation section. The command now refuses to proceed unless the active session is `claude-opus-4-7` (or newer Opus) with the `[1m]` context flag, and prints a switch-model instruction. Sonnet/Haiku and Opus without 1M cannot fit the 1.5-3 MB compressed observation payload in a single context, which previously caused silent sampling, mid-analysis failures, or workaround sub-Agent fanout that defeats the purpose of inline cross-project visibility.
+
 ## [3.28.7] — 2026-05-09
 
 ### Fixed

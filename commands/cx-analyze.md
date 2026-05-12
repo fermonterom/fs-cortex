@@ -23,6 +23,38 @@ Reads ALL observations for the current project (or all projects with --global), 
 
 ## Implementation
 
+### Step 0: Preflight — MUST run on Opus 1M
+
+This command analyzes up to 3 MB of compressed observations in a single context
+window. Sonnet 4.x (200K) and Haiku (200K) cannot fit the full payload and will
+either silently sample, fail mid-analysis, or spawn a sub-Agent which defeats
+the purpose of inline cross-project visibility.
+
+**Before doing ANYTHING else, check the model declaration in the system prompt:**
+
+- The system prompt contains a line like:
+  `You are powered by the model named <NAME>. The exact model ID is <ID>.`
+- The model ID MUST be `claude-opus-4-7` (or newer Opus) AND the active session
+  MUST have the 1M context flag (the user toggles this via `/model claude-opus-4-7[1m]`
+  or the runtime status line displays `[1m]`).
+
+**If the active model is NOT Opus with 1M context, STOP IMMEDIATELY and reply:**
+
+```
+/cx-analyze requiere Opus 1M (claude-opus-4-7[1m] o superior).
+Modelo actual: <model_name> — no tiene contexto suficiente para el análisis completo.
+
+Cambia con:  /model claude-opus-4-7[1m]
+Luego vuelve a ejecutar:  /cx-analyze
+```
+
+Do NOT proceed to Step 1. Do NOT compress observations. Do NOT spawn a sub-Agent
+as a workaround — this command is designed for direct inline analysis on Opus 1M.
+
+If unsure whether 1M is active, ask the user to confirm: "¿Confirmas que estás
+en Opus 1M? Tu line/status debería mostrar `[1m]`." Wait for confirmation before
+proceeding.
+
 ### Step 1: Detect Context
 
 - Identify current project via git remote hash
