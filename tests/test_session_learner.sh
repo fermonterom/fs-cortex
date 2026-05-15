@@ -77,22 +77,12 @@ function detectUserCorrections(observations) {
   return corrections;
 }
 
-function detectWorkflowChains(observations, minCount) {
-  minCount = minCount || 3;
-  const trigrams = {};
-  for (let i = 0; i < observations.length - 2; i++) {
-    const a = observations[i].tool, b = observations[i+1].tool, c = observations[i+2].tool;
-    if (!a || !b || !c) continue;
-    const key = a + '->' + b + '->' + c;
-    if (!trigrams[key]) trigrams[key] = 0;
-    trigrams[key]++;
-  }
-  return Object.entries(trigrams).filter(([_, count]) => count >= minCount).map(([chain, count]) => {
-    return { id: `workflow-${shortHash(chain)}`, trigger: chain.split('->')[0], action: `Workflow: ${chain} (${count}x)`, confidence: Math.min(0.60, 0.30 + count * 0.05), domain: 'workflow', source: 'session-learner:workflow', status: 'pending', detected: TODAY, session: observations[0].sid || 'unknown' };
-  });
-}
+// v3.29.0 §4.6: detectWorkflowChains helper removed — the real detector was
+// retired in this release (descriptive action + trigger that loses sequence
+// context). The retired-detector absence test below asserts the function is
+// gone from the production module too.
 
-module.exports = { detectErrorResolutions, detectUserCorrections, detectWorkflowChains, isError, extractFilePath, shortHash };
+module.exports = { detectErrorResolutions, detectUserCorrections, isError, extractFilePath, shortHash };
 JSEOF
 
 echo "=== Session Learner Tests ==="
@@ -144,30 +134,26 @@ console.log(detectUserCorrections(obs).length === 0 ? 'OK' : 'FAIL');
 ")
 [ "$result" = "OK" ] && pass "single edit = no correction" || fail "single-edit: $result"
 
-# --- Test 5: Workflow chain trigrams ---
-echo "--- Workflow Chains ---"
+# --- Test 5+6: Retired detectors absent from production module (v3.29.0 §4.6) ---
+# detectRepetitions and detectWorkflowChains were deleted in v3.29.0. These
+# two assertions ensure no future commit re-adds them silently — if the
+# functions reappear, both tests fail loudly.
+echo "--- Retired Detectors (v3.29.0 §4.6) ---"
 result=$(node -e "
-const { detectWorkflowChains } = require('$HELPER');
-const obs = [
-  {tool:'Grep',sid:'t1'},{tool:'Read',sid:'t1'},{tool:'Edit',sid:'t1'},
-  {tool:'Grep',sid:'t1'},{tool:'Read',sid:'t1'},{tool:'Edit',sid:'t1'},
-  {tool:'Grep',sid:'t1'},{tool:'Read',sid:'t1'},{tool:'Edit',sid:'t1'},
-];
-const chains = detectWorkflowChains(obs, 3);
-console.log(chains.some(c => c.action.includes('Grep->Read->Edit')) ? 'OK' : 'FAIL');
+const m = require('$PROJECT_ROOT/hooks/session-learner.js');
+console.log(typeof m.detectRepetitions === 'undefined' ? 'OK' : 'FAIL:' + typeof m.detectRepetitions);
 ")
-[ "$result" = "OK" ] && pass "Grep->Read->Edit chain detected" || fail "chain: $result"
+[ "$result" = "OK" ] && pass "detectRepetitions absent from production module" || fail "retire-repetitions: $result"
 
-# --- Test 6: No chains below threshold ---
 result=$(node -e "
-const { detectWorkflowChains } = require('$HELPER');
-const obs = [
-  {tool:'Grep',sid:'t1'},{tool:'Read',sid:'t1'},{tool:'Edit',sid:'t1'},
-  {tool:'Bash',sid:'t1'},{tool:'Write',sid:'t1'},{tool:'Glob',sid:'t1'},
-];
-console.log(detectWorkflowChains(obs, 3).length === 0 ? 'OK' : 'FAIL');
+const m = require('$PROJECT_ROOT/hooks/session-learner.js');
+console.log(typeof m.detectWorkflowChains === 'undefined' ? 'OK' : 'FAIL:' + typeof m.detectWorkflowChains);
 ")
-[ "$result" = "OK" ] && pass "below threshold = no chain" || fail "threshold: $result"
+[ "$result" = "OK" ] && pass "detectWorkflowChains absent from production module" || fail "retire-workflow: $result"
+
+# Also verify the function definitions are gone from source (not just unexported).
+result=$(grep -c '^function detectRepetitions\|^function detectWorkflowChains' "$PROJECT_ROOT/hooks/session-learner.js" || true)
+[ "$result" = "0" ] && pass "retired function declarations removed from source" || fail "retire-source: found $result declaration(s)"
 
 # --- Test 7: Proposals have correct structure ---
 echo "--- Proposal Structure ---"

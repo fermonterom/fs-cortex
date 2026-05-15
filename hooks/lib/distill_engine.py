@@ -82,7 +82,29 @@ LAW_MAX_CHARS = 120
 # Sprint 7 — auto-validate
 VALIDATE_MIN_CONF = 0.50
 VALIDATE_AUTO_DOMAINS = {"gotcha", "pattern", "error-recovery", "agent-evolution"}
-VALIDATE_HUMAN_DOMAINS = {"correction", "user-preference", "decision", "workflow"}
+# v3.29.0 (Sprint 8 §4.1): added 'coupling' + 'agent-quality'. Pre-v3.29.0 these
+# were orphan domains — emitted by detectFileCoupling + detectAgentSubtypes but
+# absent from every whitelist, so every proposal fell through to
+# `needs-human-judgment` skip and never produced an instinct. Registering them
+# here lets the operator review them via `/cx-validate` and decide manually
+# (human-gated, exactly as the Sprint 8 detector overhaul intends).
+VALIDATE_HUMAN_DOMAINS = {"correction", "user-preference", "decision", "workflow",
+                          "coupling", "agent-quality"}
+
+# v3.29.0 (Sprint 8 §4.7): whitelist of authorized rejecter identities for the
+# ghost-guard. Any proposal carrying a rejected status with `rejected_by` NOT
+# in this set will be restored to pending by `_detect_unauthorized_rejections`.
+# `cx-validate-auto` is INTENTIONALLY excluded — on 2026-05-05 an unidentified
+# external script bulk-rejected 648 proposals as that identity; until the
+# source is found (see docs/GHOST-CX-VALIDATE-AUTO.md), we treat any reject
+# from `cx-validate-auto` as unauthorized.
+VALIDATE_AUTHORIZED_REJECTERS = {
+    "cx-validate",         # manual /cx-validate
+    "cx-auto-validate",    # auto_validate_proposals (this module)
+    "cx-cleanup",          # ops cleanup
+    "v3.28.9-cleanup",     # bulk-reject we did in v3.28.9
+    None,                  # legacy: pre-Sprint-7 acceptances
+}
 
 # Sprint 7 — auto-evolve
 EVOLVE_MIN_CONF = 0.70
@@ -810,13 +832,63 @@ def _proposal_to_instinct_yaml(proposal: dict, today: str) -> str:
     return "\n".join(lines)
 
 
+def _detect_unauthorized_rejections(proposals: list[dict]) -> int:
+    """v3.29.0 (Sprint 8 §4.7): restore proposals rejected by unknown sources.
+
+    On 2026-05-05 an unidentified `cx-validate-auto` script bulk-rejected 648
+    proposals — git archaeology found no trace (see
+    `docs/GHOST-CX-VALIDATE-AUTO.md`). This guard is the preventive mitigation:
+    every time `auto_validate_proposals` runs it scans the existing proposals
+    file and, if it finds a rejection by an identity NOT in
+    `VALIDATE_AUTHORIZED_REJECTERS`, it strips the rejection metadata and
+    returns the proposal to `pending` status. The next legitimate validate
+    pass will then evaluate the proposal on its merits.
+
+    Mutates `proposals` in-place. Returns the number of restorations.
+    """
+    restored = 0
+    for p in proposals:
+        if not isinstance(p, dict):
+            continue
+        if p.get("status") != "rejected":
+            continue
+        rejected_by = p.get("rejected_by")
+        if rejected_by in VALIDATE_AUTHORIZED_REJECTERS:
+            continue
+        iid = p.get("id", "<no-id>")
+        try:
+            _log_knowledge(
+                "ghost-restore",
+                str(iid),
+                f"unauthorized rejecter={rejected_by!r}",
+                source="cx-auto-validate",
+            )
+        except Exception:
+            pass
+        p["status"] = "pending"
+        p.pop("rejected_by", None)
+        p.pop("rejected_reason", None)
+        p.pop("rejected_at", None)
+        restored += 1
+    return restored
+
+
 def auto_validate_proposals(dry_run: bool = False) -> dict:
     """Auto-accept proposals that match whitelist criteria.
 
-    Returns: {"accepted": [{id, conf, domain}], "skipped": [{id, reason}], "errors": []}
+    Returns: {"accepted": [{id, conf, domain}], "skipped": [{id, reason}],
+              "errors": [], "ghost_restored": int}
     """
     today = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
     proposals = _load_proposals()
+
+    # v3.29.0 (Sprint 8 §4.7): pre-pass to undo unauthorized rejections before
+    # we evaluate anything. Run on the mutable working list so the rest of
+    # auto-validate sees the restored 'pending' status this same pass.
+    ghost_restored = 0
+    if proposals:
+        ghost_restored = _detect_unauthorized_rejections(proposals)
+
     accepted: list[dict] = []
     skipped: list[dict] = []
     errors: list[str] = []
@@ -901,10 +973,17 @@ def auto_validate_proposals(dry_run: bool = False) -> dict:
         isinstance(p, dict) and p.get("status") == "held" and p.get("held_by") == "cx-auto-validate"
         for p in updated_proposals
     )
-    if not dry_run and (accepted or has_holds):
+    # v3.29.0: also persist when the ghost-guard restored proposals to pending,
+    # otherwise the rejection survives in the on-disk file across runs.
+    if not dry_run and (accepted or has_holds or ghost_restored):
         _save_proposals(updated_proposals)
 
-    return {"accepted": accepted, "skipped": skipped, "errors": errors}
+    return {
+        "accepted": accepted,
+        "skipped": skipped,
+        "errors": errors,
+        "ghost_restored": ghost_restored,
+    }
 
 
 # ── 5. Auto-evolve: cluster detection + draft generation ────────────────────
