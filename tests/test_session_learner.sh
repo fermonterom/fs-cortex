@@ -286,6 +286,115 @@ console.log(compiles && matchTricky ? 'OK' : 'FAIL:' + cp.trigger);
 [ "$result" = "OK" ] && pass "file-coupling escapes special chars in filenames" || fail "coupling-escape: $result"
 
 echo ""
+echo "--- detectUserCorrections (v3.29.0 §4.3 rewrite) ---"
+
+# Three overlapping edits to the same file must emit a correction proposal
+# with the §4.3 contract: domain 'correction' (NOT 'user-preference', NOT
+# 'gotcha'), confidence 0.55, scope 'project', project_id propagated from
+# observations[0]._projectId, imperative action starting with "Before
+# editing", trigger regex compiles + matches the file via the runtime form.
+result=$(node -e "
+const { detectUserCorrections } = require('$PROJECT_ROOT/hooks/session-learner.js');
+const old = 'XXXXXXXXXXXXXXXXXXXXXX';   // long enough to register as overlap
+const obs = [
+  { tool: 'Edit', input: JSON.stringify({ file_path: '/r/foo.ts', old_string: old }), sid: 's1', _projectId: 'projQ' },
+  { tool: 'Edit', input: JSON.stringify({ file_path: '/r/foo.ts', old_string: old }), sid: 's1', _projectId: 'projQ' },
+  { tool: 'Edit', input: JSON.stringify({ file_path: '/r/foo.ts', old_string: old }), sid: 's1', _projectId: 'projQ' },
+];
+const props = detectUserCorrections(obs);
+const c = props[0];
+if (!c) { console.log('FAIL:no-proposal'); process.exit(0); }
+let compiles = false; try { new RegExp(c.trigger); compiles = true; } catch (_) {}
+const matchPos = compiles && new RegExp(c.trigger).test('Edit ' + JSON.stringify({ file_path: '/r/foo.ts' }));
+const meta = (
+  c.domain === 'correction' &&
+  c.confidence === 0.55 &&
+  c.scope === 'project' &&
+  c.project_id === 'projQ' &&
+  typeof c.action === 'string' && c.action.startsWith('Before editing foo.ts')
+);
+console.log(JSON.stringify({ compiles, matchPos, meta, trigger: c.trigger, domain: c.domain }));
+")
+echo "$result" | grep -q '\"compiles\":true' && pass "user-correction trigger compiles" || fail "correction-compile: $result"
+echo "$result" | grep -q '\"matchPos\":true' && pass "user-correction trigger matches Edit on file" || fail "correction-pos: $result"
+echo "$result" | grep -q '\"meta\":true' && pass "user-correction meta: domain=correction, conf=0.55, scope=project, action imperative" || fail "correction-meta: $result"
+
+# Below-threshold (2 edits) must produce NOTHING (overlap+3-edit gate still
+# enforced). Guards against accidental floor-lowering when §4.3 was rewritten.
+result=$(node -e "
+const { detectUserCorrections } = require('$PROJECT_ROOT/hooks/session-learner.js');
+const obs = [
+  { tool: 'Edit', input: JSON.stringify({ file_path: '/r/foo.ts', old_string: 'XXX' }), sid: 's1' },
+  { tool: 'Edit', input: JSON.stringify({ file_path: '/r/foo.ts', old_string: 'XXX' }), sid: 's1' },
+];
+console.log(detectUserCorrections(obs).length === 0 ? 'OK' : 'FAIL');
+")
+[ "$result" = "OK" ] && pass "user-correction below-threshold (2 edits) = no proposal" || fail "correction-floor: $result"
+
+echo ""
+echo "--- detectAgentSubtypes (v3.29.0 §4.4 rewrite) ---"
+
+# 4 Agent calls of the same subtype, 2 errored (50%, above 30% threshold) —
+# must emit one agent-quality proposal with the §4.4 contract: domain
+# 'agent-quality' (no change, was already correct), confidence 0.50, action
+# starts with "Before spawning Agent subagent_type=" (imperative), trigger
+# is the literal string 'Agent'.
+result=$(node -e "
+const { detectAgentSubtypes } = require('$PROJECT_ROOT/hooks/session-learner.js');
+const obs = [
+  { tool: 'Agent', input: JSON.stringify({ subagent_type: 'flaky-agent', description: 'try x' }), output: 'Error: failed', err: true, sid: 's1' },
+  { tool: 'Agent', input: JSON.stringify({ subagent_type: 'flaky-agent', description: 'try y' }), output: 'Error: failed', err: true, sid: 's1' },
+  { tool: 'Agent', input: JSON.stringify({ subagent_type: 'flaky-agent', description: 'try z' }), output: 'OK', sid: 's1' },
+  { tool: 'Agent', input: JSON.stringify({ subagent_type: 'flaky-agent', description: 'try w' }), output: 'OK', sid: 's1' },
+];
+const p = detectAgentSubtypes(obs).find(x => x.domain === 'agent-quality');
+if (!p) { console.log('FAIL:no-proposal'); process.exit(0); }
+const meta = (
+  p.domain === 'agent-quality' &&
+  p.confidence === 0.50 &&
+  p.trigger === 'Agent' &&
+  typeof p.action === 'string' && p.action.startsWith('Before spawning Agent subagent_type=\"flaky-agent\"')
+);
+console.log(meta ? 'OK' : 'FAIL:' + JSON.stringify(p));
+")
+[ "$result" = "OK" ] && pass "agent-subtype meta: domain=agent-quality, conf=0.50, imperative action" || fail "subtype-meta: $result"
+
+# Below-threshold error rate (10%) must NOT emit a proposal.
+result=$(node -e "
+const { detectAgentSubtypes } = require('$PROJECT_ROOT/hooks/session-learner.js');
+const obs = [];
+for (let i = 0; i < 10; i++) {
+  obs.push({ tool: 'Agent', input: JSON.stringify({ subagent_type: 'healthy-agent' }), output: 'OK', sid: 's1' });
+}
+obs.push({ tool: 'Agent', input: JSON.stringify({ subagent_type: 'healthy-agent' }), output: 'Error: failed', err: true, sid: 's1' });
+console.log(detectAgentSubtypes(obs).length === 0 ? 'OK' : 'FAIL');
+")
+[ "$result" = "OK" ] && pass "agent-subtype below 30% error rate = no proposal" || fail "subtype-floor: $result"
+
+echo ""
+echo "--- detectAgentPatterns (v3.29.0 §4.5 threshold 3→4) ---"
+
+# 3 similar Agent uses are now BELOW threshold (pre-v3.29 emitted at 3).
+result=$(node -e "
+const { detectAgentPatterns } = require('$PROJECT_ROOT/hooks/session-learner.js');
+const desc = 'investigate auth bug deeply';
+const obs = Array.from({length:3}, (_,i) => ({ tool: 'Agent', input: JSON.stringify({ description: desc }), sid: 's' + i }));
+console.log(detectAgentPatterns(obs).length === 0 ? 'OK' : 'FAIL');
+")
+[ "$result" = "OK" ] && pass "agent-patterns at items=3 = no proposal (was 1 pre-v3.29)" || fail "agent-3: $result"
+
+# 4 similar uses → 1 proposal, conf 0.60 (clear margin above 0.55 floor).
+result=$(node -e "
+const { detectAgentPatterns } = require('$PROJECT_ROOT/hooks/session-learner.js');
+const desc = 'investigate auth bug deeply';
+const obs = Array.from({length:4}, (_,i) => ({ tool: 'Agent', input: JSON.stringify({ description: desc }), sid: 's' + i }));
+const p = detectAgentPatterns(obs);
+const ok = p.length === 1 && Math.abs(p[0].confidence - 0.60) < 0.001 && p[0].domain === 'agent-evolution';
+console.log(ok ? 'OK' : 'FAIL:' + JSON.stringify(p));
+")
+[ "$result" = "OK" ] && pass "agent-patterns at items=4 → 1 proposal, conf=0.60, domain=agent-evolution" || fail "agent-4: $result"
+
+echo ""
 echo "--- evalToolSubstitution (v3.23.7+ aligned-or-ignored) ---"
 
 # Extract evalToolSubstitution from session-learner.js and run 4 scenarios

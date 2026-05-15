@@ -340,6 +340,14 @@ function hasOverlappingEdits(edits) {
   return false;
 }
 
+// v3.29.0 (Sprint 8 §4.3): rewritten emit.
+// Pre-v3.29: domain 'user-preference' (HUMAN but semantically wrong — a
+// repeat-correct on the same file is a code-quality signal, not a user
+// preference), conf 0.40 (below auto-validate floor), action descriptive.
+// New emit: domain 'correction' (HUMAN-gated per §4.1's whitelist),
+// conf 0.55, imperative action telling Claude to scan recent commits
+// BEFORE re-editing the file, scope 'project' so a correction in repo A
+// never fires in repo B. The 3-edits-with-overlap heuristic is preserved.
 function detectUserCorrections(observations) {
   const corrections = [];
   const fileEdits = {};
@@ -353,16 +361,23 @@ function detectUserCorrections(observations) {
     fileEdits[file].push(obs);
   }
 
+  const projectId = (observations[0] && observations[0]._projectId) || 'global';
+
   for (const [file, edits] of Object.entries(fileEdits)) {
     // Require 3+ edits AND overlapping regions to reduce false positives
     if (edits.length >= 3 && hasOverlappingEdits(edits)) {
+      const baseName = path.basename(file);
       const hash = shortHash(file);
       corrections.push({
         id: `correction-${hash}`,
-        trigger: `Edit.*${escapeRegex(path.basename(file))}`,
-        action: `User corrected edits to ${sanitizeProposalAction(path.basename(file))} (${edits.length} times). Review pattern.`,
-        confidence: 0.40,
-        domain: 'user-preference',
+        trigger: `Edit.*${escapeRegex(baseName)}`,
+        action: sanitizeProposalAction(
+          `Before editing ${baseName}, scan recent commits — corrected ${edits.length}+ times. Pattern likely needs deeper attention.`
+        ),
+        confidence: 0.55,
+        domain: 'correction',
+        scope: 'project',          // v3.29.0 §4.3
+        project_id: projectId,
         source: 'session-learner:correction',
         status: 'pending',
         detected: TODAY,
@@ -420,9 +435,15 @@ function detectAgentPatterns(observations) {
     if (!matched) groups[d.desc] = [d];
   }
 
-  // Propose agent evolution for groups with 3+ similar uses
+  // v3.29.0 (Sprint 8 §4.5): floor raised 3 → 4. At threshold 3 the first
+  // emitted confidence was exactly 0.55 (0.40 + 3*0.05), tied with the
+  // VALIDATE_MIN_CONF auto-floor — borderline proposals would either just
+  // barely auto-validate or just barely be skipped depending on rounding.
+  // At threshold 4 the first emitted confidence is 0.60, giving a clear
+  // margin above the floor so the operator only ever sees patterns with
+  // meaningful repetition.
   return Object.entries(groups)
-    .filter(([_, items]) => items.length >= 3)
+    .filter(([_, items]) => items.length >= 4)
     .map(([desc, items]) => {
       const hash = shortHash('agent-' + desc);
       return {
@@ -490,13 +511,18 @@ function detectAgentSubtypes(observations) {
 
     const ratePercent = Math.round(rate * 100);
     const rawDisplay = subtypeRaw[subtype] || subtype;
+    // v3.29.0 (Sprint 8 §4.4): imperative action + conf 0.45 → 0.50.
+    // Domain 'agent-quality' was already correct; pre-v3.29 it was an orphan
+    // (not in any whitelist), now registered HUMAN-gated in §4.1. Confidence
+    // lift brings it to the validate floor so the operator sees it in
+    // /cx-validate without being auto-accepted.
     proposals.push({
       id: `agent-error-rate-${subtype}`,
       trigger: `Agent`,
       action: sanitizeProposalAction(
-        `Agent type "${rawDisplay}" has high error rate (${ratePercent}% across ${total} uses). Consider switching to general-purpose or refining the prompt.`
+        `Before spawning Agent subagent_type="${rawDisplay}" again, switch to general-purpose or refine the prompt — current type errored in ${ratePercent}% of ${total} uses.`
       ),
-      confidence: 0.45,
+      confidence: 0.50,
       domain: 'agent-quality',
       source: 'session-learner:agent-error-rate',
       status: 'pending',
