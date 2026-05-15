@@ -8,17 +8,20 @@ files — it provides a complete inventory and is kept up-to-date with every rel
 
 ## Active sprint
 
-**`docs/SPRINT-8-DETECTOR-OVERHAUL.md`** — full overhaul of the
-session-learner detector pipeline. v3.28.9 (this release) gates the 5
-noisy detectors behind `CORTEX_LEGACY_DETECTORS=1` (default OFF), fixes
-the Gate 1 metric in `impact_log.py`, and closes Sprint 5 + the v3.27
-gates. Sprint 8 (v3.29.x) will rewrite the disabled detectors with valid
-triggers / actions / domains and wire end-to-end automation so the
-operator never has to run `/cx-analyze` `/cx-validate` `/cx-distill`
-`/cx-evolve` manually again.
+**Sprint 8 shipped in v3.29.0.** `docs/SPRINT-8-DETECTOR-OVERHAUL.md`
+(plan v7 final, kept until v3.30 ships) tracks the next phase:
 
-**`docs/V3.27-GATES-CLOSED.md`** — closure record. Kept for history,
-delete at end of Sprint 8.
+- 7 days of silent observation post-v3.29.0 before planning v3.30.0
+- v3.30.0 candidates: `analyze_engine.py` (Option C — no-op without Opus
+  1M), auto-analyze trigger in SessionStart, statistical promotion gate
+  `HUMAN → AUTO` (n ≥ 20 reviewed + accept_rate ≥ 70% + distinct_sessions
+  ≥ 3 + 0 critical rejections)
+- All 5 detectors live by default, 3 of them HUMAN-gated through
+  `VALIDATE_HUMAN_DOMAINS`; ghost guard preventive; 3 kill switches
+  scoped by state-file (`CORTEX_OBSERVE_OFF`, `CORTEX_DETECTORS_OFF`,
+  `CORTEX_AUTODISTILL_OFF`); multi-session promotion gate (≥ 3 distinct
+  sessions) with grandfather clause; pre-ship acceptance gate wired into
+  `.githooks/pre-push`.
 
 ## Release workflow
 

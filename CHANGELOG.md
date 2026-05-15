@@ -4,6 +4,144 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.29.0] — 2026-05-16
+
+Sprint 8 — Detector overhaul + autopilot foundation. Largest single release
+since Sprint 5. Full plan in `docs/SPRINT-8-DETECTOR-OVERHAUL.md` (v7 final,
+post 3 rounds of Codex AD review).
+
+### Added
+
+- **`hooks/lib/regex-utils.js`** — new shared module with canonical
+  `escapeRegex()` helper. Used by `detectFileCoupling` and
+  `detectUserCorrections` (formerly each had an inline escape).
+- **`hooks/lib/distill_engine.py`** — `coupling` + `agent-quality` registered
+  in `VALIDATE_HUMAN_DOMAINS`. Pre-v3.29 both were orphan domains: detectors
+  emitted them but no whitelist accepted them, so every proposal fell through
+  `needs-human-judgment` forever and no instinct ever materialised.
+- **`hooks/lib/distill_engine.py`** — new `_detect_unauthorized_rejections()`
+  ghost guard runs at the top of `auto_validate_proposals()`. Restores
+  proposals rejected by identities NOT in `VALIDATE_AUTHORIZED_REJECTERS`
+  (intentionally excludes `cx-validate-auto`, the 2026-05-05 bulk-reject
+  ghost — see `docs/GHOST-CX-VALIDATE-AUTO.md` for git archaeology).
+- **`hooks/lib/distill_engine.py`** — new multi-session law promotion gate:
+  `LAW_MIN_DISTINCT_SESSIONS=3`, defensive `_count_distinct_sessions()`
+  reader (handles missing file / malformed schema / duplicates / empty
+  UUIDs), grandfather clause so pre-v3.29 conf≥0.95 instincts without a
+  tracking entry promote without retroactive blocking. Source pattern:
+  Sinapsis `core/_instinct-activator.sh:43-63` (see
+  `docs/SINAPSIS-COMPARISON.md`). Visible in `/cx-status --pipeline` as
+  `sessions N/3 (need M more)` for blocked candidates.
+- **`hooks/observe.py`** — `CORTEX_OBSERVE_OFF=1` kill switch (§4.8).
+  Returns before any write: observations.jsonl, dedup files, registry,
+  archive, obs-count all stay untouched.
+- **`hooks/session-learner.js`** — `CORTEX_DETECTORS_OFF=1` kill switch
+  (§4.8). Short-circuits the 5 proposal-emitting detectors to []. Side-
+  effecting detectors (time-of-day, command-usage) keep running so
+  productivity-patterns.json + timeline.jsonl + reflexes + impact +
+  outcome-nudge are preserved.
+- **`hooks/lib/distill_engine.py`** — `CORTEX_AUTODISTILL_OFF=1` kill
+  switch (§4.8). Returns BEFORE rate-limit AND any state mutation:
+  proposals, instinct YAMLs, laws, evolved drafts, candidates markdown,
+  cross-day-tracker prune, .last-auto-distill marker all skipped.
+- **`hooks/precompact.py`** — hardening (§4.15): `CORTEX_OBSERVE_OFF` +
+  `CORTEX_DETECTORS_OFF` honored at top of main(), `CORTEX_SESSION_ID`
+  exported to spawned learner as env var (belt-and-suspenders for the
+  stdin pipe), entire main() wrapped in try/except for guaranteed exit 0.
+- **`tests/cleanup_retired_instincts.sh`** — one-shot ops script,
+  idempotent + reversible mover of orphan `repeat-*` / `workflow-*` YAMLs
+  from active instinct dirs to `archive/retired-instincts-<TS>/` with
+  manifest.
+- **`tests/archive_proposals_backups.sh`** — one-shot ops script bundling
+  `$CORTEX_DIR/proposals.json.bak*` files into a timestamped tar.gz +
+  SHA-256 + manifest. Originals removed AFTER archive on disk.
+- **`tests/test_kill_switches.sh`** NEW (10 cases) — isolation tests for
+  the 3 env-var switches.
+- **`tests/test_session_start.sh`** NEW (4 cases) — `check_maintenance`
+  banner gating tests.
+- **`tests/test_precompact.sh`** NEW (11 cases) — PreCompact hardening
+  contract: smoke, env prop, stdin prop, fire-and-forget against hung
+  child, crash safety, idempotent double-flush, both kill switches.
+- **`tests/test_e2e_pipeline.sh`** NEW (10 cases) — end-to-end:
+  synthetic observations → Stop hook → proposals → SessionStart →
+  auto-distill → asserts. Covers happy path, HUMAN-gated isolation,
+  both kill switches, ghost-guard restoration round-trip.
+- **`tests/test_v329_acceptance.sh`** NEW (9 invariants) — pre-ship
+  acceptance gate run in a clean install sandbox (HOME-isolated +
+  `install.sh` + 6-newline defaults). Wired into `.githooks/pre-push`
+  as a BLOCKING check between Security and Version-sync gates.
+- **`docs/GHOST-CX-VALIDATE-AUTO.md`** — git archaeology of the
+  2026-05-05 bulk-reject incident. Verdict: external non-reproducible,
+  ghost guard is the preventive mitigation.
+- **`docs/SINAPSIS-COMPARISON.md`** — Día 0 spike comparing fs-cortex
+  with Sinapsis 3.2. Verdict: `inspiring_patterns` (no migration).
+- **`docs/SPRINT-8-DETECTOR-OVERHAUL.md`** — full plan v7 (final after 3
+  rounds of Codex AD review).
+
+### Changed
+
+- **`hooks/session-learner.js` `detectFileCoupling`** — rewritten emit
+  (§4.2). Trigger from malformed `Edit|f1|f2` (a degenerate alternation
+  the runtime matcher interpreted as "match literal Edit OR f1 OR f2
+  anywhere") to safe regex `Edit.*(?:${escapeRegex(baseA)}|${escapeRegex(baseB)})`
+  evaluated against the runtime `toolName + " " + JSON.stringify(input)`
+  matchTarget (verified at `injector-engine.js:89`). Action from
+  descriptive statistic to imperative "When editing baseA, also check
+  baseB — coupled in N+ sessions in this project." Confidence 0.40 →
+  0.55 (above `VALIDATE_MIN_CONF`). `scope: 'project'` (NEW, critical
+  to prevent cross-project bleed). `project_id` propagated from
+  `observations[0]._projectId`.
+- **`hooks/session-learner.js` `detectUserCorrections`** — rewritten as
+  HUMAN-gated emitter (§4.3). Domain `user-preference` → `correction`
+  (semantically correct — a repeat-correct on the same file is a
+  code-quality signal, not a user preference). Confidence 0.40 → 0.55.
+  Action imperative: "Before editing ${file}, scan recent commits —
+  corrected N+ times. Pattern likely needs deeper attention." Scope
+  `'project'` + project_id propagated.
+- **`hooks/session-learner.js` `detectAgentSubtypes`** — rewritten as
+  HUMAN-gated emitter (§4.4). Confidence 0.45 → 0.50 (at validate
+  floor). Imperative action: "Before spawning Agent subagent_type=X
+  again, switch to general-purpose or refine the prompt — current
+  type errored in N% of M uses." Domain `agent-quality` unchanged but
+  now registered in `VALIDATE_HUMAN_DOMAINS`.
+- **`hooks/session-learner.js` `detectAgentPatterns`** — min items
+  3 → 4 (§4.5). At 3 the first emitted confidence was exactly 0.55
+  (tied with the validate floor); at 4 the floor is 0.60.
+- **`hooks/session-start.py` `check_maintenance`** — `[ACTION]` banner
+  counts only proposals whose domain is in `VALIDATE_AUTO_DOMAINS`
+  (§4.10). Pre-v3.29 every pending proposal triggered the nag, so
+  HUMAN-gated detectors caused permanent noise. HUMAN-gated proposals
+  now surface via `/cx-status --pipeline` instead.
+
+### Fixed
+
+- **`hooks/precompact.py`** — pre-v3.29 only the `_spawn_learner` block
+  was wrapped in try/except, so a failure in `_parse_session_id` or
+  `_already_flushed` would bubble up and Claude Code would log a hook
+  failure even though precompact's contract is fire-and-forget.
+
+### Removed
+
+- **`hooks/session-learner.js` `detectRepetitions`** — retired
+  (deleted function + call site + module.exports). Confidence 0.30
+  was sub-floor and the action was descriptive not directive; in
+  6 months produced 210 unactionable proposals with no rewrite path.
+- **`hooks/session-learner.js` `detectWorkflowChains`** — retired
+  (deleted function + call site + module.exports + local helper
+  in `tests/test_session_learner.sh:80`). Trigger emitted only the
+  first tool of the trigram so sequence context was lost in the
+  resulting instinct; no viable rewrite.
+- **`CORTEX_LEGACY_DETECTORS` env var** — retired (the 3 gated
+  detectors are now live by default after the §4.2-§4.5 rewrites;
+  the new `CORTEX_DETECTORS_OFF` replaces it as the opt-out).
+- **`docs/V3.27-GATES-CLOSED.md`** — closure record removed (Sprint 5
+  and v3.27 gates fully closed in v3.28.9; the doc was kept as
+  history through Sprint 8 and is no longer needed).
+
+### Tests
+
+- Full suite: **433 PASS / 0 FAIL** (was 366/0 pre-Sprint-8, +67 cases).
+
 ## [3.28.9] — 2026-05-15
 
 ### Changed
