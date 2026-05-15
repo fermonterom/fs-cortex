@@ -48,6 +48,25 @@ else
 fi
 echo ""
 
+# ── 2b. v3.29.0 Sprint 8 acceptance gate (Sprint 8 §4.12) ─────────────
+# Validates 8 invariants in a clean install sandbox: detector regex
+# triggers compile, ghost guard restores, banner stays silent on
+# HUMAN-only proposals, all 3 kill switches honored, PreCompact
+# obeys OBSERVE_OFF, multi-session promotion gate blocks/passes.
+# Adds ~15s to every push but blocks shipping v3.29.0 with broken
+# integration.
+echo "--- v3.29 acceptance gate ---"
+ACC_LOG=$(mktemp -t cortex-acceptance-prepush.XXXXXX.log)
+if bash "$REPO_ROOT/tests/test_v329_acceptance.sh" >"$ACC_LOG" 2>&1; then
+    _pass "test_v329_acceptance.sh — all 8 invariants pass"
+else
+    grep -E "FAIL|Acceptance Gate" "$ACC_LOG" || true
+    echo "  (full log: $ACC_LOG)"
+    _fail "test_v329_acceptance.sh — invariant(s) failed"
+fi
+rm -f "$ACC_LOG"
+echo ""
+
 # ── 3. Version sync: install.sh = install.ps1 = FEATURES.md = CHANGELOG ──
 echo "--- Version sync ---"
 V_SH=$(grep -oE '"[0-9]+\.[0-9]+\.[0-9]+"' "$REPO_ROOT/install.sh" | head -1 | tr -d '"')
