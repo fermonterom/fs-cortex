@@ -13,6 +13,7 @@ const { parseYamlFrontmatter, updateYamlField, listYamlFiles: findYamlFiles } = 
   path.join(__dirname, 'lib', 'yaml-utils')
 );
 const { isSafeRegex, unsafeReason } = require(path.join(__dirname, 'lib', 'regex-guard'));
+const { escapeRegex } = require(path.join(__dirname, 'lib', 'regex-utils'));
 
 // Optional impact funnel writer — never blocks learner if require fails.
 let impactLog = null;
@@ -358,7 +359,7 @@ function detectUserCorrections(observations) {
       const hash = shortHash(file);
       corrections.push({
         id: `correction-${hash}`,
-        trigger: `Edit.*${path.basename(file).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
+        trigger: `Edit.*${escapeRegex(path.basename(file))}`,
         action: `User corrected edits to ${sanitizeProposalAction(path.basename(file))} (${edits.length} times). Review pattern.`,
         confidence: 0.40,
         domain: 'user-preference',
@@ -507,6 +508,19 @@ function detectAgentSubtypes(observations) {
   return proposals;
 }
 
+// v3.29.0 (Sprint 8 §4.2): rewritten emit. Pre-v3.29 this detector produced
+// `trigger: 'Edit|baseA|baseB'` — a degenerate alternation that the runtime
+// matcher (`toolName + " " + JSON.stringify(input)`) interpreted as "match the
+// literal string 'Edit' OR 'baseA' OR 'baseB'" anywhere, losing the coupling
+// relationship entirely. The new form `Edit.*(?:${escA}|${escB})` requires the
+// matcher to see `Edit` followed by either escaped filename inside the
+// stringified tool input — which IS the case because injector-engine.js
+// concatenates tool input verbatim into matchTarget. confidence 0.40 → 0.55
+// brings it above the auto-validate floor (0.50) so the operator at least
+// sees these in /cx-validate; domain stays 'coupling' (HUMAN-gated in §4.1)
+// so they will NOT auto-promote without manual review. scope: 'project' is
+// critical — a coupling between repo-local files in project A must never
+// fire in project B.
 function detectFileCoupling(observations) {
   const editObs = observations.filter(o =>
     (o.tool === 'Edit' || o.tool === 'Write') && o.input
@@ -537,28 +551,38 @@ function detectFileCoupling(observations) {
     }
   }
 
+  // Per-detector project pin: the project_id we attach below is what makes
+  // scope:'project' meaningful at injection time. Fall back to 'global' only
+  // when the observation chain doesn't carry one (legacy data); injector
+  // still filters by scope so this is safe.
+  const projectId = (observations[0] && observations[0]._projectId) || 'global';
+
   const proposals = [];
   for (const key of Object.keys(pairCounts)) {
-    if (pairCounts[key] < FILE_COUPLING_MIN_COUNT) continue;
+    const sessionCount = pairCounts[key];
+    if (sessionCount < FILE_COUPLING_MIN_COUNT) continue;
     const sepIdx = key.indexOf('\x00');
     const a = key.slice(0, sepIdx);
     const b = key.slice(sepIdx + 1);
     const baseA = path.basename(a);
     const baseB = path.basename(b);
+    const triggerRegex = `Edit.*(?:${escapeRegex(baseA)}|${escapeRegex(baseB)})`;
     const hash = shortHash(key);
     proposals.push({
       id: `coupling-${hash}`,
-      trigger: `Edit|${baseA}|${baseB}`,
+      trigger: triggerRegex,
       action: sanitizeProposalAction(
-        `Files coupled: "${baseA}" and "${baseB}" edited together in ${pairCounts[key]} sessions. Consider reviewing both when changing one.`
+        `When editing ${baseA}, also check ${baseB} — coupled in ${sessionCount}+ sessions in this project.`
       ),
-      confidence: 0.40,
+      confidence: 0.55,
       domain: 'coupling',
+      scope: 'project',          // v3.29.0 §4.2: must NOT be global
+      project_id: projectId,
       source: 'session-learner:file-coupling',
       status: 'pending',
       detected: TODAY,
       tags: ['coupling'],
-      occurrences: pairCounts[key],
+      occurrences: sessionCount,
     });
   }
   return proposals;

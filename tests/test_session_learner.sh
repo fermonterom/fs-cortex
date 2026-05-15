@@ -204,6 +204,88 @@ console.log(cmds.length === 2 && cmds.includes('cx-dream') && cmds.includes('cx-
 [ "$result" = "OK" ] && pass "timeline detects cx-* commands only" || fail "timeline: $result"
 
 echo ""
+echo "--- regex-utils (v3.29.0 §4.2) ---"
+
+# escapeRegex must turn every ECMAScript regex metacharacter into a literal.
+# We test the canonical metaset (. * + ? ^ $ { } ( ) | [ ] \) and verify the
+# resulting pattern (a) compiles, and (b) matches the original literal input.
+result=$(node -e "
+const { escapeRegex } = require('$PROJECT_ROOT/hooks/lib/regex-utils.js');
+const tricky = 'a.b*c+d?e^f\$g{h}(i)|j[k]\\\\l';
+const escaped = escapeRegex(tricky);
+let compiles = false, matches = false;
+try {
+  const re = new RegExp(escaped);
+  compiles = true;
+  matches = re.test(tricky);
+} catch (_) {}
+console.log(compiles && matches ? 'OK' : 'FAIL:' + escaped);
+")
+[ "$result" = "OK" ] && pass "escapeRegex makes all metachars literal" || fail "escapeRegex: $result"
+
+# Idempotency on empty/null/undefined — must never throw, always returns ''.
+result=$(node -e "
+const { escapeRegex } = require('$PROJECT_ROOT/hooks/lib/regex-utils.js');
+const a = escapeRegex(null);
+const b = escapeRegex(undefined);
+const c = escapeRegex('');
+console.log(a === '' && b === '' && c === '' ? 'OK' : 'FAIL:' + JSON.stringify([a,b,c]));
+")
+[ "$result" = "OK" ] && pass "escapeRegex handles null/undefined/empty without throwing" || fail "escape-empty: $result"
+
+echo ""
+echo "--- detectFileCoupling (v3.29.0 §4.2 rewrite) ---"
+
+# Generate enough Edit observations across two sessions to clear
+# FILE_COUPLING_MIN_COUNT*2 (=10) and have foo.ts + bar.ts edited together
+# in FILE_COUPLING_MIN_COUNT (=5) sessions. Then assert the emitted proposal
+# has a valid regex trigger that matches Edit-on-foo.ts and does NOT match
+# Edit-on-baz.ts, plus scope/project_id/confidence per §4.2.
+result=$(node -e "
+const { detectFileCoupling } = require('$PROJECT_ROOT/hooks/session-learner.js');
+const obs = [];
+for (let s = 0; s < 5; s++) {
+  obs.push({ tool: 'Edit', input: JSON.stringify({ file_path: '/repo/foo.ts' }), ts: '2026-01-0' + (s+1) + 'T00:00:00Z', sid: 's' + s, _projectId: 'projX' });
+  obs.push({ tool: 'Edit', input: JSON.stringify({ file_path: '/repo/bar.ts' }), ts: '2026-01-0' + (s+1) + 'T00:01:00Z', sid: 's' + s, _projectId: 'projX' });
+}
+const props = detectFileCoupling(obs);
+const cp = props.find(p => p.id.startsWith('coupling-'));
+if (!cp) { console.log('FAIL:no-proposal'); process.exit(0); }
+// (1) trigger compiles
+let compiles = false; try { new RegExp(cp.trigger); compiles = true; } catch(_) {}
+// (2) trigger matches Edit foo.ts in the runtime matcher form
+const matcherInput = 'Edit ' + JSON.stringify({ file_path: '/repo/foo.ts' });
+const matchPos = new RegExp(cp.trigger).test(matcherInput);
+// (3) trigger does NOT match Edit baz.ts
+const matchNeg = new RegExp(cp.trigger).test('Edit ' + JSON.stringify({ file_path: '/repo/baz.ts' }));
+// (4) scope + project_id + confidence + domain
+const meta = cp.scope === 'project' && cp.project_id === 'projX' && cp.confidence === 0.55 && cp.domain === 'coupling';
+console.log(JSON.stringify({ compiles, matchPos, matchNeg, meta, trigger: cp.trigger }));
+")
+echo "$result" | grep -q '\"compiles\":true' && pass "file-coupling trigger compiles as RegExp" || fail "coupling-compile: $result"
+echo "$result" | grep -q '\"matchPos\":true' && pass "file-coupling trigger matches Edit on coupled file" || fail "coupling-pos: $result"
+echo "$result" | grep -q '\"matchNeg\":false' && pass "file-coupling trigger does NOT match unrelated file" || fail "coupling-neg: $result"
+echo "$result" | grep -q '\"meta\":true' && pass "file-coupling meta: scope=project, project_id, conf=0.55, domain=coupling" || fail "coupling-meta: $result"
+
+# Special-char filenames are escaped (no regex injection from filenames like
+# `app.config[old].ts`). The trigger must still compile and the embedded
+# segment must round-trip as a literal match.
+result=$(node -e "
+const { detectFileCoupling } = require('$PROJECT_ROOT/hooks/session-learner.js');
+const obs = [];
+for (let s = 0; s < 5; s++) {
+  obs.push({ tool: 'Edit', input: JSON.stringify({ file_path: '/repo/app.config[old].ts' }), ts: 't' + s, sid: 's' + s, _projectId: 'projX' });
+  obs.push({ tool: 'Edit', input: JSON.stringify({ file_path: '/repo/safe.ts' }), ts: 't' + s + 'b', sid: 's' + s, _projectId: 'projX' });
+}
+const cp = detectFileCoupling(obs).find(p => p.id.startsWith('coupling-'));
+if (!cp) { console.log('FAIL:no-proposal'); process.exit(0); }
+let compiles = false; try { new RegExp(cp.trigger); compiles = true; } catch (_) {}
+const matchTricky = compiles && new RegExp(cp.trigger).test('Edit ' + JSON.stringify({ file_path: '/repo/app.config[old].ts' }));
+console.log(compiles && matchTricky ? 'OK' : 'FAIL:' + cp.trigger);
+")
+[ "$result" = "OK" ] && pass "file-coupling escapes special chars in filenames" || fail "coupling-escape: $result"
+
+echo ""
 echo "--- evalToolSubstitution (v3.23.7+ aligned-or-ignored) ---"
 
 # Extract evalToolSubstitution from session-learner.js and run 4 scenarios
