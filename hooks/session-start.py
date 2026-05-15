@@ -212,15 +212,37 @@ def check_maintenance():
     if not audit_file.exists() or _file_older_than(audit_file, 30):
         reminders.append("[MAINT] Run /cx-audit — 30+ days since last audit (duplicates, token overhead, cleanup).")
 
-    # Validate: pending proposals
+    # Validate: pending proposals.
+    # v3.29.0 (Sprint 8 §4.10): the [ACTION] banner counts ONLY proposals in
+    # the auto-validate whitelist (domains that distill_engine would actually
+    # promote without human review). Human-gated domains (`correction`,
+    # `user-preference`, `decision`, `workflow`, `coupling`, `agent-quality`)
+    # accumulate quietly and surface via /cx-status --pipeline instead.
+    # Pre-v3.29 every pending proposal triggered the nag, so HUMAN-gated
+    # detectors caused a permanent "[ACTION] N pending" reminder even when
+    # those proposals required the operator to think, not to push a button.
     proposals_file = CORTEX_DIR / 'proposals.json'
     if proposals_file.exists():
         try:
             with open(proposals_file) as f:
                 proposals = json.load(f)
-            pending = sum(1 for p in proposals if p.get('status', 'pending') == 'pending')
-            if pending > 0:
-                reminders.append(f"[ACTION] {pending} pending proposals. Run /cx-validate to review.")
+            # Import lazily — distill_engine pulls in regex_guard etc., which
+            # we'd rather not load on every SessionStart unless we have
+            # proposals to inspect.
+            try:
+                sys.path.insert(0, str(Path(__file__).parent / 'lib'))
+                from distill_engine import VALIDATE_AUTO_DOMAINS as _AUTO
+            except Exception:
+                # Fallback: hard-coded list matching distill_engine §4.1.
+                _AUTO = {'gotcha', 'pattern', 'error-recovery', 'agent-evolution'}
+            pending_auto = sum(
+                1 for p in proposals
+                if isinstance(p, dict)
+                and p.get('status', 'pending') == 'pending'
+                and p.get('domain') in _AUTO
+            )
+            if pending_auto > 0:
+                reminders.append(f"[ACTION] {pending_auto} pending proposals. Run /cx-validate to review.")
         except Exception:
             pass
 
