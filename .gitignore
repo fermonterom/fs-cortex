@@ -37,4 +37,6 @@ docs/*
 !docs/OUTCOME-RANKING.md
 !docs/V3.27-GATES-CLOSED.md
 !docs/SPRINT-8-DETECTOR-OVERHAUL.md
+!docs/GHOST-CX-VALIDATE-AUTO.md
+!docs/SINAPSIS-COMPARISON.md
 .claude/worktrees/
