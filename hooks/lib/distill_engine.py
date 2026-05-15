@@ -58,6 +58,10 @@ LOCK_FILE = CORTEX_DIR / ".distill-engine.lock"
 PROPOSALS_FILE = CORTEX_DIR / "proposals.json"
 EVOLVED_SKILLS_DIR = CORTEX_DIR / "evolved" / "skills"
 SKILLS_DIR = Path(os.environ.get("SKILLS_DIR", str(Path.home() / ".claude" / "skills")))
+# v3.29.0 §4.16: source of truth for the multi-session promotion gate.
+# injector-engine.js writes here on every PreToolUse match — dedup'd, cap 20
+# entries per instinct.
+INSTINCT_TRACKING_FILE = CORTEX_DIR / "instinct-tracking.json"
 
 RATE_LIMIT_HOURS = 24
 DECAY_PER_30_DAYS = 0.05
@@ -78,6 +82,12 @@ LAW_MAX_NOISE_14D = 0
 LAW_MAX_ACTIVE = 10
 LAW_JACCARD_THRESHOLD = 0.50
 LAW_MAX_CHARS = 120
+# v3.29.0 §4.16: minimum distinct sessions (UUIDs) where an instinct must
+# have fired before it can be promoted to a law. Single-session bursts —
+# e.g. one very long debugging session producing 25 file-coupling
+# proposals 24 of which the operator accepts out of fatigue — won't pass
+# until at least 3 different sessions have seen the same pattern.
+LAW_MIN_DISTINCT_SESSIONS = 3
 
 # Sprint 7 — auto-validate
 VALIDATE_MIN_CONF = 0.50
@@ -598,6 +608,52 @@ def _derive_law_line(fields: dict) -> str:
     return line
 
 
+def _load_instinct_tracking() -> dict:
+    """Load instinct-tracking.json. Returns {} on missing/invalid.
+
+    v3.29.0 §4.16: written by injector-engine.js on every PreToolUse match.
+    Schema (per id key):
+      {
+        "count": int,
+        "sessions": ["<uuid>", ...],   # deduped, capped at 20 entries
+        "projects_seen": ["<phash>", ...],
+        "first_seen": "<iso>",
+        "last_seen": "<iso>",
+      }
+    """
+    if not INSTINCT_TRACKING_FILE.exists():
+        return {}
+    try:
+        raw = INSTINCT_TRACKING_FILE.read_text(encoding="utf-8")
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            return data
+        return {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _count_distinct_sessions(iid: str, tracking_data: dict) -> int:
+    """Read the deduplicated count of distinct session UUIDs for an instinct.
+
+    Defensive: handles missing file/key, malformed schema, missing 'sessions'
+    field, duplicates, empty/None values. Returns 0 on any anomaly so the
+    caller can decide policy (gate vs. grandfather).
+
+    v3.29.0 §4.16 — source pattern: Sinapsis core/_instinct-activator.sh:43-63.
+    """
+    if not isinstance(tracking_data, dict):
+        return 0
+    entry = tracking_data.get(iid)
+    if not isinstance(entry, dict):
+        return 0
+    sessions = entry.get("sessions")
+    if not isinstance(sessions, list):
+        return 0
+    unique = {s for s in sessions if isinstance(s, str) and s.strip()}
+    return len(unique)
+
+
 def auto_promote_to_law(
     dry_run: bool = False,
 ) -> tuple[list[dict], list[dict]]:
@@ -610,6 +666,8 @@ def auto_promote_to_law(
     today = _dt.datetime.now(_dt.timezone.utc).date()
     impact = _impact_per_iid(days=14)
     active_laws = _active_law_count()
+    # v3.29.0 §4.16: load instinct-tracking.json ONCE for the whole pass.
+    tracking_data = _load_instinct_tracking()
     promoted: list[dict] = []
     candidates: list[dict] = []
 
@@ -668,6 +726,21 @@ def auto_promote_to_law(
             days_at_threshold = (today - threshold_since).days
             if days_at_threshold < LAW_SUSTAINED_DAYS:
                 failed_reasons.append(f"sustained < 14d ({days_at_threshold}d so far)")
+
+        # ── Criteria 2b (v3.29.0 §4.16): ≥ 3 distinct sessions ────────────
+        # Grandfather clause: if an instinct already has conf >= 0.95 AND
+        # no tracking entry at all, treat it as if it had 3 distinct
+        # sessions so pre-existing high-confidence instincts (from before
+        # v3.29.0 shipped this gate) are not retroactively blocked.
+        distinct_sessions = _count_distinct_sessions(iid, tracking_data)
+        has_tracking_entry = isinstance(tracking_data.get(iid), dict)
+        if not has_tracking_entry and conf >= LAW_THRESHOLD_CONF:
+            distinct_sessions = LAW_MIN_DISTINCT_SESSIONS  # grandfathered
+        if distinct_sessions < LAW_MIN_DISTINCT_SESSIONS:
+            need = LAW_MIN_DISTINCT_SESSIONS - distinct_sessions
+            failed_reasons.append(
+                f"sessions {distinct_sessions}/{LAW_MIN_DISTINCT_SESSIONS} (need {need} more)"
+            )
 
         # ── Criteria 3: ≥ 3 distinct projects ────────────────────────────
         proj_count = _count_distinct_projects(fields, iid)
