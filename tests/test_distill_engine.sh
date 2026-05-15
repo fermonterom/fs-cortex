@@ -703,6 +703,7 @@ de.LOCK_FILE = de.CORTEX_DIR / '.distill-engine.lock'
 de.PROPOSALS_FILE = de.CORTEX_DIR / 'proposals.json'
 de.EVOLVED_SKILLS_DIR = de.CORTEX_DIR / 'evolved' / 'skills'
 de.SKILLS_DIR = de.CORTEX_DIR / 'skills'
+de.INSTINCT_TRACKING_FILE = de.CORTEX_DIR / 'instinct-tracking.json'
 PYEOF
 }
 
@@ -1108,12 +1109,12 @@ rm -rf "$T27"
 
 # ── Test 28: human-domain-coupling-skipped (§4.1) ────────────────────────────
 echo "--- Test 28: human-domain-coupling-skipped ---"
-T28="$(mktemp -d -t distill-t28-XXXXXX)"
-export CORTEX_DIR="$T28"
-make_proposal "$T28/proposals.json" "t28-coupling" "0.55" "coupling"
+T32="$(mktemp -d -t distill-t28-XXXXXX)"
+export CORTEX_DIR="$T32"
+make_proposal "$T32/proposals.json" "t28-coupling" "0.55" "coupling"
 
 result=$(python3 - <<PYEOF
-$(_py_patch "$T28")
+$(_py_patch "$T32")
 r = de.auto_validate_proposals()
 skipped = {s['id']: s['reason'] for s in r['skipped']}
 accepted_ids = [a['id'] for a in r['accepted']]
@@ -1129,16 +1130,16 @@ if echo "$result" | grep -q "True True True"; then
 else
   fail "human-domain-coupling-skipped: got '$result'"
 fi
-rm -rf "$T28"
+rm -rf "$T32"
 
 # ── Test 29: human-domain-agent-quality-skipped (§4.1) ───────────────────────
 echo "--- Test 29: human-domain-agent-quality-skipped ---"
-T29="$(mktemp -d -t distill-t29-XXXXXX)"
-export CORTEX_DIR="$T29"
-make_proposal "$T29/proposals.json" "t29-aq" "0.55" "agent-quality"
+T33="$(mktemp -d -t distill-t29-XXXXXX)"
+export CORTEX_DIR="$T33"
+make_proposal "$T33/proposals.json" "t29-aq" "0.55" "agent-quality"
 
 result=$(python3 - <<PYEOF
-$(_py_patch "$T29")
+$(_py_patch "$T33")
 r = de.auto_validate_proposals()
 skipped = {s['id']: s['reason'] for s in r['skipped']}
 accepted_ids = [a['id'] for a in r['accepted']]
@@ -1154,17 +1155,17 @@ if echo "$result" | grep -q "True True True"; then
 else
   fail "human-domain-agent-quality-skipped: got '$result'"
 fi
-rm -rf "$T29"
+rm -rf "$T33"
 
 # ── Test 30: ghost-guard-restores-unauthorized-reject (§4.7) ─────────────────
 # Inject a proposal rejected by 'cx-validate-auto' (the ghost identity).
 # auto_validate_proposals must restore it to pending status and strip
 # rejected_by / rejected_reason fields.
 echo "--- Test 30: ghost-guard-restores-unauthorized-reject ---"
-T30="$(mktemp -d -t distill-t30-XXXXXX)"
-export CORTEX_DIR="$T30"
-mkdir -p "$T30"
-cat > "$T30/proposals.json" <<'JSON'
+T34="$(mktemp -d -t distill-t30-XXXXXX)"
+export CORTEX_DIR="$T34"
+mkdir -p "$T34"
+cat > "$T34/proposals.json" <<'JSON'
 [
   {
     "id": "t30-ghost",
@@ -1204,7 +1205,7 @@ cat > "$T30/proposals.json" <<'JSON'
 JSON
 
 result=$(python3 - <<PYEOF
-$(_py_patch "$T30")
+$(_py_patch "$T34")
 import json
 r = de.auto_validate_proposals()
 ghost_restored = r.get('ghost_restored', -1)
@@ -1231,7 +1232,159 @@ if echo "$result" | grep -q "True True True"; then
 else
   fail "ghost-guard-restores-unauthorized-reject: got '$result'"
 fi
-rm -rf "$T30"
+rm -rf "$T34"
+
+# ── v3.29.0 (Sprint 8 §4.16) — multi-session promotion gate ──────────────────
+
+make_promotable_instinct() {
+  # make_promotable_instinct <dir> <iid>
+  # Creates an instinct that PASSES every criterion EXCEPT the new
+  # distinct_sessions gate, so tests below can isolate that one signal.
+  local dir="$1" iid="$2"
+  local today fifteen
+  today=$(python3 -c "from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime('%Y-%m-%d'))")
+  fifteen=$(python3 -c "from datetime import datetime, timezone, timedelta; print((datetime.now(timezone.utc)-timedelta(days=15)).strftime('%Y-%m-%d'))")
+  mkdir -p "$dir"
+  cat > "$dir/${iid}.yaml" <<YAML
+---
+id: ${iid}
+confidence: 0.9500
+domain: testing
+trigger: "Bash"
+action: "Always verify test results before reporting success to user"
+last_seen: $today
+first_seen: $today
+occurrences: 20
+project_id: proj-alpha
+at_law_threshold_since: $fifteen
+---
+YAML
+}
+
+# ── Test 32: distinct-sessions-blocks-at-2 (§4.16) ──────────────────────────
+echo "--- Test 32: distinct-sessions-blocks-at-2 ---"
+T32="$(mktemp -d -t distill-t28-XXXXXX)"
+export CORTEX_DIR="$T32"
+make_promotable_instinct "$T32/instincts/global" "t32-twosess"
+make_impact_events "$T32/impact.jsonl" "t32-twosess" 6 0
+# Tracking entry with 2 distinct sessions — below LAW_MIN_DISTINCT_SESSIONS=3
+cat > "$T32/instinct-tracking.json" <<JSON
+{
+  "t32-twosess": {
+    "count": 17,
+    "sessions": ["sess-A", "sess-B", "sess-A"],
+    "projects_seen": ["proj-alpha"],
+    "first_seen": "2026-05-01T00:00:00Z",
+    "last_seen": "2026-05-14T00:00:00Z"
+  }
+}
+JSON
+
+result=$(python3 - <<PYEOF
+$(_py_patch "$T32")
+promoted, candidates = de.auto_promote_to_law()
+was_promoted = any(p['id'] == 't32-twosess' for p in promoted)
+cand = next((c for c in candidates if c['id'] == 't32-twosess'), None)
+reason_ok = bool(cand) and any('sessions 2/3' in r for r in cand['reasons'])
+print(was_promoted, reason_ok)
+PYEOF
+)
+if echo "$result" | grep -q "False True"; then
+  pass "distinct-sessions-blocks-at-2: NOT promoted, candidate reason 'sessions 2/3 (need 1 more)'"
+else
+  fail "distinct-sessions-blocks-at-2: got '$result'"
+fi
+rm -rf "$T32"
+
+# ── Test 33: distinct-sessions-promotes-at-3 (§4.16) ─────────────────────────
+echo "--- Test 33: distinct-sessions-promotes-at-3 ---"
+T33="$(mktemp -d -t distill-t29-XXXXXX)"
+export CORTEX_DIR="$T33"
+make_promotable_instinct "$T33/instincts/global" "t33-threesess"
+make_impact_events "$T33/impact.jsonl" "t33-threesess" 6 0
+cat > "$T33/instinct-tracking.json" <<JSON
+{
+  "t33-threesess": {
+    "count": 30,
+    "sessions": ["sess-A", "sess-B", "sess-C"],
+    "projects_seen": ["proj-alpha"],
+    "first_seen": "2026-05-01T00:00:00Z",
+    "last_seen": "2026-05-14T00:00:00Z"
+  }
+}
+JSON
+mkdir -p "$T33/laws"
+
+result=$(python3 - <<PYEOF
+$(_py_patch "$T33")
+promoted, candidates = de.auto_promote_to_law()
+was_promoted = any(p['id'] == 't33-threesess' for p in promoted)
+law_exists = (de.LAWS_DIR / 't33-threesess.txt').exists()
+print(was_promoted, law_exists)
+PYEOF
+)
+if echo "$result" | grep -q "True True"; then
+  pass "distinct-sessions-promotes-at-3: law file created"
+else
+  fail "distinct-sessions-promotes-at-3: got '$result'"
+fi
+rm -rf "$T33"
+
+# ── Test 34: grandfather-missing-tracking (§4.16) ────────────────────────────
+# Pre-existing high-confidence instincts created BEFORE v3.29 shipped this
+# gate won't have any tracking entry yet. Without the grandfather clause
+# they would all be retroactively blocked. With it: conf >= 0.95 + missing
+# entry → promote anyway.
+echo "--- Test 34: grandfather-missing-tracking ---"
+T34="$(mktemp -d -t distill-t30-XXXXXX)"
+export CORTEX_DIR="$T34"
+make_promotable_instinct "$T34/instincts/global" "t34-grandfather"
+make_impact_events "$T34/impact.jsonl" "t34-grandfather" 6 0
+# NO instinct-tracking.json deliberately — simulates pre-v3.29 corpus
+mkdir -p "$T34/laws"
+
+result=$(python3 - <<PYEOF
+$(_py_patch "$T34")
+promoted, candidates = de.auto_promote_to_law()
+was_promoted = any(p['id'] == 't34-grandfather' for p in promoted)
+law_exists = (de.LAWS_DIR / 't34-grandfather.txt').exists()
+print(was_promoted, law_exists)
+PYEOF
+)
+if echo "$result" | grep -q "True True"; then
+  pass "grandfather-missing-tracking: pre-v3.29 instinct promotes without tracking entry"
+else
+  fail "grandfather-missing-tracking: got '$result'"
+fi
+rm -rf "$T34"
+
+# ── Test 35: count-distinct-sessions-defensive (§4.16) ───────────────────────
+# The helper must return 0 on every malformed shape: missing file, missing
+# key, non-dict entry, non-list sessions, empty/None UUIDs. Direct call
+# against the function — no full promote pass needed.
+echo "--- Test 35: count-distinct-sessions-defensive ---"
+result=$(python3 - <<'PYEOF'
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path('hooks/lib').resolve()))
+from distill_engine import _count_distinct_sessions
+checks = [
+    _count_distinct_sessions('x', None),                          # None tracking
+    _count_distinct_sessions('x', {}),                            # missing key
+    _count_distinct_sessions('x', {'x': 'not-a-dict'}),           # non-dict entry
+    _count_distinct_sessions('x', {'x': {}}),                     # missing sessions
+    _count_distinct_sessions('x', {'x': {'sessions': 'nope'}}),   # non-list
+    _count_distinct_sessions('x', {'x': {'sessions': []}}),       # empty list
+    _count_distinct_sessions('x', {'x': {'sessions': [None, '']}}),  # empties only
+    _count_distinct_sessions('x', {'x': {'sessions': ['a', 'a', 'b']}}),  # dedup
+]
+print(checks)
+PYEOF
+)
+if echo "$result" | grep -q "\[0, 0, 0, 0, 0, 0, 0, 2\]"; then
+  pass "count-distinct-sessions-defensive: returns 0 on every malformed shape, 2 on valid"
+else
+  fail "count-distinct-sessions-defensive: got '$result'"
+fi
 
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo ""
