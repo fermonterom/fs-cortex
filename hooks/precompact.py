@@ -81,9 +81,22 @@ def _already_flushed(sid: str) -> bool:
         return False
 
 
-def _spawn_learner(stdin_bytes: bytes) -> None:
+def _spawn_learner(stdin_bytes: bytes, sid: str) -> None:
     if not LEARNER.exists():
         return
+    # v3.29.0 §4.15: export CORTEX_SESSION_ID into the child env BEFORE spawn.
+    # session-learner.js reads `process.env.CORTEX_SESSION_ID` as the primary
+    # session-id source (with stdin payload as fallback). Pre-v3.29 we only
+    # piped the payload through stdin, which works but is fragile under
+    # /compact's signal handling — if SIGPIPE arrives between fork and the
+    # first stdin.write, the child sees empty stdin and falls back to
+    # `observations[0].sid` (the FIRST observation's session id), which
+    # could be a stale/orphan session. Setting the env var is belt-and-
+    # suspenders: even if the stdin pipe fails, the child still has the
+    # correct sid.
+    child_env = os.environ.copy()
+    if sid and sid != "anon":
+        child_env["CORTEX_SESSION_ID"] = sid
     try:
         proc = subprocess.Popen(
             ["node", str(LEARNER)],
@@ -92,6 +105,7 @@ def _spawn_learner(stdin_bytes: bytes) -> None:
             stderr=subprocess.DEVNULL,
             start_new_session=True,  # detach from the compact caller
             close_fds=True,
+            env=child_env,
         )
         if proc.stdin is not None:
             try:
@@ -109,15 +123,36 @@ def _spawn_learner(stdin_bytes: bytes) -> None:
 
 
 def main() -> int:
-    raw = _read_stdin()
-    sid = _parse_session_id(raw) or "anon"
-
-    # Double-flush guard: if /compact fires twice in quick succession, do nothing.
-    if _already_flushed(sid):
+    # v3.29.0 §4.15: kill-switch checks BEFORE any work. CORTEX_OBSERVE_OFF
+    # and CORTEX_DETECTORS_OFF both imply "don't run the learner this cycle"
+    # — precompact would otherwise wake the learner anyway, defeating the
+    # switch. Honored here so the operator's intent is consistent across
+    # both Stop and PreCompact entry points.
+    if os.environ.get("CORTEX_OBSERVE_OFF", "0") == "1":
+        return 0
+    if os.environ.get("CORTEX_DETECTORS_OFF", "0") == "1":
         return 0
 
-    _spawn_learner(raw.encode("utf-8"))
-    _touch_marker(sid)
+    # v3.29.0 §4.15: wrap the entire body so any exception path still exits
+    # 0. Pre-v3.29 only the spawn block was protected; an exception in
+    # _parse_session_id or _already_flushed would have bubbled up and the
+    # /compact operation would see a non-zero return — Claude Code logs
+    # this as a hook failure even though precompact is supposed to be
+    # fire-and-forget.
+    try:
+        raw = _read_stdin()
+        sid = _parse_session_id(raw) or "anon"
+
+        # Double-flush guard: if /compact fires twice in quick succession,
+        # do nothing.
+        if _already_flushed(sid):
+            return 0
+
+        _spawn_learner(raw.encode("utf-8"), sid)
+        _touch_marker(sid)
+    except Exception:
+        # Never bubble — the hook contract is "exit 0 always".
+        pass
     return 0
 
 
