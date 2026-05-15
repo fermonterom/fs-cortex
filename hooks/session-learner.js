@@ -1620,32 +1620,50 @@ async function main() {
       projectName = registry[projectId].name || projectId;
     }
 
-    // Step 2: Detect error-fix pairs
+    // v3.28.9 — 5 detectors with structural bugs gated behind opt-in flag.
+    // See docs/SPRINT-8-DETECTOR-OVERHAUL.md for full diagnosis. Defaults to
+    // OFF; set CORTEX_LEGACY_DETECTORS=1 to re-enable the legacy behaviour
+    // until Sprint 8 rewrites them with valid triggers/actions/domains.
+    const legacyDetectors = process.env.CORTEX_LEGACY_DETECTORS === '1';
+
+    // Step 2: Detect error-fix pairs (KEEP — only detector with valid trigger,
+    // actionable action, and whitelisted domain)
     const errorProposals = detectErrorResolutions(observations);
     log(`Detected ${errorProposals.length} error-fix pair(s)`);
 
-    // Step 3: Detect repetitions
-    const repetitionProposals = detectRepetitions(observations);
+    // Step 3: Detect repetitions (DISABLED in v3.28.9 — conf=0.30 sub-floor,
+    // action is descriptive not directive; rewrite scheduled for Sprint 8)
+    const repetitionProposals = legacyDetectors ? detectRepetitions(observations) : [];
     log(`Detected ${repetitionProposals.length} repetition pattern(s)`);
 
-    // Step 3b: Detect user corrections
-    const correctionProposals = detectUserCorrections(observations);
+    // Step 3b: Detect user corrections (DISABLED in v3.28.9 — domain
+    // user-preference is human-gated and action is non-directive; Sprint 8
+    // will switch domain to gotcha and rewrite action as imperative)
+    const correctionProposals = legacyDetectors ? detectUserCorrections(observations) : [];
     log(`Detected ${correctionProposals.length} user correction(s)`);
 
-    // Step 3c: Detect workflow chains
-    const workflowProposals = detectWorkflowChains(observations);
+    // Step 3c: Detect workflow chains (DISABLED in v3.28.9 — trigger only
+    // emits first tool of trigram so sequence context is lost; action is
+    // descriptive statistic. Sprint 8 will redesign or drop)
+    const workflowProposals = legacyDetectors ? detectWorkflowChains(observations) : [];
     log(`Detected ${workflowProposals.length} workflow chain(s)`);
 
-    // Step 3d: Detect agent patterns
+    // Step 3d: Detect agent patterns (KEEP — valid trigger, actionable action,
+    // domain agent-evolution is whitelisted in distill_engine)
     const agentProposals = detectAgentPatterns(observations);
     log(`Detected ${agentProposals.length} agent pattern(s)`);
 
-    // Step 3e: Detect agent subtypes (v3.27.0)
-    const agentSubtypeProposals = detectAgentSubtypes(observations);
+    // Step 3e: Detect agent subtypes (DISABLED in v3.28.9 — domain
+    // 'agent-quality' is orphaned (not in VALIDATE_AUTO_DOMAINS nor
+    // VALIDATE_HUMAN_DOMAINS), so every proposal falls through to
+    // needs-human-judgment skip. Sprint 8 will register the domain)
+    const agentSubtypeProposals = legacyDetectors ? detectAgentSubtypes(observations) : [];
     log(`Detected ${agentSubtypeProposals.length} agent subtype issue(s)`);
 
-    // Step 3f: Detect file coupling (v3.27.0)
-    const couplingProposals = detectFileCoupling(observations);
+    // Step 3f: Detect file coupling (DISABLED in v3.28.9 — trigger
+    // 'Edit|f1|f2' is a malformed regex alternation that loses the coupling
+    // relationship + domain 'coupling' is orphaned. Sprint 8 will fix both)
+    const couplingProposals = legacyDetectors ? detectFileCoupling(observations) : [];
     log(`Detected ${couplingProposals.length} file coupling pattern(s)`);
 
     // Step 3g: Detect time-of-day patterns (v3.27.0, side-effect to productivity-patterns.json)

@@ -379,12 +379,19 @@ def compute_metrics(days: int = 14) -> dict[str, Any]:
 def gate_recommendation(metrics: dict[str, Any]) -> str:
     """GO/PARTIAL/NO-GO per the Sprint 0.5 gate in the v4.0 plan.
 
-    Uses `useful_ratio_user` and `health_ratio_user` (v3.17.0+). Agent
-    self-ratings are excluded from gate input by design — see
-    docs/AGENT-FEEDBACK.md.
+    v3.28.9: switched from `useful_ratio_user` / `health_ratio_user` to the
+    aggregate ratios. Rationale: reflex feedback (the dominant signal in
+    impact.jsonl) is always written with `source: "agent"` by
+    `correlateReflexFeedback` in session-learner.js. The previous formula
+    excluded agent-sourced events, making the gate structurally unable
+    to ever PASS for any reflex even when `reflexes.json` showed healthy
+    useful/noise ratios. The new formula treats agent self-evaluations
+    against the tool-substitution / error-monitor evaluators as valid
+    signal — those evaluators are deterministic, not opinion. See
+    docs/SPRINT-8-DETECTOR-OVERHAUL.md §2.1 for the full diagnosis.
     """
-    ur = metrics.get("useful_ratio_user", metrics["useful_ratio"])
-    hr = metrics.get("health_ratio_user", metrics["health_ratio"])
+    ur = metrics.get("useful_ratio", 0.0)
+    hr = metrics.get("health_ratio", 0.0)
     if ur >= 0.25 and hr >= 1.5:
         return "GO"
     if ur >= 0.10 or hr >= 1.0:

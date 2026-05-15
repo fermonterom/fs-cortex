@@ -4,6 +4,33 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.28.9] — 2026-05-15
+
+### Changed
+
+- **`hooks/lib/impact_log.py` `gate_recommendation()`** — switched from `useful_ratio_user` / `health_ratio_user` to the aggregate `useful_ratio` / `health_ratio`. Rationale: reflex feedback (the dominant signal) is always written with `source: "agent"` by `correlateReflexFeedback` in `session-learner.js:1553`. The previous formula excluded agent-sourced events, making Sprint 5 Gate 1 structurally unable to ever PASS for any reflex even when `reflexes.json` showed healthy useful/noise ratios (e.g. bash-grep-use-grep-tool = useful=60, noise=3, ratio=20× was invisible to the gate). The new formula treats agent self-evaluations against the tool-substitution / error-monitor evaluators as valid signal (those evaluators are deterministic). Closes Sprint 5 Gate 1.
+- **`hooks/session-learner.js`** — five detectors with structural bugs gated behind `CORTEX_LEGACY_DETECTORS=1` (default OFF):
+  - `detectRepetitions` (conf=0.30 sub-floor, descriptive action)
+  - `detectUserCorrections` (domain `user-preference` human-gated, action non-directive)
+  - `detectWorkflowChains` (trigger only emits first tool of trigram, loses sequence context)
+  - `detectAgentSubtypes` (domain `agent-quality` orphaned — not in any `distill_engine.py` whitelist, every proposal falls through to needs-human-judgment skip)
+  - `detectFileCoupling` (trigger `Edit|f1|f2` is malformed regex alternation; domain `coupling` orphaned)
+  Result: these no longer emit proposals on Stop. `detectErrorResolutions`, `detectAgentPatterns`, `detectTimeOfDayPatterns` and `detectCommandUsage` stay active. Sprint 8 (v3.29.x) will rewrite the disabled detectors with valid triggers / actions / whitelisted domains.
+
+### Fixed
+
+- Bulk-rejected stale pending proposals from the 5 disabled detectors with reason `v3.28.9-detector-disabled`. Clean slate for the new pipeline.
+
+### Removed
+
+- `docs/SPRINT-5-PENDING-GATES.md` (Sprint 5 closed; Gate 2 was already PASS with ratios 14× / 4× / 20×, Gate 1 was unmeasurable due to the metric bug above)
+
+### Documentation
+
+- `docs/V3.27-DETECTOR-GATES.md` renamed to `docs/V3.27-GATES-CLOSED.md` with closure summary. Gates C (productivity) + D (cross-day boost) PASS; A + B were symptoms of orphan-domain bugs and are deferred to Sprint 8.
+- `docs/SPRINT-8-DETECTOR-OVERHAUL.md` added — full diagnosis of three structural bugs (broken Gate 1 metric, 5 noisy detectors, orphan `cx-validate-auto` script) plus the forward plan for end-to-end pipeline automation in Sprint 8.
+- `CLAUDE.md` "Pending validation" section replaced with "Active sprint" pointing to Sprint 8 plan.
+
 ## [3.28.8] — 2026-05-13
 
 ### Changed

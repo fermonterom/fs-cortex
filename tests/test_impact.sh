@@ -343,9 +343,14 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-echo "--- Test 18: gate uses _user only (high agent should not flip to GO) ---"
+echo "--- Test 18: gate uses aggregate (agent feedback DOES count, v3.28.9) ---"
 rm -f "$SANDBOX/impact.jsonl"
-# 10 injects, 9 agent-useful, 0 user-useful → useful_ratio_user = 0.0 → NO-GO despite agent at 0.9
+# v3.28.9: gate_recommendation switched from useful_ratio_user/health_ratio_user
+# to aggregate useful_ratio/health_ratio. Reflex feedback is always source=agent
+# (correlateReflexFeedback in session-learner.js:1553), so the previous _user
+# gate could never PASS for any reflex. Agent self-evaluation against
+# deterministic evaluators (tool-substitution, error-monitor) IS valid signal.
+# 10 injects, 9 agent-useful → useful_ratio=0.9, health_ratio>=1.5 → GO.
 for i in 1 2 3 4 5 6 7 8 9 10; do
   python3 "$IMPACT_PY" log --event inject --iid "agent-only-$i" --tool Bash --sid sid-G --conf 0.7
 done
@@ -353,10 +358,10 @@ for i in 1 2 3 4 5 6 7 8 9; do
   python3 "$IMPACT_PY" log --event feedback --iid "agent-only-$i" --rating useful --source agent
 done
 GATE=$(python3 "$IMPACT_PY" stats --days 1 --json | python3 -c "import json,sys; print(json.loads(sys.stdin.read())['gate'])")
-if [ "$GATE" = "NO-GO" ]; then
-  pass "agent-only useful does not flip gate (NO-GO as expected)"
+if [ "$GATE" = "GO" ]; then
+  pass "agent-only useful flips gate to GO (v3.28.9 aggregate metric)"
 else
-  fail "expected NO-GO for agent-only useful, got $GATE"
+  fail "expected GO for agent-only useful with new aggregate metric, got $GATE"
 fi
 
 # -----------------------------------------------------------------------------
