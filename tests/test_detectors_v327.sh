@@ -38,7 +38,7 @@ const obs = [
 const result = detectAgentSubtypes(obs);
 if (result.length !== 1) throw new Error('expected 1 proposal, got ' + result.length);
 if (!result[0].id.includes('explore')) throw new Error('id mismatch: ' + result[0].id);
-if (result[0].confidence !== 0.45) throw new Error('confidence: ' + result[0].confidence);
+if (result[0].confidence !== 0.50) throw new Error('confidence: ' + result[0].confidence);
 // v3.28.5 — schema completeness assertions
 if (result[0].status !== 'pending') throw new Error('status missing or wrong: ' + result[0].status);
 if (result[0].source !== 'session-learner:agent-error-rate') throw new Error('source mismatch: ' + result[0].source);
