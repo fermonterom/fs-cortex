@@ -1593,42 +1593,47 @@ async function main() {
       projectName = registry[projectId].name || projectId;
     }
 
-    // v3.29.0 (Sprint 8 §4.6): `detectRepetitions` and `detectWorkflowChains`
-    // have been retired entirely (deleted code). `detectUserCorrections`,
-    // `detectAgentSubtypes` and `detectFileCoupling` remain gated behind
-    // `CORTEX_LEGACY_DETECTORS=1` until Día 2 rewrites them as HUMAN-gated
-    // emitters with valid triggers and registered domains (coupling +
-    // agent-quality already registered in distill_engine in §4.1).
-    const legacyDetectors = process.env.CORTEX_LEGACY_DETECTORS === '1';
+    // v3.29.0 (Sprint 8 Día 2): all proposal-emitting detectors are now
+    // reactivated as HUMAN-gated emitters after the §4.2-§4.5 rewrites.
+    // CORTEX_LEGACY_DETECTORS env var (used in v3.28.9 to gate them while
+    // they were structurally broken) is retired in the same change.
+    //
+    // CORTEX_DETECTORS_OFF=1 (§4.8 kill switch) short-circuits every
+    // proposal-emitting detector to []. The side-effecting detectors
+    // (detectTimeOfDayPatterns → productivity-patterns.json, detectCommandUsage
+    // → timeline.jsonl) and the downstream pipeline (updateInstincts,
+    // updateReflexes, impact correlation, outcome nudge) keep running so the
+    // kill switch is scoped to "stop generating proposals" only — essential
+    // tracking data is preserved.
+    const detectorsOff = process.env.CORTEX_DETECTORS_OFF === '1';
 
     // Step 2: Detect error-fix pairs (KEEP — only detector with valid trigger,
     // actionable action, and whitelisted domain)
-    const errorProposals = detectErrorResolutions(observations);
+    const errorProposals = detectorsOff ? [] : detectErrorResolutions(observations);
     log(`Detected ${errorProposals.length} error-fix pair(s)`);
 
-    // Step 3b: Detect user corrections (DISABLED in v3.28.9, awaiting Día 2
-    // rewrite — domain `correction` is registered as HUMAN-gated; action will
-    // be rewritten as imperative directive)
-    const correctionProposals = legacyDetectors ? detectUserCorrections(observations) : [];
+    // Step 3b: Detect user corrections (v3.29.0 §4.3 HUMAN-gated rewrite —
+    // domain `correction`, conf 0.55, imperative action, scope `project`)
+    const correctionProposals = detectorsOff ? [] : detectUserCorrections(observations);
     log(`Detected ${correctionProposals.length} user correction(s)`);
 
-    // Step 3d: Detect agent patterns (KEEP — valid trigger, actionable action,
-    // domain agent-evolution is whitelisted in distill_engine)
-    const agentProposals = detectAgentPatterns(observations);
+    // Step 3d: Detect agent patterns (v3.29.0 §4.5 — min items 3 → 4)
+    const agentProposals = detectorsOff ? [] : detectAgentPatterns(observations);
     log(`Detected ${agentProposals.length} agent pattern(s)`);
 
-    // Step 3e: Detect agent subtypes (DISABLED in v3.28.9, awaiting Día 2
-    // rewrite — domain `agent-quality` registered as HUMAN-gated in §4.1)
-    const agentSubtypeProposals = legacyDetectors ? detectAgentSubtypes(observations) : [];
+    // Step 3e: Detect agent subtypes (v3.29.0 §4.4 HUMAN-gated rewrite —
+    // domain `agent-quality`, conf 0.50, imperative action)
+    const agentSubtypeProposals = detectorsOff ? [] : detectAgentSubtypes(observations);
     log(`Detected ${agentSubtypeProposals.length} agent subtype issue(s)`);
 
-    // Step 3f: Detect file coupling (DISABLED in v3.28.9, awaiting Día 2
-    // rewrite — domain `coupling` registered as HUMAN-gated in §4.1; trigger
-    // will use regex-on-tool-input form `Edit.*(?:f1|f2)` per §4.2)
-    const couplingProposals = legacyDetectors ? detectFileCoupling(observations) : [];
+    // Step 3f: Detect file coupling (v3.29.0 §4.2 HUMAN-gated rewrite —
+    // domain `coupling`, conf 0.55, regex trigger, scope `project`)
+    const couplingProposals = detectorsOff ? [] : detectFileCoupling(observations);
     log(`Detected ${couplingProposals.length} file coupling pattern(s)`);
 
-    // Step 3g: Detect time-of-day patterns (v3.27.0, side-effect to productivity-patterns.json)
+    // Step 3g: Detect time-of-day patterns (v3.27.0, side-effect to
+    // productivity-patterns.json — NOT gated by CORTEX_DETECTORS_OFF, the
+    // kill switch is scoped to proposals only per §4.8)
     detectTimeOfDayPatterns(observations);
 
     // Step 4: Update instinct YAML files

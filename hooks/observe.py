@@ -398,6 +398,15 @@ def main():
     if (CORTEX_DIR / "disabled").exists():
         return
 
+    # 2b. v3.29.0 (Sprint 8 §4.8) kill switch. CORTEX_OBSERVE_OFF=1 returns
+    # before any writes happen — observations.jsonl (global + per-project),
+    # dedup files, registry, archive, obs-count counters all stay untouched.
+    # Useful when the operator wants to run Claude Code without contributing
+    # to the Cortex learning corpus for one session (privacy, debugging,
+    # smoke-testing an unrelated feature).
+    if os.environ.get("CORTEX_OBSERVE_OFF", "0") == "1":
+        return
+
     # 3. Session guards
     if os.environ.get("ECC_HOOK_PROFILE", "standard") == "minimal":
         return

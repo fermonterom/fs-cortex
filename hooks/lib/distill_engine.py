@@ -1309,6 +1309,22 @@ def run_auto_distill(dry_run: bool = False) -> dict:
     """
     ran_at = _dt.datetime.now(_dt.timezone.utc).isoformat()
 
+    # v3.29.0 (Sprint 8 §4.8) kill switch. CORTEX_AUTODISTILL_OFF=1 skips
+    # the entire deterministic pipeline (decay, archive, auto-validate,
+    # auto-promote-to-law, auto-evolve). Returns BEFORE any state mutation:
+    # proposals.json, instinct YAMLs, law .txt files, evolved/ drafts, the
+    # candidates markdown, cross-day-tracker prune, AND the .last-auto-distill
+    # marker (so the next SessionStart with the kill switch removed runs the
+    # pipeline normally instead of being rate-limited away).
+    if os.environ.get("CORTEX_AUTODISTILL_OFF", "0") == "1":
+        return {
+            "decayed": 0, "archived": 0,
+            "validated": 0, "skipped_validate": 0,
+            "promoted": 0, "candidates": 0,
+            "evolve_drafts": 0,
+            "skipped_reason": "autodistill-off", "ran_at": ran_at,
+        }
+
     # Rate-limit check
     if _is_rate_limited():
         return {

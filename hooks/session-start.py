@@ -423,7 +423,11 @@ def main():
         if '[ACTION]' in reminder or '[MAINT]' in reminder:
             user_actionable.append(f'• {reminder.strip()}')
 
-    # 3d. Knowledge pipeline summary (Sprint 7)
+    # 3d. Knowledge pipeline summary (Sprint 7).
+    # v3.29.0 (Sprint 8 §4.8): the CORTEX_AUTODISTILL_OFF kill switch lives
+    # inside run_auto_distill itself, so it also gates the manual CLI
+    # (`python3 distill_engine.py auto`), the test harness, and any future
+    # caller — not just this SessionStart entry point.
     try:
         from distill_engine import run_auto_distill
         s = run_auto_distill()
