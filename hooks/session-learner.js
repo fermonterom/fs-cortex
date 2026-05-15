@@ -312,50 +312,10 @@ function isError(obs) {
 }
 
 // -------------------------------------------------------------------
-// Step 3: Detect repetitions
-// -------------------------------------------------------------------
-
-function detectRepetitions(observations) {
-  const proposals = [];
-  const toolInputCounts = {};
-
-  for (const obs of observations) {
-    const tool = obs.tool;
-    if (!tool) continue;
-    const inputPrefix = String(obs.input || '').slice(0, 100);
-    const key = `${tool}::${inputPrefix}`;
-    if (!toolInputCounts[key]) {
-      toolInputCounts[key] = { tool, count: 0, inputPrefix };
-    }
-    toolInputCounts[key].count++;
-  }
-
-  // v3.16.0 — raised threshold 5 → 8. Audit retrospective showed the learner
-  // emitted 51 repeat-* / workflow-* proposals for the same patterns over and
-  // over (Bash exploration, not real workflows). 8 is the empirical sweet spot:
-  // catches actual repetition without flagging normal exploration.
-  for (const [key, data] of Object.entries(toolInputCounts)) {
-    if (data.count >= 8) {
-      const hash = shortHash(key);
-      proposals.push({
-        id: `repeat-${data.tool}-${hash}`,
-        trigger: data.tool,
-        action: `Repetition detected: ${sanitizeProposalAction(data.tool)} called ${data.count}x with similar input`,
-        confidence: 0.3,
-        domain: 'workflow',
-        source: 'session-learner:repetition',
-        status: 'pending',
-        detected: TODAY,
-        session: observations[0]?._resolvedSession || 'unknown',
-      });
-    }
-  }
-
-  return proposals;
-}
-
-// -------------------------------------------------------------------
 // Step 3b: Detect user corrections (same file edited 3+ times with overlapping regions)
+// (v3.29.0 §4.6: detectRepetitions removed — descriptive action, sub-floor
+// confidence 0.30, generated 210 unactionable proposals in production with
+// no rewrite path. Tests and call site retired in the same release.)
 // -------------------------------------------------------------------
 
 function extractFilePath(input) {
@@ -419,48 +379,11 @@ function detectUserCorrections(observations) {
 }
 
 // -------------------------------------------------------------------
-// Step 3c: Detect workflow chain trigrams (3-tool sequences)
-// -------------------------------------------------------------------
-
-function detectWorkflowChains(observations, minCount) {
-  // v3.16.0 — raised default 5 → 8 (see detectRepetitions comment above).
-  // Tests still pass minCount explicitly so they are unaffected.
-  minCount = minCount || 8;
-  const trigrams = {};
-
-  for (let i = 0; i < observations.length - 2; i++) {
-    const a = observations[i].tool;
-    const b = observations[i + 1].tool;
-    const c = observations[i + 2].tool;
-    if (!a || !b || !c) continue;
-    // Skip trivial same-tool chains (Bash->Bash->Bash is not a workflow)
-    if (a === b && b === c) continue;
-    const key = a + '->' + b + '->' + c;
-    if (!trigrams[key]) trigrams[key] = 0;
-    trigrams[key]++;
-  }
-
-  return Object.entries(trigrams)
-    .filter(([_, count]) => count >= minCount)
-    .map(([chain, count]) => {
-      const hash = shortHash(chain);
-      return {
-        id: `workflow-${hash}`,
-        trigger: chain.split('->')[0],
-        action: `Common workflow detected: ${sanitizeProposalAction(chain)} (${count} times)`,
-        confidence: Math.min(0.60, 0.30 + count * 0.05),
-        domain: 'workflow',
-        source: 'session-learner:workflow',
-        status: 'pending',
-        detected: TODAY,
-        session: observations[0]._resolvedSession || observations[0].sid || 'unknown',
-      };
-    })
-    .sort((a, b) => b.confidence - a.confidence);
-}
-
-// -------------------------------------------------------------------
 // Step 3d: Detect recurring Agent tool patterns (same purpose across sessions)
+// (v3.29.0 §4.6: detectWorkflowChains removed — trigger emitted only the
+// first tool of the trigram so sequence context was lost in the resulting
+// instinct, action was a descriptive statistic, no viable rewrite path.
+// Tests and call site retired in the same release.)
 // -------------------------------------------------------------------
 
 function detectAgentPatterns(observations) {
@@ -1620,10 +1543,12 @@ async function main() {
       projectName = registry[projectId].name || projectId;
     }
 
-    // v3.28.9 — 5 detectors with structural bugs gated behind opt-in flag.
-    // See docs/SPRINT-8-DETECTOR-OVERHAUL.md for full diagnosis. Defaults to
-    // OFF; set CORTEX_LEGACY_DETECTORS=1 to re-enable the legacy behaviour
-    // until Sprint 8 rewrites them with valid triggers/actions/domains.
+    // v3.29.0 (Sprint 8 §4.6): `detectRepetitions` and `detectWorkflowChains`
+    // have been retired entirely (deleted code). `detectUserCorrections`,
+    // `detectAgentSubtypes` and `detectFileCoupling` remain gated behind
+    // `CORTEX_LEGACY_DETECTORS=1` until Día 2 rewrites them as HUMAN-gated
+    // emitters with valid triggers and registered domains (coupling +
+    // agent-quality already registered in distill_engine in §4.1).
     const legacyDetectors = process.env.CORTEX_LEGACY_DETECTORS === '1';
 
     // Step 2: Detect error-fix pairs (KEEP — only detector with valid trigger,
@@ -1631,38 +1556,25 @@ async function main() {
     const errorProposals = detectErrorResolutions(observations);
     log(`Detected ${errorProposals.length} error-fix pair(s)`);
 
-    // Step 3: Detect repetitions (DISABLED in v3.28.9 — conf=0.30 sub-floor,
-    // action is descriptive not directive; rewrite scheduled for Sprint 8)
-    const repetitionProposals = legacyDetectors ? detectRepetitions(observations) : [];
-    log(`Detected ${repetitionProposals.length} repetition pattern(s)`);
-
-    // Step 3b: Detect user corrections (DISABLED in v3.28.9 — domain
-    // user-preference is human-gated and action is non-directive; Sprint 8
-    // will switch domain to gotcha and rewrite action as imperative)
+    // Step 3b: Detect user corrections (DISABLED in v3.28.9, awaiting Día 2
+    // rewrite — domain `correction` is registered as HUMAN-gated; action will
+    // be rewritten as imperative directive)
     const correctionProposals = legacyDetectors ? detectUserCorrections(observations) : [];
     log(`Detected ${correctionProposals.length} user correction(s)`);
-
-    // Step 3c: Detect workflow chains (DISABLED in v3.28.9 — trigger only
-    // emits first tool of trigram so sequence context is lost; action is
-    // descriptive statistic. Sprint 8 will redesign or drop)
-    const workflowProposals = legacyDetectors ? detectWorkflowChains(observations) : [];
-    log(`Detected ${workflowProposals.length} workflow chain(s)`);
 
     // Step 3d: Detect agent patterns (KEEP — valid trigger, actionable action,
     // domain agent-evolution is whitelisted in distill_engine)
     const agentProposals = detectAgentPatterns(observations);
     log(`Detected ${agentProposals.length} agent pattern(s)`);
 
-    // Step 3e: Detect agent subtypes (DISABLED in v3.28.9 — domain
-    // 'agent-quality' is orphaned (not in VALIDATE_AUTO_DOMAINS nor
-    // VALIDATE_HUMAN_DOMAINS), so every proposal falls through to
-    // needs-human-judgment skip. Sprint 8 will register the domain)
+    // Step 3e: Detect agent subtypes (DISABLED in v3.28.9, awaiting Día 2
+    // rewrite — domain `agent-quality` registered as HUMAN-gated in §4.1)
     const agentSubtypeProposals = legacyDetectors ? detectAgentSubtypes(observations) : [];
     log(`Detected ${agentSubtypeProposals.length} agent subtype issue(s)`);
 
-    // Step 3f: Detect file coupling (DISABLED in v3.28.9 — trigger
-    // 'Edit|f1|f2' is a malformed regex alternation that loses the coupling
-    // relationship + domain 'coupling' is orphaned. Sprint 8 will fix both)
+    // Step 3f: Detect file coupling (DISABLED in v3.28.9, awaiting Día 2
+    // rewrite — domain `coupling` registered as HUMAN-gated in §4.1; trigger
+    // will use regex-on-tool-input form `Edit.*(?:f1|f2)` per §4.2)
     const couplingProposals = legacyDetectors ? detectFileCoupling(observations) : [];
     log(`Detected ${couplingProposals.length} file coupling pattern(s)`);
 
@@ -1718,11 +1630,11 @@ async function main() {
     }
 
     // Step 6: Combine all proposals with session_date for cross-day tracking
+    // (v3.29.0 §4.6: repetitionProposals + workflowProposals lists removed
+    // along with their source detectors.)
     const rawProposals = [
       ...errorProposals,
-      ...repetitionProposals,
       ...correctionProposals,
-      ...workflowProposals,
       ...agentProposals,
       ...agentSubtypeProposals,   // v3.27.0
       ...couplingProposals,        // v3.27.0
@@ -1770,8 +1682,9 @@ if (require.main === module) {
 } else {
   module.exports = {
     isError, extractFilePath, sanitizeProposalAction,
-    detectErrorResolutions, detectRepetitions,
-    detectUserCorrections, detectWorkflowChains, detectAgentPatterns,
+    detectErrorResolutions,
+    // v3.29.0 §4.6: detectRepetitions and detectWorkflowChains retired.
+    detectUserCorrections, detectAgentPatterns,
     detectAgentSubtypes, detectFileCoupling, detectTimeOfDayPatterns, // v3.27.0
     detectCommandUsage, dedupProposalsByIncident,
     // v3.14.0 — impact funnel correlator (orphan-sid fix v3.19.1)

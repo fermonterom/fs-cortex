@@ -1104,6 +1104,135 @@ else
 fi
 rm -rf "$T27"
 
+# ── v3.29.0 (Sprint 8 §4.1 + §4.7) — Día 1 tests ─────────────────────────────
+
+# ── Test 28: human-domain-coupling-skipped (§4.1) ────────────────────────────
+echo "--- Test 28: human-domain-coupling-skipped ---"
+T28="$(mktemp -d -t distill-t28-XXXXXX)"
+export CORTEX_DIR="$T28"
+make_proposal "$T28/proposals.json" "t28-coupling" "0.55" "coupling"
+
+result=$(python3 - <<PYEOF
+$(_py_patch "$T28")
+r = de.auto_validate_proposals()
+skipped = {s['id']: s['reason'] for s in r['skipped']}
+accepted_ids = [a['id'] for a in r['accepted']]
+reason_ok = skipped.get('t28-coupling') == 'needs-human-judgment'
+not_accepted = 't28-coupling' not in accepted_ids
+instinct_path = de.CORTEX_DIR / 'instincts' / 'global' / 't28-coupling.yaml'
+no_instinct = not instinct_path.exists()
+print(reason_ok, not_accepted, no_instinct)
+PYEOF
+)
+if echo "$result" | grep -q "True True True"; then
+  pass "human-domain-coupling-skipped: domain=coupling → needs-human-judgment, no instinct created"
+else
+  fail "human-domain-coupling-skipped: got '$result'"
+fi
+rm -rf "$T28"
+
+# ── Test 29: human-domain-agent-quality-skipped (§4.1) ───────────────────────
+echo "--- Test 29: human-domain-agent-quality-skipped ---"
+T29="$(mktemp -d -t distill-t29-XXXXXX)"
+export CORTEX_DIR="$T29"
+make_proposal "$T29/proposals.json" "t29-aq" "0.55" "agent-quality"
+
+result=$(python3 - <<PYEOF
+$(_py_patch "$T29")
+r = de.auto_validate_proposals()
+skipped = {s['id']: s['reason'] for s in r['skipped']}
+accepted_ids = [a['id'] for a in r['accepted']]
+reason_ok = skipped.get('t29-aq') == 'needs-human-judgment'
+not_accepted = 't29-aq' not in accepted_ids
+instinct_path = de.CORTEX_DIR / 'instincts' / 'global' / 't29-aq.yaml'
+no_instinct = not instinct_path.exists()
+print(reason_ok, not_accepted, no_instinct)
+PYEOF
+)
+if echo "$result" | grep -q "True True True"; then
+  pass "human-domain-agent-quality-skipped: domain=agent-quality → needs-human-judgment"
+else
+  fail "human-domain-agent-quality-skipped: got '$result'"
+fi
+rm -rf "$T29"
+
+# ── Test 30: ghost-guard-restores-unauthorized-reject (§4.7) ─────────────────
+# Inject a proposal rejected by 'cx-validate-auto' (the ghost identity).
+# auto_validate_proposals must restore it to pending status and strip
+# rejected_by / rejected_reason fields.
+echo "--- Test 30: ghost-guard-restores-unauthorized-reject ---"
+T30="$(mktemp -d -t distill-t30-XXXXXX)"
+export CORTEX_DIR="$T30"
+mkdir -p "$T30"
+cat > "$T30/proposals.json" <<'JSON'
+[
+  {
+    "id": "t30-ghost",
+    "trigger": "Edit",
+    "action": "Coupled with bar.ts — review",
+    "confidence": 0.55,
+    "domain": "coupling",
+    "scope": "project",
+    "project_id": "proj-alpha",
+    "project_name": "alpha",
+    "tags": [],
+    "detected": "2026-05-05",
+    "source": "session-learner:file-coupling",
+    "status": "rejected",
+    "rejected_by": "cx-validate-auto",
+    "rejected_reason": "ghost-bulk",
+    "rejected_at": "2026-05-05"
+  },
+  {
+    "id": "t30-legit",
+    "trigger": "Bash",
+    "action": "Legit reject — leave alone",
+    "confidence": 0.40,
+    "domain": "gotcha",
+    "scope": "global",
+    "project_id": "global",
+    "project_name": "cross-project",
+    "tags": [],
+    "detected": "2026-05-05",
+    "source": "cx-analyze",
+    "status": "rejected",
+    "rejected_by": "cx-validate",
+    "rejected_reason": "operator declined",
+    "rejected_at": "2026-05-05"
+  }
+]
+JSON
+
+result=$(python3 - <<PYEOF
+$(_py_patch "$T30")
+import json
+r = de.auto_validate_proposals()
+ghost_restored = r.get('ghost_restored', -1)
+data = json.loads(de.PROPOSALS_FILE.read_text())
+by_id = {p['id']: p for p in data}
+# Ghost-tagged proposal restored to pending; rejected_by stripped.
+ghost = by_id['t30-ghost']
+ghost_ok = (
+    ghost.get('status') == 'pending'
+    and 'rejected_by' not in ghost
+    and 'rejected_reason' not in ghost
+)
+# Legitimate reject left untouched.
+legit = by_id['t30-legit']
+legit_ok = (
+    legit.get('status') == 'rejected'
+    and legit.get('rejected_by') == 'cx-validate'
+)
+print(ghost_restored == 1, ghost_ok, legit_ok)
+PYEOF
+)
+if echo "$result" | grep -q "True True True"; then
+  pass "ghost-guard-restores-unauthorized-reject: ghost reject restored, legit reject untouched"
+else
+  fail "ghost-guard-restores-unauthorized-reject: got '$result'"
+fi
+rm -rf "$T30"
+
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
