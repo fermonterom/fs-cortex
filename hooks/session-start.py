@@ -419,7 +419,7 @@ def main():
         'Cortex commands: /cx-status /cx-dashboard /cx-analyze /cx-distill '
         '/cx-validate /cx-evolve /cx-dream /cx-timeline /cx-audit /cx-eod '
         '/cx-gotcha /cx-feedback /cx-feedback-auto /cx-downvote /cx-retro '
-        '/cx-export /cx-backup /cx-restore /cx-router /cx-promote /cx-stop. '
+        '/cx-export /cx-backup /cx-restore /cx-router /cx-promote. '
         'Use /cx-status for system state.'
     )
 

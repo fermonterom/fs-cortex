@@ -212,7 +212,6 @@ finally {
 Write-Host "--- v3.26-v3.28 source files present ---"
 $requiredSources = @(
     "hooks/lib/cross-day-tracker.js",   # v3.26.0
-    "commands/cx-stop.md",              # v3.28.0
     "tests/test_cross_day_tracker.sh",  # v3.26.0
     "tests/test_detectors_v327.sh",     # v3.27.0
     "tests/test_v328_operational.sh"    # v3.28.0
