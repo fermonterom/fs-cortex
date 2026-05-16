@@ -57,6 +57,24 @@ SLACK_RE = re.compile(r"xox[bpsa]-[A-Za-z0-9-]{10,}")
 ANTHROPIC_RE = re.compile(r"sk-ant-[A-Za-z0-9_-]{20,}")
 OPENAI_RE = re.compile(r"sk-[A-Za-z0-9_-]{20,}")
 
+# v3.29.4: HTTPS git remote with embedded credentials (user:token@host).
+# SSH remotes (git@host:owner/repo) are credential-free by construction.
+GIT_REMOTE_CRED_RE = re.compile(r"^(https?://)[^@/\s]+@")
+
+
+def _scrub_git_remote(url):
+    """Strip embedded credentials from an HTTPS git remote URL.
+
+    `git remote get-url origin` faithfully echoes credentials the user
+    stored in the remote — once those land in registry.json or the
+    project cache they bypass scrub_secrets (which never inspects the
+    registry). Strip on entry so the rest of the pipeline only sees a
+    safe URL.
+    """
+    if not url:
+        return url
+    return GIT_REMOTE_CRED_RE.sub(r"\1", url)
+
 
 def scrub_secrets(val):
     """Scrub secrets from a string using 12 patterns."""
@@ -105,21 +123,34 @@ def detect_is_error(output_text):
 
 # ── File Locking ─────────────────────────────────────────────────────
 
-def write_with_lock(filepath, content):
+def write_with_lock(filepath, content, pre_write_fn=None):
     """Write content to file with cross-platform file locking.
 
     v3.29.3: Windows path uses a separate lockfile (msvcrt.locking on the
     data file's FD corrupted the append cursor). POSIX path is unchanged —
     the .lock file is intentionally persistent (one per project, bounded ≤N).
+
+    v3.29.4: optional `pre_write_fn(filepath)` runs INSIDE the lock right
+    before the append. Used for archive rotation — keeping size-check +
+    rename inside the same critical section prevents the race where a
+    concurrent writer appends to the file we just renamed.
     """
+    def _critical_section():
+        if pre_write_fn is not None:
+            try:
+                pre_write_fn(filepath)
+            except OSError:
+                pass
+        with open(filepath, "a") as f:
+            f.write(content + "\n")
+
     lockfile = str(filepath) + ".lock"
     try:
         import fcntl
         with open(lockfile, "a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             try:
-                with open(filepath, "a") as f:
-                    f.write(content + "\n")
+                _critical_section()
             finally:
                 fcntl.flock(lock, fcntl.LOCK_UN)
     except ImportError:
@@ -131,8 +162,7 @@ def write_with_lock(filepath, content):
                     lock.seek(0)
                     msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
                     try:
-                        with open(filepath, "a") as f:
-                            f.write(content + "\n")
+                        _critical_section()
                     finally:
                         try:
                             lock.seek(0)
@@ -141,12 +171,10 @@ def write_with_lock(filepath, content):
                             pass
                 except OSError:
                     # Lock unavailable — degrade to plain append, never block.
-                    with open(filepath, "a") as f:
-                        f.write(content + "\n")
+                    _critical_section()
         except (ImportError, OSError):
             # Ultimate fallback — plain append
-            with open(filepath, "a") as f:
-                f.write(content + "\n")
+            _critical_section()
 
 
 def atomic_write_json(filepath, data):
@@ -207,6 +235,10 @@ def detect_project(cwd):
         ).stdout.strip()
     except Exception:
         pass
+
+    # v3.29.4: strip user:token@ from HTTPS remotes before anything downstream
+    # (registry.json, project cache, project_id hash) ever sees them.
+    remote_url = _scrub_git_remote(remote_url)
 
     hash_input = remote_url or project_root
     project_id = hashlib.sha256(hash_input.encode()).hexdigest()[:12]
@@ -314,7 +346,8 @@ def archive_if_needed(obs_file, max_mb=None):
     if size / 1048576 >= max_mb:
         archive_dir = os.path.join(os.path.dirname(obs_file), "observations.archive")
         os.makedirs(archive_dir, exist_ok=True)
-        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        # v3.29.4: UTC-aware timestamp matches the rest of the file (line 549).
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         dest = os.path.join(archive_dir, f"observations-{ts}-{os.getpid()}.jsonl")
         try:
             os.rename(obs_file, dest)
@@ -447,7 +480,11 @@ def main():
 
     tool_input = data.get("tool_input", data.get("input", ""))
     input_str = json.dumps(tool_input) if isinstance(tool_input, dict) else str(tool_input)
-    input_hash = hashlib.md5((tool_name + input_str).encode()).hexdigest()[:16]
+    # v3.29.4: SHA256 instead of MD5. MD5 raises ValueError under FIPS mode
+    # (RHEL/CentOS hardened deployments) and the top-level except in main()
+    # only writes to stderr under CORTEX_DEBUG — observations were silently
+    # discarded in production. SHA256 is FIPS-compliant and equally fast.
+    input_hash = hashlib.sha256((tool_name + input_str).encode()).hexdigest()[:16]
 
     dedup_dir = get_dedup_dir()
     dedup_file = os.path.join(dedup_dir, f"dedup-{session_id}")
@@ -571,10 +608,10 @@ def main():
 
     obs_line = json.dumps(observation)
 
-    # 10. Archive check + write with lock
+    # 10. Archive check + write — both under the same lock (v3.29.4) to
+    # prevent a concurrent appender from writing into a just-renamed file.
     obs_file = os.path.join(project_dir, "observations.jsonl")
-    archive_if_needed(obs_file)
-    write_with_lock(obs_file, obs_line)
+    write_with_lock(obs_file, obs_line, pre_write_fn=archive_if_needed)
 
     # 11. Watchdog
     if event == "tc":

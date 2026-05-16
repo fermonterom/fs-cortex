@@ -235,11 +235,23 @@ def _remove_frontmatter_field(text: str, key: str) -> str:
 
 
 def _atomic_write(path: Path, content: str) -> None:
-    """Write content atomically: tmp then os.replace."""
+    """Write content atomically: tmp then os.replace.
+
+    v3.29.4: try/finally around os.replace so a failed replace (EACCES,
+    cross-device move, EBUSY on Windows) does not leak the .tmp.PID file.
+    Matches the pattern already used in hooks/observe.py:atomic_write_json.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
     tmp.write_text(content, encoding="utf-8")
-    os.replace(tmp, path)
+    try:
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
 
 
 # ── File discovery ────────────────────────────────────────────────────────────
@@ -746,10 +758,13 @@ def auto_promote_to_law(
                 f"sessions {distinct_sessions}/{LAW_MIN_DISTINCT_SESSIONS} (need {need} more)"
             )
 
-        # ── Criteria 3: ≥ 3 distinct projects ────────────────────────────
+        # ── Criteria 3: ≥ LAW_MIN_PROJECTS distinct projects ─────────────
+        # v3.29.4: use the constant (lowered to 1 in v3.24.0) instead of
+        # the stale literal "3" so /cx-distill audit output matches the
+        # gate actually applied.
         proj_count = _count_distinct_projects(fields, iid)
         if proj_count < LAW_MIN_PROJECTS:
-            failed_reasons.append(f"projects < 3 ({proj_count} seen)")
+            failed_reasons.append(f"projects < {LAW_MIN_PROJECTS} ({proj_count} seen)")
 
         # ── Criteria 4 & 5: impact events ────────────────────────────────
         iid_impact = impact.get(iid, {"useful": 0, "noise": 0})
