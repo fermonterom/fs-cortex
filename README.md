@@ -185,7 +185,7 @@ You work → Cortex observes → /cx-analyze detects patterns → /cx-validate y
 → unused knowledge decays (-0.05/month) → /cx-dream cleans up stale instincts
 ```
 
-## Commands (21)
+## Commands (20)
 
 | Command | What it does |
 |---------|-------------|
@@ -209,7 +209,6 @@ You work → Cortex observes → /cx-analyze detects patterns → /cx-validate y
 | `/cx-restore` | Import knowledge from a backup archive |
 | `/cx-feedback` | Cierra el loop humano del funnel de impacto — marca la última inyección como útil o ruido |
 | `/cx-feedback-auto` | Agent self-rating on tool-choice reflexes — emits feedback with source=agent |
-| `/cx-stop` | Manually trigger session-learner pipeline without closing the chat (v3.28.0+) |
 
 ### Interactive Shorthand
 
@@ -385,7 +384,7 @@ bash tests/test_migrate_legacy_iid.sh  # 12 legacy iid migration tests
 bash tests/test_reflex_matchers.sh     # 28 reflex matcher tests (regex correctness)
 bash tests/test_cross_day_tracker.sh   # 10 cross-day boost tests (v3.26.0+)
 bash tests/test_detectors_v327.sh      # 12 v3.27.0 detector tests (subtypes, coupling, ToD)
-bash tests/test_v328_operational.sh    # 5 v3.28.0 tests (cx-stop, daily snapshot, --deep spec)
+bash tests/test_v328_operational.sh    # 4 v3.28.0 tests (daily snapshot, --deep spec)
 pwsh tests/test_install_ps1.ps1        # 10 PowerShell installer tests (CI windows-latest)
 ```
 

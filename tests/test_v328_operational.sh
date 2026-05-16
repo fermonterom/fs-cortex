@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Tests for v3.28.0 operational tools: cx-stop, cx-analyze --deep, daily snapshot
+# Tests for v3.28.0 operational tools: cx-analyze --deep, daily snapshot
+# (cx-stop test removed in v3.29.1 along with the /cx-stop command)
 set -e
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -108,11 +109,6 @@ mod2 = importlib.util.module_from_spec(spec2)
 spec2.loader.exec_module(mod2)
 mod2.write_daily_snapshot('2026-05-06')  # Should not raise
 "
-
-# ── cx-stop (session-learner.js runs cleanly) ───────────────────────────────
-
-run_test_bash "cx-stop: session-learner exits 0 with empty stdin" \
-  "printf '{}\n' | node '$REPO_ROOT/hooks/session-learner.js'"
 
 # ── cx-analyze --deep (archive directory handling) ──────────────────────────
 

@@ -4,6 +4,33 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.29.1] — 2026-05-16
+
+### Removed
+
+- **`/cx-stop` command** — retired. The Stop hook fires automatically when
+  Claude Code closes a session normally, and v3.29.0's PreCompact hardening
+  (§4.15) closed the `/compact` data-loss gap that was the only remaining
+  real use case for the manual trigger. The command was carried in the
+  catalog and banners for 1 minor release but never used in practice.
+  Removed from: `commands/cx-stop.md` (file deleted), `commands/cx-router.md`
+  (catalog table), `core/claudemd-section.md` (CLAUDE.md section template),
+  `hooks/session-start.py` (commands hint string), `skills/cortex/SKILL.md`
+  (frontmatter description + `### Commands (21)` → `(20)` header + table
+  row), `README.md` (`## Commands (21)` → `(20)` + table row + tests line),
+  `docs/FEATURES.md` (tests table + version history),
+  `tests/test_install.sh` (21 → 20 commands count assert),
+  `tests/test_install_ps1.ps1` (required-sources list),
+  `tests/test_v328_operational.sh` (removed `cx-stop: session-learner exits
+  0` test case, 5 → 4 in the suite).
+
+### Tests
+
+- `test_v328_operational.sh`: 5 → 4 PASS (removed `cx-stop` test).
+- `test_install.sh`: still 42 PASS (count assert updated 21 → 20).
+- Full suite: **432 PASS / 0 FAIL** (was 433 in v3.29.0, -1 for the removed
+  cx-stop test case).
+
 ## [3.29.0] — 2026-05-16
 
 Sprint 8 — Detector overhaul + autopilot foundation. Largest single release
