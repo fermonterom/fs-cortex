@@ -159,10 +159,55 @@ EOF
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Test F4 — path scrubber normalizes /Users/<x>/ → ~/
+# ──────────────────────────────────────────────────────────────────────────────
+test_f4_path_scrub() {
+  local OUT
+  OUT=$(python3 -c "
+import sys
+sys.path.insert(0, '$REPO_ROOT/hooks')
+from observe import scrub_secrets
+# macOS-style absolute home path inside a JSON tool input
+print(scrub_secrets('{\"file_path\":\"/Users/fmm/github/LinkedIn/app/x.ts\"}'))
+")
+  if echo "$OUT" | grep -q '"~/github/LinkedIn/app/x.ts"' && ! echo "$OUT" | grep -q '/Users/fmm/'; then
+    pass "F4 macOS path scrubbed: $OUT"
+  else
+    fail "F4 macOS path not scrubbed: $OUT"
+  fi
+
+  OUT=$(python3 -c "
+import sys
+sys.path.insert(0, '$REPO_ROOT/hooks')
+from observe import scrub_secrets
+print(scrub_secrets('Traceback /home/runner/work/repo/file.py line 42'))
+")
+  if echo "$OUT" | grep -q '~/work/repo/file.py' && ! echo "$OUT" | grep -q '/home/runner/'; then
+    pass "F4 Linux path scrubbed: $OUT"
+  else
+    fail "F4 Linux path not scrubbed: $OUT"
+  fi
+
+  # Regression: secrets still scrubbed
+  OUT=$(python3 -c "
+import sys
+sys.path.insert(0, '$REPO_ROOT/hooks')
+from observe import scrub_secrets
+print(scrub_secrets('GITHUB_TOKEN=ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'))
+")
+  if echo "$OUT" | grep -q REDACTED; then
+    pass "F4 secret-scrub regression OK: $OUT"
+  else
+    fail "F4 secret-scrub regression: $OUT"
+  fi
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
 echo "=== v3.29.5 safety hotfix acceptance ==="
 test_f1_orphan_domain_held
 test_f2_injection_rejected
 test_f2_clean_accepted
+test_f4_path_scrub
 test_f5_history_split
 
 echo "──────────────────────────────────────"
