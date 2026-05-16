@@ -142,16 +142,20 @@ if (cache.length !== 50) throw new Error('expected 50 entries, got ' + cache.len
 
 run_test "v3.28.4: same-day same-pattern_id is appended only once" "
 const t = require('$TRACKER_MOD');
+const fs = require('fs');
 t._resetCache();
-require('fs').rmSync(t.TRACKER_PATH, {force: true});
+fs.rmSync(t.TRACKER_PATH, {force: true});
 // Stop hook re-emits same proposals on each session close. Without the v3.28.4
 // guard, applyCrossDayBoost would append a new tracker entry on every call.
+// v3.29.5 §F3: reads from disk (not cache) because §F3 intentionally stops
+// mutating _trackerCache in-session — the dedup is enforced via a separate
+// per-session memo and the disk remains the source of truth.
 for (let i = 0; i < 10; i++) {
   t.applyCrossDayBoost({id: 'p-stop-hook', trigger: 'foo|bar', action: 'a', confidence: 0.40, source: 't'});
 }
-const cache = t.loadTrackerCache();
-const entries = cache.filter(e => e.pattern_id === 'p-stop-hook');
-if (entries.length !== 1) throw new Error('expected 1 same-day entry, got ' + entries.length);
+const lines = fs.readFileSync(t.TRACKER_PATH, 'utf8').split('\n').filter(Boolean);
+const entries = lines.map(l => JSON.parse(l)).filter(e => e.pattern_id === 'p-stop-hook');
+if (entries.length !== 1) throw new Error('expected 1 same-day disk entry, got ' + entries.length);
 "
 
 run_test "v3.28.4: prune() compacts same-day duplicates from legacy data" "
@@ -171,6 +175,44 @@ const result = t.prune(365);
 if (result.before !== 5) throw new Error('expected before=5, got ' + result.before);
 if (result.after !== 3) throw new Error('expected after=3 (dup1@today, dup1@yesterday, unique@today), got ' + result.after);
 if (result.pruned !== 2) throw new Error('expected pruned=2, got ' + result.pruned);
+"
+
+run_test "v3.29.5 F3: in-session emits do NOT inflate dayCount via Jaccard" "
+const t = require('$TRACKER_MOD');
+t._resetCache();
+const fs = require('fs');
+fs.rmSync(t.TRACKER_PATH, {force: true});
+// Three proposals with similar triggers emitted in the same Stop.
+// Pre-F3: append mutated _trackerCache, so p2 and p3 saw it via Jaccard and
+// reported dayCount=2 then 3.
+// Post-F3: cache not mutated in-session; all three see the same empty
+// baseline and report dayCount=1 each.
+const p1 = { id: 'cAA', trigger: 'Edit shared common file', confidence: 0.55 };
+const p2 = { id: 'cBB', trigger: 'Edit shared common other', confidence: 0.55 };
+const p3 = { id: 'cCC', trigger: 'Edit shared common third', confidence: 0.55 };
+const r1 = t.applyCrossDayBoost(p1);
+const r2 = t.applyCrossDayBoost(p2);
+const r3 = t.applyCrossDayBoost(p3);
+if (r1.cross_day_count !== 1) throw new Error('p1 expected 1, got ' + r1.cross_day_count);
+if (r2.cross_day_count !== 1) throw new Error('p2 expected 1 (no in-session inflation), got ' + r2.cross_day_count);
+if (r3.cross_day_count !== 1) throw new Error('p3 expected 1 (no in-session inflation), got ' + r3.cross_day_count);
+const lines = fs.readFileSync(t.TRACKER_PATH, 'utf8').split('\n').filter(Boolean);
+if (lines.length !== 3) throw new Error('expected 3 disk lines, got ' + lines.length);
+"
+
+run_test "v3.29.5 F3 regression: historical evidence still grants boost" "
+const t = require('$TRACKER_MOD');
+t._resetCache();
+const fs = require('fs');
+fs.rmSync(t.TRACKER_PATH, {force: true});
+// Pre-seed 2 historical dates for a pattern, then evaluate today's emit.
+fs.writeFileSync(t.TRACKER_PATH, [
+  '{\"date\":\"2026-05-10\",\"pattern_id\":\"hist1\",\"trigger_norm\":\"edit shared a\",\"source_detector\":\"test\"}',
+  '{\"date\":\"2026-05-12\",\"pattern_id\":\"hist1\",\"trigger_norm\":\"edit shared a\",\"source_detector\":\"test\"}',
+].join('\n') + '\n');
+const r = t.applyCrossDayBoost({ id: 'hist1', trigger: 'edit shared a', confidence: 0.55 });
+if (r.cross_day_count !== 3) throw new Error('expected 3 distinct dates, got ' + r.cross_day_count);
+if (r.confidence < 0.595) throw new Error('expected boost ≥ 0.05, conf got ' + r.confidence);
 "
 
 echo ""
