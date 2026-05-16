@@ -12,17 +12,15 @@ BLOCKED_PATTERNS = [
 ]
 
 
-def validate_instinct(filepath):
-    """Validate an instinct YAML file against injection patterns.
+def validate_yaml_content(content):
+    """Validate raw YAML instinct content against injection patterns.
+
+    Pure function — operates on the YAML string, no file I/O. Use this from
+    callers that have already generated the YAML in memory (e.g. distill_engine
+    auto_validate_proposals — v3.29.5 §F2) before writing to disk.
 
     Returns (is_valid, reason).
     """
-    try:
-        with open(filepath) as f:
-            content = f.read()
-    except (OSError, IOError) as e:
-        return False, f"Cannot read file: {e}"
-
     # Check action field — handle YAML multiline values (| or >)
     fm_match = re.search(r'^---\s*\n(.*?)\n---', content, re.DOTALL)
     if fm_match:
@@ -49,6 +47,23 @@ def validate_instinct(filepath):
                 return False, "Universal wildcard trigger without domain restriction"
 
     return True, "OK"
+
+
+def validate_instinct(filepath):
+    """Validate an instinct YAML file against injection patterns.
+
+    Thin wrapper over validate_yaml_content for filepath-based callers (CLI,
+    distill_engine.distill, dream_cycle regex audit).
+
+    Returns (is_valid, reason).
+    """
+    try:
+        with open(filepath) as f:
+            content = f.read()
+    except (OSError, IOError) as e:
+        return False, f"Cannot read file: {e}"
+
+    return validate_yaml_content(content)
 
 
 if __name__ == '__main__':

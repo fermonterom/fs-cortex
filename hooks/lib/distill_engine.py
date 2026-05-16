@@ -44,6 +44,7 @@ if _LIB_DIR not in sys.path:
     sys.path.insert(0, _LIB_DIR)
 
 from regex_guard import unsafe_reason as _guard_unsafe_reason
+from validate_instinct import validate_yaml_content as _validate_yaml_content
 
 # ── Environment & paths ─────────────────────────────────────────────────────
 
@@ -104,6 +105,13 @@ VALIDATE_AUTO_DOMAINS = {"gotcha", "pattern", "error-recovery", "agent-evolution
 # (human-gated, exactly as the Sprint 8 detector overhaul intends).
 VALIDATE_HUMAN_DOMAINS = {"correction", "user-preference", "decision", "workflow",
                           "coupling", "agent-quality"}
+
+# v3.29.5 §F1 — Union of every domain that auto_validate_proposals knows how to
+# handle. Any proposal whose domain falls outside this set is HELD (not pending,
+# not silently rejected) with hold_reason="orphan-domain:<name>" so the operator
+# sees it via /cx-validate and the engineering team gets a signal that the
+# detector emitting that domain is missing from the whitelists.
+KNOWN_DOMAINS = VALIDATE_AUTO_DOMAINS | VALIDATE_HUMAN_DOMAINS
 
 # v3.29.0 (Sprint 8 §4.7): whitelist of authorized rejecter identities for the
 # ghost-guard. Any proposal carrying a rejected status with `rejected_by` NOT
@@ -1015,6 +1023,24 @@ def auto_validate_proposals(dry_run: bool = False) -> dict:
             skipped.append({"id": iid, "reason": "already-instinct"})
             continue
 
+        # v3.29.5 §F1 — Orphan-domain auto-hold. Pre-v3.29.5 a proposal whose
+        # domain was neither in VALIDATE_HUMAN_DOMAINS nor VALIDATE_AUTO_DOMAINS
+        # was skipped with `needs-human-judgment` but its status stayed
+        # `pending` — invisible to /cx-validate (which only surfaces `held`)
+        # and never processable. Now we HELD it explicitly with an
+        # `orphan-domain:<name>` label so the operator sees the gap.
+        if domain not in KNOWN_DOMAINS:
+            hold_label = f"orphan-domain:{domain or '<empty>'}"
+            skipped.append({"id": iid, "reason": hold_label})
+            if not dry_run:
+                updated_proposals[i] = dict(proposal)
+                updated_proposals[i]["status"] = "held"
+                updated_proposals[i]["hold_reason"] = hold_label
+                updated_proposals[i]["held_by"] = "cx-auto-validate"
+                updated_proposals[i]["held_at"] = today
+                _log_knowledge("held", iid, f"reason={hold_label}", source="cx-auto-validate")
+            continue
+
         if domain not in VALIDATE_AUTO_DOMAINS:
             skipped.append({"id": iid, "reason": "needs-human-judgment"})
             continue
@@ -1049,6 +1075,24 @@ def auto_validate_proposals(dry_run: bool = False) -> dict:
 
         if not dry_run:
             yaml_content = _proposal_to_instinct_yaml(proposal, today)
+
+            # v3.29.5 §F2 — Validate against BLOCKED_PATTERNS (prompt-injection)
+            # + length BEFORE writing the instinct. Pre-v3.29.5 the validation
+            # only ran as a CLI tool over already-written files; the auto-create
+            # path skipped it entirely. A proposal with "you are now…" in the
+            # action could become an active instinct without barrier.
+            yaml_ok, yaml_reason = _validate_yaml_content(yaml_content)
+            if not yaml_ok:
+                reject_label = f"validate_instinct:{yaml_reason}"
+                skipped.append({"id": iid, "reason": reject_label})
+                updated_proposals[i] = dict(proposal)
+                updated_proposals[i]["status"] = "rejected"
+                updated_proposals[i]["rejected_by"] = "cx-auto-validate"
+                updated_proposals[i]["rejected_at"] = today
+                updated_proposals[i]["rejected_reason"] = reject_label
+                _log_knowledge("rejected", iid, f"reason={reject_label}", source="cx-auto-validate")
+                continue
+
             _atomic_write(dest_path, yaml_content)
 
             # Update proposal status
@@ -1065,9 +1109,18 @@ def auto_validate_proposals(dry_run: bool = False) -> dict:
         isinstance(p, dict) and p.get("status") == "held" and p.get("held_by") == "cx-auto-validate"
         for p in updated_proposals
     )
+    # v3.29.5 §F2 — persist also when we mutated proposals to `rejected` via
+    # validate_instinct safety gate. Without this the rejection lived only in
+    # memory and the proposal stayed `pending` on disk, re-evaluated every
+    # run.
+    has_auto_rejects = any(
+        isinstance(p, dict) and p.get("status") == "rejected"
+        and p.get("rejected_by") == "cx-auto-validate"
+        for p in updated_proposals
+    )
     # v3.29.0: also persist when the ghost-guard restored proposals to pending,
     # otherwise the rejection survives in the on-disk file across runs.
-    if not dry_run and (accepted or has_holds or ghost_restored):
+    if not dry_run and (accepted or has_holds or has_auto_rejects or ghost_restored):
         _save_proposals(updated_proposals)
 
     return {
