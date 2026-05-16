@@ -401,8 +401,8 @@ projects_seen:
 - proj-beta
 - proj-gamma"
 make_impact_events "$T10/impact.jsonl" "t10-full" 6 0
-# Create 10 law files
-for i in $(seq 1 10); do
+# Create LAW_MAX_ACTIVE law files (v3.29.2: cap raised 10 → 12)
+for i in $(seq 1 12); do
   make_law "$T10/laws" "existing-law-$i" "Always do thing $i for testing purposes"
 done
 
@@ -425,7 +425,7 @@ reason_ok = any('laws ==' in r for c in candidates if c['id'] == 't10-full' for 
 print(in_cand, reason_ok)
 ")
 if echo "$result" | grep -q "True True"; then
-  pass "promote-rejects-laws-full: 10 active laws → candidate with 'laws == 10'"
+  pass "promote-rejects-laws-full: 12 active laws → candidate with 'laws == 12'"
 else
   fail "promote-rejects-laws-full: got '$result'"
 fi

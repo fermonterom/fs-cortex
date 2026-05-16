@@ -79,7 +79,11 @@ LAW_MIN_PROJECTS = 1  # v3.24.0: was 3 — unreachable for solo-project knowledg
                       # LAW_JACCARD_THRESHOLD=0.50) still preserve quality.
 LAW_MIN_USEFUL_14D = 5
 LAW_MAX_NOISE_14D = 0
-LAW_MAX_ACTIVE = 10
+LAW_MAX_ACTIVE = 12  # v3.29.2: was 10. Raised after Sprint 8 cleanup left
+                     # genuinely universal candidates queued with no room.
+                     # Token cost: +80 tok/session baseline (2 extra laws × 40).
+                     # Quality gate intact (LAW_THRESHOLD_CONF, LAW_SUSTAINED_DAYS,
+                     # LAW_MIN_DISTINCT_SESSIONS, LAW_MAX_NOISE_14D unchanged).
 LAW_JACCARD_THRESHOLD = 0.50
 LAW_MAX_CHARS = 120
 # v3.29.0 §4.16: minimum distinct sessions (UUIDs) where an instinct must
