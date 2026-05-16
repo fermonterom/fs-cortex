@@ -4,6 +4,61 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.29.3] — 2026-05-16
+
+### Fixed
+
+- **`hooks/observe.py:108`** — `write_with_lock()` Windows fallback was
+  taking the lock on the data file's own FD and calling `f.seek(0)` before
+  `msvcrt.locking(..., LK_UNLCK, 1)`. On Windows installs this could
+  corrupt the append cursor for `observations.jsonl`. Rewritten to lock
+  a SEPARATE `.lock` file (parity with the POSIX `fcntl.flock` path,
+  which was already correct and is untouched). Adds an inner
+  `try/except OSError` that degrades to plain append if the lock is
+  unavailable so the hook never blocks. POSIX behavior unchanged.
+
+- **`hooks/injector.sh:7,24`** — dropped `set -e` and switched `echo
+  "$INPUT_JSON"` → `printf '%s\n' "$INPUT_JSON"`. The hook documents
+  itself as "exits 0 silently on any error (never blocks Claude)", but
+  with `set -e` a failure in `mktemp`/`chmod`/redirect would exit
+  non-zero mid-script before reaching the explicit `exit 0`. `printf`
+  also avoids `echo` interpreting payloads starting with `-` as flags.
+  Both critical steps now use explicit `|| exit 0`.
+
+- **`hooks/session-learner.js:785-878`** — `updateInstincts()` no longer
+  reads and rewrites `instinct-tracking.json` once per matched instinct
+  (N updates = 2N atomic ops + race window where two concurrent Stop
+  hooks could lose writes). The tracking file is now read ONCE before
+  the loop (lazy), mutated in memory via the new
+  `_mirrorToTrackingMem(tracking, ...)` helper, and flushed ONCE after
+  the loop via `_flushTracking(tracking)`. Behavior preserved: counts
+  never regress, `last_seen` is timestamped at write time, missing
+  `first_seen` is backfilled.
+
+### Changed
+
+- **`README.md` + `docs/FEATURES.md`** — doc sync for the v3.29.2 cap
+  raise. `README.md:37` `Laws (max 10) ~550 tokens` → `(max 12) ~630
+  tokens` (SessionStart injection point); `README.md:268` data
+  directory tree `# One-liners (max 10 active)` → `(max 12 active)`;
+  `README.md:336` token budget row `Laws (max 10) | ~300` →
+  `(max 12) | ~480`. `docs/FEATURES.md:112` `Injects Laws (max 10)`
+  → `(max 12)`; `docs/FEATURES.md:510` token budget row
+  `Laws (max 10) | ~400` → `(max 12) | ~480`.
+
+- **`docs/FEATURES.md`** — `CORTEX_AUTODISTILL_OFF` documented as the
+  third Sprint 8 kill switch alongside `CORTEX_OBSERVE_OFF` and
+  `CORTEX_DETECTORS_OFF`. It lives at `hooks/lib/distill_engine.py:1396`
+  and was already shipped in v3.29.0, just absent from the feature
+  reference.
+
+### Tests
+
+- All 3 mandatory pre-push suites still green: `test_security.sh` 7/7,
+  `test_dream_cycle.sh` 38/38, `test_integrity.sh` 14/14. No new tests
+  added — all three fixes are surgical patches to existing code paths
+  exercised by the current suite.
+
 ## [3.29.2] — 2026-05-16
 
 ### Changed
