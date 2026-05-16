@@ -61,6 +61,21 @@ OPENAI_RE = re.compile(r"sk-[A-Za-z0-9_-]{20,}")
 # SSH remotes (git@host:owner/repo) are credential-free by construction.
 GIT_REMOTE_CRED_RE = re.compile(r"^(https?://)[^@/\s]+@")
 
+# v3.29.5 §F4 — Strip the local username from absolute home paths.
+# Pre-v3.29.5 observations stored `/Users/fmm/github/X/file.ts` literally in
+# the `input` / `output` / `err_msg` fields. The error-fix detector in
+# session-learner.js then embedded the raw input into proposal actions, so
+# cross-project paths leaked into proposals.json and (eventually) instinct
+# YAMLs.
+#
+# Replacement strategy: `/Users/<username>/...` → `~/...`. The path structure
+# (repo dir, leaf filename, extension) is preserved so downstream consumers
+# that match `"file_path":"..."` continue to work — `path.basename('~/x/y.ts')`
+# still returns `'y.ts'`. The user identity is what gets removed.
+#
+# Linux: `/home/<username>/...` covered by the same pattern below.
+HOME_PATH_RE = re.compile(r"/(Users|home)/[A-Za-z0-9_.\-]+/")
+
 
 def _scrub_git_remote(url):
     """Strip embedded credentials from an HTTPS git remote URL.
@@ -93,6 +108,9 @@ def scrub_secrets(val):
     s = SLACK_RE.sub("[SLACK_TOKEN_REDACTED]", s)
     s = ANTHROPIC_RE.sub("[ANTHROPIC_KEY_REDACTED]", s)
     s = OPENAI_RE.sub("[OPENAI_KEY_REDACTED]", s)
+    # v3.29.5 §F4 — normalize absolute home paths to ~/ to prevent
+    # cross-project username leakage via observations.jsonl → proposals.json.
+    s = HOME_PATH_RE.sub("~/", s)
     return s
 
 
