@@ -4,6 +4,33 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.29.2] — 2026-05-16
+
+### Changed
+
+- **`hooks/lib/distill_engine.py:82`** — `LAW_MAX_ACTIVE` raised from
+  `10` to `12`. After Sprint 8 (v3.29.0) cleaned the detector pipeline,
+  `auto-distill-candidates.md` accumulated 25 conf≥0.95 instincts blocked
+  on the single failure reason `laws == 11 (max 10)`. The cap was the
+  bottleneck, not the quality gates. Net token cost: +80 tok/session
+  baseline (2 extra laws × 40 tok per session). All other promotion
+  gates unchanged: `LAW_THRESHOLD_CONF=0.95`, `LAW_SUSTAINED_DAYS=14`,
+  `LAW_MIN_DISTINCT_SESSIONS=3`, `LAW_MAX_NOISE_14D=0`,
+  `LAW_MIN_USEFUL_14D=5`. The universality filter applied by `/cx-distill`
+  Step 3a still rejects niche candidates.
+
+### Notes
+
+- Companion to a manual `/cx-distill` pass run the same day: archived
+  2 non-universal laws (`workflow-repo-first-install-after`,
+  `fersora-wikilink-path-drift-in-templates`), archived 2 stale global
+  instincts (`fersora-downloads-read-not-cat` duplicated the law
+  `macos-downloads-read-tool`, `agent-pattern-658cb3c0` was detector
+  noise), and promoted `pattern-test-after-change` to a new law. Net
+  active laws after the manual pass: 10. The cap raise to 12 leaves
+  room for the next 2 auto-promotions to land without a manual
+  intervention.
+
 ## [3.29.1] — 2026-05-16
 
 ### Removed
