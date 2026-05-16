@@ -3,8 +3,9 @@
 # Cortex Injector v3.0 — Thin Bash wrapper for Node.js engine
 # Reads stdin, writes to temp file, delegates to lib/injector-engine.js
 # Safety: exits 0 silently on any error (never blocks Claude)
-
-set -e
+# v3.29.3: dropped `set -e` — it could exit non-zero mid-script if any
+# intermediate command (mktemp/chmod/printf) failed, violating the exit-0
+# contract. All critical steps already use `|| exit 0` explicitly.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CORTEX_DIR="${CORTEX_DIR:-$HOME/.claude/cortex}"
@@ -19,9 +20,10 @@ INPUT_JSON=$(cat)
 command -v node >/dev/null 2>&1 || exit 0
 
 # Write hook payload to temp file (avoids exposing full payload in env/proc)
-_CX_INPUT_FILE=$(mktemp "${TMPDIR:-/tmp}/cx-input-XXXXXX")
-chmod 600 "$_CX_INPUT_FILE"
-echo "$INPUT_JSON" > "$_CX_INPUT_FILE"
+_CX_INPUT_FILE=$(mktemp "${TMPDIR:-/tmp}/cx-input-XXXXXX") || exit 0
+chmod 600 "$_CX_INPUT_FILE" 2>/dev/null || true
+# printf (not echo) — echo interprets values starting with `-` as flags
+printf '%s\n' "$INPUT_JSON" > "$_CX_INPUT_FILE" || exit 0
 trap 'rm -f "'"$_CX_INPUT_FILE"'"' EXIT
 
 # Validate CORTEX_DIR is under real home directory

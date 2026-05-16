@@ -783,6 +783,19 @@ function updateInstincts(observations) {
   }
 
   let updated = 0;
+  // v3.29.3: read instinct-tracking.json ONCE before the loop, mutate in
+  // memory, write ONCE at the end. Previously each _mirrorToTracking call
+  // did a full read-modify-write — N updated instincts = 2N atomic ops,
+  // and two concurrent Stop hooks could lose writes (no lock).
+  let tracking = null;
+  let trackingDirty = false;
+  const loadTrackingLazy = () => {
+    if (tracking !== null) return tracking;
+    try { tracking = JSON.parse(fs.readFileSync(TRACKING_FILE_PATH, 'utf8')); } catch { tracking = {}; }
+    if (!tracking || typeof tracking !== 'object') tracking = {};
+    return tracking;
+  };
+
   for (const yamlPath of yamlPaths) {
     try {
       const content = fs.readFileSync(yamlPath, 'utf8');
@@ -835,11 +848,17 @@ function updateInstincts(observations) {
         // staleness filter sees every instinct, not just the 1 it seeds.
         // (YAML keeps its fields for human readability + backups; the JSON
         // file becomes the operational source of truth for staleness.)
-        _mirrorToTracking(parsed.fields.id, TODAY, currentOccurrences + 1);
+        _mirrorToTrackingMem(loadTrackingLazy(), parsed.fields.id, TODAY, currentOccurrences + 1);
+        trackingDirty = true;
       }
     } catch (e) {
       log(`Failed to update instinct ${yamlPath}: ${e.message}`);
     }
+  }
+
+  // v3.29.3: flush tracking once after the loop (was N writes inside).
+  if (trackingDirty && tracking) {
+    _flushTracking(tracking);
   }
 
   if (updated > 0) {
@@ -849,12 +868,8 @@ function updateInstincts(observations) {
 
 const TRACKING_FILE_PATH = path.join(CORTEX_DIR, 'instinct-tracking.json');
 
-function _mirrorToTracking(instinctId, isoDate, count) {
-  if (!instinctId) return;
-  let tracking = {};
-  try { tracking = JSON.parse(fs.readFileSync(TRACKING_FILE_PATH, 'utf8')); } catch {}
-  if (!tracking || typeof tracking !== 'object') tracking = {};
-
+function _mirrorToTrackingMem(tracking, instinctId, isoDate, count) {
+  if (!instinctId || !tracking) return;
   const entry = tracking[instinctId] || {
     count: 0,
     sessions: [],
@@ -866,13 +881,15 @@ function _mirrorToTracking(instinctId, isoDate, count) {
   entry.last_seen = new Date().toISOString();
   if (!entry.first_seen) entry.first_seen = entry.last_seen;
   tracking[instinctId] = entry;
+}
 
+function _flushTracking(tracking) {
   try {
     const tmp = TRACKING_FILE_PATH + '.tmp.' + process.pid;
     fs.writeFileSync(tmp, JSON.stringify(tracking, null, 2), { mode: 0o600 });
     fs.renameSync(tmp, TRACKING_FILE_PATH);
   } catch (e) {
-    if (process.env.CORTEX_DEBUG) process.stderr.write('[cortex:learner] tracking mirror: ' + e.message + '\n');
+    if (process.env.CORTEX_DEBUG) process.stderr.write('[cortex:learner] tracking flush: ' + e.message + '\n');
   }
 }
 

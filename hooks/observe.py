@@ -106,7 +106,12 @@ def detect_is_error(output_text):
 # ── File Locking ─────────────────────────────────────────────────────
 
 def write_with_lock(filepath, content):
-    """Write content to file with cross-platform file locking."""
+    """Write content to file with cross-platform file locking.
+
+    v3.29.3: Windows path uses a separate lockfile (msvcrt.locking on the
+    data file's FD corrupted the append cursor). POSIX path is unchanged —
+    the .lock file is intentionally persistent (one per project, bounded ≤N).
+    """
     lockfile = str(filepath) + ".lock"
     try:
         import fcntl
@@ -118,16 +123,26 @@ def write_with_lock(filepath, content):
             finally:
                 fcntl.flock(lock, fcntl.LOCK_UN)
     except ImportError:
-        # Windows fallback using msvcrt
+        # Windows fallback — lock the SEPARATE lockfile, never the data FD.
         try:
             import msvcrt
-            with open(filepath, "a") as f:
-                msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
+            with open(lockfile, "a+") as lock:
                 try:
-                    f.write(content + "\n")
-                finally:
-                    f.seek(0)
-                    msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+                    lock.seek(0)
+                    msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+                    try:
+                        with open(filepath, "a") as f:
+                            f.write(content + "\n")
+                    finally:
+                        try:
+                            lock.seek(0)
+                            msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+                        except OSError:
+                            pass
+                except OSError:
+                    # Lock unavailable — degrade to plain append, never block.
+                    with open(filepath, "a") as f:
+                        f.write(content + "\n")
         except (ImportError, OSError):
             # Ultimate fallback — plain append
             with open(filepath, "a") as f:
