@@ -18,6 +18,11 @@ const JACCARD_THRESHOLD = 0.70;
 const PRUNE_DAYS = 365;
 
 let _trackerCache = null;
+// v3.29.5 §F3 — per-session dedup memo for "already appended this session".
+// Keeps the v3.28.4 guard (avoid Stop-hook re-emit duplicating disk lines)
+// without mutating _trackerCache (which would inflate retroactive boost).
+// Reset on prune or _resetCache. Lifetime = single Node process.
+const _appendedThisSession = new Set();
 
 function ensureDir(dir) {
   try {
@@ -65,7 +70,18 @@ function appendDetection(entry) {
   try {
     ensureDir(CORTEX_DIR);
     fs.appendFileSync(TRACKER_PATH, JSON.stringify(entry) + '\n', { mode: 0o600 });
-    if (_trackerCache !== null) _trackerCache.push(entry);
+    // v3.29.5 §F3 — DO NOT mutate _trackerCache during the session. Pre-v3.29.5
+    // we appended to the in-memory cache so later proposals in the same Stop
+    // saw the just-added entry. With Jaccard-based matching this inflated
+    // `distinctDates` retroactively: the first coupling proposal of the run
+    // appended (today, "Edit baseA baseB"), the second coupling proposal had
+    // a similar trigger_norm under Jaccard ≥ 0.70, matched, and counted
+    // `today` again — producing a fake `dayCount=2` and a tier-1 boost.
+    // Effect at scale (Sprint 8 reactivation, 1077 proposals): mass false
+    // boosts pushed dozens of HUMAN-gated proposals into the 0.70+ band
+    // without real cross-day evidence. The append goes to disk for the NEXT
+    // session to pick up via fresh loadTrackerCache; the current session's
+    // boost is computed strictly from the pre-session snapshot.
   } catch (_) {}
 }
 
@@ -91,21 +107,26 @@ function applyCrossDayBoost(proposal) {
   const distinctDates = new Set(matches.map(m => m.date).filter(Boolean));
   distinctDates.add(today);
 
-  // v3.28.4 — guard against same-day re-appends. Stop hook re-processes
-  // observations on every session close, so the same pattern_id can be
-  // emitted dozens of times per day. Only append once per (date, pattern_id)
-  // to bound tracker file size. Distinct-date counting (boost logic) is
-  // unaffected because the first append of the day is always made.
-  const alreadyToday = matches.some(e =>
+  // v3.29.5 §F3 — guard against same-day re-appends. Two layers now:
+  //  (a) historical guard from disk-loaded cache (tracker) — catches the
+  //      v3.28.4 case where a prior session today already wrote this id.
+  //  (b) per-session memo (_appendedThisSession) — catches the new case
+  //      where multiple proposals in THIS session try to append for the
+  //      same (date, pattern_id) but the cache is intentionally NOT mutated
+  //      to prevent retroactive boost inflation.
+  const historyKey = `${today}|${proposal.id}`;
+  const alreadyTodayDisk = matches.some(e =>
     e.date === today && e.pattern_id === proposal.id
   );
-  if (!alreadyToday) {
+  const alreadyTodaySession = _appendedThisSession.has(historyKey);
+  if (!alreadyTodayDisk && !alreadyTodaySession) {
     appendDetection({
       date: today,
       pattern_id: proposal.id,
       trigger_norm: triggerNorm,
       source_detector: proposal.source || 'unknown',
     });
+    _appendedThisSession.add(historyKey);
   }
 
   const dayCount = distinctDates.size;
@@ -166,8 +187,8 @@ function prune(daysToKeep = PRUNE_DAYS) {
   return { before, after: kept.length, pruned: before - kept.length };
 }
 
-// Reset cache (for tests)
-function _resetCache() { _trackerCache = null; }
+// Reset cache + per-session memo (for tests)
+function _resetCache() { _trackerCache = null; _appendedThisSession.clear(); }
 
 module.exports = {
   applyCrossDayBoost,
