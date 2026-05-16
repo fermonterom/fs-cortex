@@ -4,6 +4,94 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.29.4] — 2026-05-16
+
+### Security
+
+- **`hooks/observe.py`** — new `_scrub_git_remote()` strips embedded
+  credentials (`user:token@host`) from HTTPS git remotes before they
+  reach `registry.json`, the project cache, or the `project_id` hash.
+  `scrub_secrets` only runs on observation `input`/`output`/`err_msg`
+  fields and never inspects the registry, so a remote configured with
+  an in-URL PAT was being persisted in plaintext.
+
+- **`hooks/session-learner.js:1387`** — `evalErrorMonitor()` now gates
+  user-supplied `ev.error_pattern` through `isSafeRegex()` from
+  `lib/regex-guard.js` before compiling, matching the ReDoS guards
+  already in place at `:912` and `:921`. A malformed instinct trigger
+  pattern could previously hang the Stop hook during impact-funnel
+  evaluation.
+
+### Fixed
+
+- **`hooks/observe.py:450`** — `hashlib.md5` → `hashlib.sha256` for the
+  observation dedup hash. MD5 raises `ValueError` under FIPS-enforced
+  Python (RHEL / CentOS hardened deployments) and the top-level except
+  in `main()` only writes to stderr under `CORTEX_DEBUG` — observations
+  were silently discarded in production. SHA256 is FIPS-compliant and
+  equally fast for the 16-char prefix used.
+
+- **`hooks/session-learner.js:122`** — `shortHash()` MD5 → SHA256.
+  Same FIPS failure mode in Node: `crypto.createHash('md5')` throws,
+  the outer try/catch in `main()` swallows it, and the entire Stop hook
+  exits without producing proposals or updating instincts.
+
+- **`hooks/observe.py:108,574`** — `write_with_lock()` accepts an
+  optional `pre_write_fn` that runs inside the lock immediately before
+  the append. `main()` now passes `archive_if_needed` as `pre_write_fn`
+  so the size check + rename happen under the same lock as the append,
+  closing a race where a concurrent writer could append into a
+  just-renamed file. The archive timestamp also switched to
+  `datetime.now(timezone.utc)` to match the rest of the file.
+
+- **`hooks/session-learner.js:477`** — `slugifySubtype()` second
+  `&&`-operand was recomputing `slug` so the equality check was a
+  tautology — sanitized-but-collision-prone inputs (`foo/bar` and
+  `foo-bar` both → `foo-bar`) returned the same id and the
+  hash-suffix path documented at `:475` never ran. Corrected to
+  `slug === lower`, so the hash suffix fires whenever the input had
+  characters stripped or normalized.
+
+- **`hooks/lib/distill_engine.py:241`** — `_atomic_write` wrapped in
+  try/finally so a failed `os.replace` (EACCES, cross-device,
+  Windows `EBUSY`) no longer leaks `.tmp.PID` files. Matches the
+  pattern already in `hooks/observe.py:atomic_write_json`.
+
+- **`hooks/lib/distill_engine.py:752`** — `/cx-distill` audit message
+  now uses `f"projects < {LAW_MIN_PROJECTS} ({proj_count} seen)"`
+  instead of the stale literal `"projects < 3 (...)"`. The constant
+  was lowered from `3` to `1` in v3.24.0; the audit message had been
+  misleading operators ever since.
+
+- **`hooks/session-learner.js:1576`** — `knowledge-log.md` append
+  failures now surface under `CORTEX_DEBUG` instead of being swallowed
+  by `catch {}`. Plain append is intentional — concurrent Stop hooks
+  tolerate interleaved single-line writes, while tmp+rename without a
+  lock would drop concurrent updates.
+
+### Changed
+
+- **`skills/cortex/SKILL.md`** — header bumped `v3.28.5` → `v3.29.4`
+  (3-release drift caught by the prior frontmatter scan; v3.29.1/.2/.3
+  did not touch the SKILL header).
+
+### Notes
+
+This release is the direct output of an Adversarial Defense pass with
+Codex GPT-5.5 on a 5-blocker diagnosis emitted by an internal
+`sonnet-reviewer` audit. Codex confirmed 3 blockers as-is, rewrote 2
+fixes (slug tautology and knowledge-log strategy), and surfaced 4
+P1 findings sonnet had missed: the two FIPS-MD5 sites, the git remote
+credential leak, the ReDoS gap, and the archive/write race. All 9
+landed in this patch.
+
+### Tests
+
+- Pre-push suites still green: `test_security.sh`, `test_dream_cycle.sh`,
+  `test_integrity.sh`. No new test files added — all 9 fixes are
+  surgical patches to code paths exercised by the existing 433-PASS
+  suite from v3.29.0.
+
 ## [3.29.3] — 2026-05-16
 
 ### Fixed

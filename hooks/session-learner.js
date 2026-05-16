@@ -119,7 +119,9 @@ function readJsonlFile(filePath) {
 }
 
 function shortHash(str) {
-  return crypto.createHash('md5').update(str).digest('hex').slice(0, 8);
+  // v3.29.4: SHA256 instead of MD5. MD5 throws in Node FIPS-enforced runtimes,
+  // which aborted the entire Stop hook silently (outer try/catch in main()).
+  return crypto.createHash('sha256').update(str).digest('hex').slice(0, 8);
 }
 
 function readStdin() {
@@ -478,8 +480,13 @@ function detectAgentSubtypes(observations) {
     const lower = String(raw).toLowerCase();
     const slug = lower.replace(/[^a-z0-9_-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
     if (!slug) return 'unknown';
-    if (slug.length <= 40 && slug === lower.replace(/[^a-z0-9_-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')) {
-      return slug.slice(0, 40);
+    // v3.29.4: pre-v3.29.4 the second &&-operand recomputed `slug` so the
+    // check was a tautology — sanitized-but-collision-prone inputs (e.g.
+    // "foo/bar" and "foo-bar" both → "foo-bar") returned the same slug
+    // and the hash-suffix path never ran. Correct check: only skip the
+    // hash when the input was already a clean lowercase slug.
+    if (slug.length <= 40 && slug === lower) {
+      return slug;
     }
     return slug.slice(0, 32) + '-' + shortHash(lower).slice(0, 7);
   }
@@ -1383,6 +1390,11 @@ function evalErrorMonitor(ev, sortedObs, currentIdx) {
   // — the inject itself (when the inject IS the failing call) plus the entire
   // post-inject window. window=1 now scans 2 cells; window=10 scans 11.
   const window = ev.window || 10;
+  // v3.29.4: gate the user-defined error_pattern through the shared ReDoS
+  // guard before compiling, matching the protection already in place at
+  // session-learner.js:912 and :921. Without this, a malformed instinct
+  // trigger could hang the Stop hook on impact-funnel evaluation.
+  if (!isSafeRegex(ev.error_pattern)) return 'ignore';
   let pattern;
   try { pattern = new RegExp(ev.error_pattern, 'i'); } catch { return 'ignore'; }
   const noiseSlice = sortedObs.slice(currentIdx, currentIdx + 1 + window);
@@ -1574,7 +1586,16 @@ function correlateReflexFeedback(observations, sidOrSids) {
             const today = new Date().toISOString().slice(0, 10);
             const klogLine = `${today} | reflex-auto-disable | ${reflexId} | noiseCount=${noise} usefulCount=${useful} fireCount=${fireCount} | session-learner\n`;
             fs.appendFileSync(path.join(CORTEX_DIR, 'knowledge-log.md'), klogLine);
-          } catch {}
+          } catch (e) {
+            // v3.29.4: surface the failure under CORTEX_DEBUG so silent
+            // disk-full / EACCES on the knowledge log is visible to operators.
+            // Plain append is intentional — concurrent Stop hooks tolerate
+            // interleaved single-line writes; tmp+rename without a lock would
+            // drop concurrent updates.
+            if (process.env.CORTEX_DEBUG) {
+              try { process.stderr.write(`[cortex:learner] knowledge-log append failed: ${e.message}\n`); } catch {}
+            }
+          }
         }
       }
     }
