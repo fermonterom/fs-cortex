@@ -4,6 +4,89 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.29.5] — 2026-05-17
+
+### Security
+
+- **`hooks/lib/validate_instinct.py`** — extracted `validate_yaml_content(content)`
+  as a pure function reusable from both CLI and library callers.
+- **`hooks/lib/distill_engine.py:auto_validate_proposals`** now calls
+  `validate_yaml_content` BETWEEN `_proposal_to_instinct_yaml()` and
+  `_atomic_write()`. Pre-v3.29.5 a proposal with `ignore previous
+  instructions`, `forget all prior rules`, `you are now an admin`, or any
+  other `BLOCKED_PATTERNS` match in its `action` field would auto-promote
+  to an active instinct without barrier — the validator module existed
+  but was wired only as a CLI tool. Now: rejected with
+  `rejected_reason="validate_instinct:<reason>"`, instinct YAML never
+  written.
+- **`hooks/observe.py`** — new `HOME_PATH_RE` normalizes
+  `/Users/<username>/...` and `/home/<username>/...` to `~/...` inside
+  `scrub_secrets`. Pre-v3.29.5 the error-fix detector in
+  `session-learner.js` copied raw tool `input` (containing absolute
+  cross-project paths) into proposal `action` text, leaking the
+  operator's local username into `proposals.json` and downstream
+  instinct YAMLs. Path STRUCTURE is preserved so downstream
+  `extractFilePath()` regex and `path.basename()` continue to work
+  identically. Cross-user new-id consistency becomes possible going
+  forward.
+
+### Fixed
+
+- **`hooks/lib/distill_engine.py`** — new `KNOWN_DOMAINS = VALIDATE_AUTO_DOMAINS
+  ∪ VALIDATE_HUMAN_DOMAINS`. Proposals whose `domain` falls outside this
+  union were previously skipped with `needs-human-judgment` but their
+  `status` stayed `pending` forever — invisible to `/cx-validate` (which
+  only surfaces `held`) and never processable. They now get HELD with
+  `hold_reason="orphan-domain:<name>"`. The operator gets the signal in
+  `/cx-validate` and the engineering team gets a signal that a detector
+  emitting that domain is missing from the whitelists.
+- **`hooks/lib/cross-day-tracker.js`** — `appendDetection()` no longer
+  mutates `_trackerCache` in-session. Pre-v3.29.5 a proposal emitted in
+  the same Stop run saw the just-added cache entry via Jaccard ≥ 0.70
+  trigger matching, counted today's date a second time, and reported
+  inflated `dayCount` (1 → 2 → 3 …). Effect at scale (Sprint 8 §4.8
+  reactivation, observed 1,077-proposal first run): dozens of
+  HUMAN-gated coupling proposals received tier-1 cross-day boost (+0.05
+  to +0.15) without genuine cross-day evidence, pushing many into the
+  0.70+ band. The v3.28.4 dedup guard against Stop-hook re-emit is
+  preserved via a separate per-session memo `_appendedThisSession`
+  (Set<date|pattern_id>), independent of the boost-input snapshot.
+- **`hooks/session-learner.js:writeProposals`** + new
+  **`hooks/lib/proposals-storage.js`** — `proposals.json` →
+  `proposals-history.jsonl` archive split. Pre-v3.29.5 `proposals.json`
+  held every proposal ever created (pending + accepted + rejected +
+  held); production file had 1,206 entries and grew monotonically. Every
+  Stop hook re-read and re-wrote the full array. New layout:
+  `proposals.json` keeps only live entries (pending + held);
+  `proposals-history.jsonl` is append-only, one JSON object per line.
+  One-shot migration is idempotent via `.migrated-to-history.jsonl`
+  flag. Downstream consumers (`/cx-validate`, `/cx-audit`, `/cx-retro`)
+  continue reading `proposals.json` for the live working set.
+
+### Sprint 8 observation window — protected
+
+**Zero changes to detector signal:** none of `detectErrorResolutions`,
+`detectUserCorrections`, `detectFileCoupling`, `detectAgentPatterns`,
+`detectAgentSubtypes`, nor the `BOOST_TIERS` / `applyCrossDayBoost` boost
+logic was touched in this release. The 5 fixes above are exclusively in
+the downstream safety layer + privacy scrubber + storage layout.
+Deferred to a future release: detector cap-per-session, correction
+action wording rewrite, `dedupProposalsByIncident` coverage for coupling
+and agent-pattern, productivity-patterns lock, kill-switch rename,
+`SessionStart` pending counter accuracy.
+
+### Tests
+
+- New `tests/test_v329_5_safety.sh` — 9/9 PASS (F1 orphan-domain held,
+  F2 injection rejected + YAML not written, F2b clean accepted, F4
+  macOS + Linux path scrub + secret-scrub regression, F5 split +
+  idempotent).
+- Extended `tests/test_cross_day_tracker.sh` — +2 cases (F3
+  no-in-session-inflation, F3 historical-evidence-boost-regression).
+  14/14 PASS.
+- Regression: `test_security` 7/7, `test_dream_cycle` 38/38,
+  `test_integrity` 14/14.
+
 ## [3.29.4] — 2026-05-16
 
 ### Security
