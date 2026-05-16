@@ -22,6 +22,10 @@ try {
 } catch {}
 
 const { applyCrossDayBoost } = require(path.join(__dirname, 'lib', 'cross-day-tracker'));
+const {
+  migrateAcceptedRejectedToHistory,
+  splitForPersist,
+} = require(path.join(__dirname, 'lib', 'proposals-storage'));
 
 const HOME = process.env.HOME || process.env.USERPROFILE || '/tmp';
 const CORTEX_DIR = process.env.CORTEX_DIR || path.join(HOME, '.claude', 'cortex');
@@ -963,6 +967,19 @@ function updateReflexes(observations) {
 function writeProposals(newProposals) {
   if (newProposals.length === 0) return;
 
+  // v3.29.5 §F5 — one-shot migration: split historical accepted+rejected
+  // entries to proposals-history.jsonl so proposals.json only carries the
+  // live working set (pending + held) going forward. Idempotent — guarded
+  // by a flag file inside the module.
+  try {
+    const r = migrateAcceptedRejectedToHistory();
+    if (!r.alreadyDone && r.migrated > 0) {
+      log(`v3.29.5 §F5: migrated ${r.migrated} terminal proposals to history.jsonl, ${r.kept} live retained`);
+    }
+  } catch (e) {
+    log(`v3.29.5 §F5 migration warning: ${e.message}`);
+  }
+
   let existing = readJsonFile(PROPOSALS_PATH);
   if (!Array.isArray(existing)) existing = [];
 
@@ -980,8 +997,12 @@ function writeProposals(newProposals) {
   }
   const deduped = Array.from(byId.values());
 
-  writeJsonFile(PROPOSALS_PATH, deduped);
-  log(`Wrote ${newProposals.length} new proposal(s), ${deduped.length} total`);
+  // v3.29.5 §F5 — route terminal-state proposals (accepted, rejected) to
+  // history.jsonl and persist only pending + held to proposals.json.
+  const live = splitForPersist(deduped);
+
+  writeJsonFile(PROPOSALS_PATH, live);
+  log(`Wrote ${newProposals.length} new proposal(s), ${live.length} live in proposals.json (${deduped.length - live.length} archived to history)`);
 }
 
 // -------------------------------------------------------------------
