@@ -21,11 +21,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'lib'))
 try:
     from cortex_utils import sanitize_injection, detect_project
 except ImportError:
-    # Fallback if lib not available
+    # Fallback if lib not available — preserves \t \n \r like the canonical impl
     def sanitize_injection(text, max_len=2000):
         if not isinstance(text, str):
             return ""
-        clean = re.sub(r'[\x00-\x1f\x7f]', '', text)
+        clean = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
         return clean[:max_len]
     def detect_project(cwd):
         return None, cwd, ""
@@ -280,19 +280,18 @@ def inject_context_bridge(input_json):
         if age_days >= CONTEXT_TTL_DAYS:
             return None
 
-        # Read first 10 lines
-        lines = []
+        # v3.31.0: read the full file (≤ 500 bytes by design) and wrap in a
+        # [project-context] semantic tag. Newlines preserved (sanitize_injection
+        # no longer strips them after the cortex_utils.py:24 fix).
+        # Bounded read (4096 bytes) prevents memory blowup if a legacy file is
+        # ever still around — sanitize_injection truncates further to 2000.
         with open(context_file) as f:
-            for i, line in enumerate(f):
-                if i >= 10:
-                    break
-                lines.append(line.rstrip())
-
-        content = ' '.join(lines).strip()
+            content = f.read(4096).strip()
         if not content:
             return None
 
-        return sanitize_injection(content, 2000)
+        tagged = f"[project-context]\n{content}"
+        return sanitize_injection(tagged, 2000)
     except Exception:
         return None
 
@@ -363,7 +362,9 @@ def inject_eod_resume():
     except Exception:
         pass
 
-    return quick_resume, priorities, eod_date
+    # v3.31.0: wrap with [eod-summary YYYY-MM-DD] semantic tag
+    tagged = f"[eod-summary {eod_date}]\n{quick_resume}" if quick_resume else quick_resume
+    return tagged, priorities, eod_date
 
 
 def main():
@@ -483,13 +484,13 @@ def main():
     if ctx:
         parts.append(f'\nPROJECT CONTEXT: {ctx}')
 
-    # 4. EOD Resume
+    # 4. EOD Resume — v3.31.0: tagged_resume already includes [eod-summary YYYY-MM-DD]\n
     eod_result = inject_eod_resume()
     if eod_result:
-        quick_resume, priorities, eod_date = eod_result
-        if quick_resume:
-            sanitized = sanitize_injection(quick_resume, 1000)
-            parts.append(f'\nEOD RESUME ({eod_date}): {sanitized}')
+        tagged_resume, priorities, eod_date = eod_result
+        if tagged_resume:
+            sanitized = sanitize_injection(tagged_resume, 2000)
+            parts.append(f'\n{sanitized}')
         if priorities:
             parts.append(f'PRIORITIES: {priorities}')
         parts.append(

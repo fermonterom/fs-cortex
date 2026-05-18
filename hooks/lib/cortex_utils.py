@@ -18,10 +18,14 @@ BLOCKED_KEYWORDS = re.compile(
 
 
 def sanitize_injection(text, max_len=2000):
-    """Strip control chars and prompt injection keywords from injected text."""
+    """Strip control chars and prompt injection keywords from injected text.
+
+    Preserves TAB (0x09), LF (0x0a) and CR (0x0d) so multiline injections
+    keep their structure. The rest of C0 + DEL is stripped.
+    """
     if not isinstance(text, str):
         return ""
-    clean = re.sub(r'[\x00-\x1f\x7f]', '', text)
+    clean = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
     clean = BLOCKED_KEYWORDS.sub('[BLOCKED]', clean)
     return clean[:max_len]
 

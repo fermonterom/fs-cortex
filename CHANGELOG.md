@@ -4,6 +4,57 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.31.0] — 2026-05-17
+
+### Changed
+
+- **`hooks/session-learner.js:writeContextFile`** — replaced the v3.30 telemetry
+  blob (`Tools used: Bash (7799), Read (4609)...` + full absolute file paths,
+  reaching 2KB+ on long sessions) with a Sinapsis-style narrative format:
+  `## Proyecto:` header in Spanish, total observation count, basenames-only
+  (deduped, max 6), and an explicit `Posibles gotchas detectados: N — ejecuta
+  /cx-analyze` CTA when errors were observed. Output now caps at ≤ 500 bytes
+  by design. Cross-platform `pathBasename()` helper added — handles both
+  POSIX (`/`) and Windows (`\`) separators without depending on `path.basename`
+  semantics.
+- **`hooks/session-start.py:inject_context_bridge`** — reads the full
+  `context.md` (now ≤ 500 bytes) instead of the first 10 lines space-joined.
+  Wraps the content in a `[project-context]` semantic tag so Claude can
+  distinguish the bridge from other injected blocks. Newlines preserved.
+- **`hooks/session-start.py:inject_eod_resume`** — wraps the resume in a
+  `[eod-summary YYYY-MM-DD]` semantic tag with the EOD date.
+
+### Added
+
+- **`hooks/lib/dream_cycle.py:cleanup_corrupted_context_files`** — new helper
+  that rotates legacy English-format `context.md` files (starting with
+  `## Project:`) to `.legacy-YYYYMMDD` backups. Idempotent: subsequent runs
+  match nothing because backups don't satisfy the `context.md` glob. Wired
+  into `/cx-dream` Step 3c (Cleanup module).
+- **`bin/cleanup-context-once.sh`** — standalone one-shot migration script.
+  Same criterion as the dream helper (format, not size); safe to run before
+  or after the new writer ships.
+- **`tests/test_context_bridge.sh`** — 12 regression cases covering writer
+  output size, Spanish headers, gotcha CTA conditional, basename cap/dedup,
+  Windows path normalization, reader tag prefix, newline preservation,
+  cleanup helper rotation/preservation, one-shot script idempotency, and
+  EOD tag wrapping.
+- **`.githooks/pre-push`** — runs `test_context_bridge.sh` between security
+  checks and the v3.29 acceptance gate.
+
+### Fixed
+
+- **`hooks/lib/cortex_utils.py:sanitize_injection`** — regex changed from
+  `[\x00-\x1f\x7f]` (which stripped `\n \r \t` along with the rest of the C0
+  range) to `[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]`. TAB, LF, and CR are now
+  preserved so multiline injections keep their structure. The fallback
+  duplicate in `hooks/session-start.py` is patched in lockstep. Regression
+  covered by new test 8 in `tests/test_security.sh`.
+- **74KB rotted `context.md` symptom** — the writer rewrite caps real-world
+  output at ≤ 500 bytes regardless of session length, so long sessions no
+  longer produce multi-KB files. The one-shot script cleans up any legacy
+  files left over from before the upgrade.
+
 ## [3.29.5] — 2026-05-17
 
 ### Security

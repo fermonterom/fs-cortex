@@ -49,6 +49,7 @@ from dream_cycle import (
     detect_orphan_projects,
     cleanup_expired_context,
     consolidate_old_archives,
+    cleanup_corrupted_context_files,  # v3.31.0
 )
 ```
 
@@ -110,6 +111,7 @@ CORTEX_DIR = os.path.expanduser("~/.claude/cortex")
 orphans = detect_orphan_projects(CORTEX_DIR)
 expired = cleanup_expired_context(CORTEX_DIR, ttl_days=14)
 old_archives = consolidate_old_archives(CORTEX_DIR, days=90)
+legacy_contexts = cleanup_corrupted_context_files(os.path.join(CORTEX_DIR, "projects"))  # v3.31.0
 ```
 
 **Display results:**

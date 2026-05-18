@@ -46,10 +46,10 @@ Evolved artifacts (skills, commands, rules in evolved/)
 
 ### Session Start Behavior (MANDATORY)
 
-When the system prompt contains `EOD RESUME`, Claude MUST proactively present it in the **first response**, WITHOUT the user asking:
+When the system prompt contains an `[eod-summary YYYY-MM-DD]` block (v3.31.0+; was `EOD RESUME` pre-v3.31), Claude MUST proactively present it in the **first response**, WITHOUT the user asking:
 
 1. **Greeting** — Brief saludo
-2. **Yesterday's summary** — Paraphrase EOD RESUME (1-2 lines)
+2. **Yesterday's summary** — Paraphrase the `[eod-summary]` block (1-2 lines)
 3. **Learning status** — If pending observations, mention `/cx-analyze`
 4. **Priorities** — List PRIORITIES as numbered list
 5. **Ask** — Ask where to start (user's language from memory.json)
