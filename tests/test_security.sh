@@ -116,6 +116,21 @@ console.log(clean.includes('\x00') ? 'HAS_CONTROL' : 'CLEAN');
 ")
 [ "$result" = "CLEAN" ] && pass "control chars stripped" || fail "control chars not stripped"
 
+# --- Test 8: Python sanitize_injection preserves \n \t \r ---
+echo "Test 8: sanitize_injection preserves structural whitespace"
+result=$(python3 -c "
+import sys
+sys.path.insert(0, '$PROJECT_ROOT/hooks/lib')
+from cortex_utils import sanitize_injection
+out = sanitize_injection('line1\nline2\ttab\rcr\x07bell', 200)
+ok_nl = '\n' in out
+ok_tab = '\t' in out
+ok_cr = '\r' in out
+ok_bell = '\x07' not in out
+print('OK' if (ok_nl and ok_tab and ok_cr and ok_bell) else 'FAIL')
+")
+[ "$result" = "OK" ] && pass "sanitize preserves \\n \\t \\r, strips BEL" || fail "sanitize whitespace handling broken"
+
 # --- Summary ---
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="

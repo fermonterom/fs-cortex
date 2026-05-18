@@ -375,6 +375,48 @@ def cleanup_expired_context(cortex_dir, ttl_days=14):
     return expired
 
 
+def cleanup_corrupted_context_files(projects_dir, today=None):
+    """Rotate context.md files that don't match new v3.31.0 Spanish format.
+
+    Detects the legacy English format (starts with '## Project:') and any
+    other non-conforming content — only those are rotated to
+    .legacy-YYYYMMDD backups. The new format (## Proyecto:) is left
+    untouched. Idempotent: backups don't match the glob on second run.
+
+    Returns list of dicts: {path, backup, first_line}
+    """
+    today = today or time.strftime("%Y%m%d")
+    rotated = []
+    try:
+        for entry in os.listdir(projects_dir):
+            entry_path = os.path.join(projects_dir, entry)
+            if os.path.islink(entry_path):
+                continue
+            ctx_path = os.path.join(entry_path, "context.md")
+            if not (os.path.isfile(ctx_path) and not os.path.islink(ctx_path)):
+                continue
+            try:
+                with open(ctx_path, errors="replace") as f:
+                    first_line = f.readline().strip()
+            except (OSError, UnicodeDecodeError):
+                continue
+            if first_line.startswith("## Proyecto:"):
+                continue
+            backup = ctx_path + ".legacy-" + today
+            try:
+                os.rename(ctx_path, backup)
+                rotated.append({
+                    "path": ctx_path,
+                    "backup": backup,
+                    "first_line": first_line[:80],
+                })
+            except OSError:
+                continue
+    except OSError:
+        pass
+    return rotated
+
+
 def consolidate_old_archives(cortex_dir, days=90):
     """Find old observation archive files that can be purged.
 

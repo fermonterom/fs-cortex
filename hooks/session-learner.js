@@ -1070,59 +1070,58 @@ function updateMemoryStats() {
 // -------------------------------------------------------------------
 // Step 7: Write context.md
 // -------------------------------------------------------------------
+// v3.31.0 — Sinapsis-style narrative format:
+//   - Spanish, ≤ 500 bytes, basenames (max 6, deduped)
+//   - Errors emit a CTA to /cx-analyze instead of "Errors: 0"
+//   - Replaces the v3.30 telemetry blob (Tools used: Bash 7799...)
+// -------------------------------------------------------------------
+
+// Cross-platform basename: handles both POSIX (/) and Windows (\)
+function pathBasename(p) {
+  return String(p || '').split(/[\\/]/).pop() || '';
+}
 
 function writeContextFile(observations) {
   if (observations.length === 0) return;
 
-  // Determine project from observations
   const projectId = observations[0]._projectId || 'global';
   const projectDir = path.join(PROJECTS_DIR, projectId);
 
-  // Look up project name from registry
   let projectName = projectId;
   const registry = readJsonFile(REGISTRY_PATH);
   if (registry && registry[projectId]) {
     projectName = registry[projectId].name || projectId;
   }
 
-  // Tool usage counts
-  const toolCounts = {};
-  for (const obs of observations) {
-    if (obs.tool) {
-      toolCounts[obs.tool] = (toolCounts[obs.tool] || 0) + 1;
-    }
-  }
-  const toolsSummary = Object.entries(toolCounts)
-    .sort((a, b) => b[1] - a[1])
-    .map(([tool, count]) => `${tool} (${count})`)
-    .join(', ');
+  // Files touched: basenames, dedup, max 6 (Sinapsis-style)
+  const filesBasenames = [...new Set(
+    observations
+      .filter((o) => o.tool === 'Edit' || o.tool === 'Write')
+      .map((o) => {
+        try {
+          const inp = JSON.parse(o.input || '{}');
+          return inp.file_path ? pathBasename(inp.file_path) : null;
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean)
+  )].slice(0, 6);
 
-  // Files touched (from Edit/Write tool inputs)
-  const filesTouched = new Set();
-  for (const obs of observations) {
-    if (obs.tool === 'Edit' || obs.tool === 'Write') {
-      const input = String(obs.input || '');
-      // Try to extract file_path from JSON input
-      const fileMatch = input.match(/"file_path"\s*:\s*"([^"]+)"/);
-      if (fileMatch) {
-        filesTouched.add(fileMatch[1]);
-      }
-    }
-  }
-  const filesStr = filesTouched.size > 0
-    ? Array.from(filesTouched).join(', ')
-    : 'none';
-
-  // Error count
   const errorCount = observations.filter((o) => isError(o)).length;
 
-  const content = `## Project: ${projectName}
-Last session: ${TODAY}
-Tools used: ${toolsSummary || 'none'}
-Files touched: ${filesStr}
-Errors: ${errorCount} errors detected
-Session observations: ${observations.length}
-`;
+  const lines = [
+    `## Proyecto: ${projectName}`,
+    `Última sesión: ${TODAY}`,
+    `Observaciones totales: ${observations.length}`,
+    filesBasenames.length > 0
+      ? `Archivos activos: ${filesBasenames.join(', ')}`
+      : null,
+    errorCount > 0
+      ? `Posibles gotchas detectados: ${errorCount} — ejecuta /cx-analyze`
+      : null,
+  ].filter(Boolean);
+  const content = lines.join('\n') + '\n';
 
   ensureDir(projectDir);
   const contextPath = path.join(projectDir, 'context.md');
