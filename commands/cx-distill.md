@@ -13,7 +13,7 @@ Maintenance command that:
 2. Applies confidence decay (-0.05 per 30 days unused)
 3. Checks Jaccard promotions (project → global)
 4. Archives decayed instincts (confidence < 0.10)
-5. Enforces max 10 active laws
+5. Enforces max 12 active laws (`LAW_MAX_ACTIVE` in `hooks/lib/distill_engine.py:83`, raised from 10 in v3.29.2)
 
 ## Usage
 
@@ -96,7 +96,7 @@ La pregunta NO es "es util?" sino "lo necesito en TODAS las sesiones?"
 Antes de crear una law nueva:
 1. Listar todas las laws actuales de `~/.claude/cortex/laws/*.txt` con su contenido
 2. Detectar duplicados o solapamientos entre candidatos y laws existentes
-3. Si hay 10 laws activas, evaluar si el candidato es MAS importante que alguna existente:
+3. Si hay 12 laws activas (`LAW_MAX_ACTIVE` en `hooks/lib/distill_engine.py:83`), evaluar si el candidato es MAS importante que alguna existente:
    - Comparar confidence del instinct fuente vs confidence de las laws actuales
    - Si el candidato supera a alguna law existente: proponer reemplazo
    - Si no supera a ninguna: NO proponer (mantener como instinct)
