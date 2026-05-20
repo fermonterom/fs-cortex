@@ -4,6 +4,42 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.31.1] — 2026-05-20
+
+### Fixed
+
+- **`hooks/session-start.py:load_laws()`** — removed hard-coded `[:10]` slice
+  on `sorted(LAWS_DIR.glob('*.txt'))`. The slice was stale since v3.29.2
+  raised `LAW_MAX_ACTIVE` from 10 to 12 in `hooks/lib/distill_engine.py:83`.
+  After v3.29.2, the loader kept truncating to 10 alphabetically, so the
+  two laws sorting last in the directory (e.g. `pattern-test-after-change`,
+  `project-bootstrap`) never reached the SessionStart context, even though
+  `/cx-status` reported 12 active. Engine `_active_law_count()` and
+  `auto_promote_to_law()` correctly used the new cap, masking the bug.
+  Loader now reads all `*.txt` in `laws/`; cap is enforced upstream by the
+  distill engine, so removing the loader slice is safe.
+
+### Changed
+
+- **`hooks/session-start.py:load_laws()` docstring** — updated to
+  `"Read all active law files. Engine caps total at LAW_MAX_ACTIVE=12
+  (see hooks/lib/distill_engine.py:83)."` Previous docstring still said
+  `(max 10)`.
+- **`commands/cx-distill.md`** — lines 16 and 99 updated from `max 10`
+  to `max 12`, with cross-reference to `hooks/lib/distill_engine.py:83`
+  (`LAW_MAX_ACTIVE` constant) and the v3.29.2 cap raise. Catches up the
+  doc-sync miss in v3.29.3 (which updated `README.md` and `FEATURES.md`
+  but missed the slash-command spec).
+- **Internal `docs/CORTEX-AUDIT.md`** (gitignored) — local copy updated
+  for the same `max 10 → max 12 since v3.29.2` sync. Not included in the
+  PR diff (file is gitignored).
+
+### Tests
+
+- `tests/test_distill_engine.sh` — 0 failures.
+- `tests/test_integrity.sh` — 0 failures.
+- `tests/test_install.sh` — 42/42 PASS.
+
 ## [3.31.0] — 2026-05-17
 
 ### Changed
