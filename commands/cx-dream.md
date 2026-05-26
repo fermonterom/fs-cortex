@@ -147,6 +147,32 @@ echo "$(date +%Y-%m-%d) | context-cleaned | {project_id} | {age_days}d-expired |
 echo "$(date +%Y-%m-%d) | archive-purged | {project_id} | {file_count}-files-{mb}MB | cx-dream" >> ~/.claude/cortex/knowledge-log.md
 ```
 
+### Step 3d: Archive proposals.json backups (v3.31.2 §4.1.C)
+
+Invoke the weekly archive of `proposals.json.bak*` files left in
+`~/.claude/cortex/`. The helper is cooldown-gated via the
+`.last-proposals-archive` marker (7-day default) so calling it on every
+`/cx-dream` is safe — it no-ops when the cooldown is active or when the
+shell script is not reachable in the installed setup.
+
+```python
+from dream_cycle import archive_proposals_backups_if_due
+
+archive_result = archive_proposals_backups_if_due(CORTEX_DIR)
+# archive_result keys: invoked, reason, returncode, stdout, marker_touched
+```
+
+Display under the Cleanup section:
+
+```
+Proposals backups:
+  Invoked: True | RC: 0
+  3 file(s) archived to archive/proposals-pre-v3.29-20260526-153100.tar.gz
+```
+
+If `reason` is `cooldown:Xd-of-7` show `Skipped (cooldown).` instead; if
+`script-not-installed`, show `Skipped (script not in this install).`.
+
 ### Step 4: Report
 
 Display a summary:
