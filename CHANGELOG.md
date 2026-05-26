@@ -4,6 +4,74 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.31.2] — 2026-05-26
+
+Sprint 9 PR1 — three cleanup bug fixes. No detector signal changes:
+the Sprint 8 observation window stays protected. Plan checked in at
+`docs/SPRINT-9-AUTOPILOT.md` v3 FINAL (AD Codex GPT-5.5 round 1
+absorbed: 4 P0 + 7 P1 + 3 P2 findings).
+
+### Fixed
+
+- **`hooks/lib/distill_engine.py:auto_promote_to_law`** — narrow the
+  §4.16 grandfather clause to fire ONLY when (entry absent) OR
+  (`sessions == []` explicit). Pre-v3.31.2 ANY non-dict tracking entry
+  was treated as missing, which hid tracking corruption shapes
+  (`sessions: null`, missing `sessions` key, wrong type) behind a
+  successful promotion. After: corruption shapes keep blocking with
+  `sessions 0/3 (need 3 more)` so the operator can detect them.
+  AD P1-1 absorbed.
+
+### Added
+
+- **`hooks/lib/distill_engine.py:auto_validate_proposals`** — emits a
+  new `skip_breakdown` Counter in the return dict and appends one
+  JSONL row per non-dry-run to
+  `~/.claude/cortex/log/auto-validate-skips.jsonl` (ts / total /
+  accepted / skipped / skip_breakdown). Log rotates to `.1` at 512KB,
+  mirror of `hooks/session-learner.js:60-76`. High-cardinality reasons
+  (`orphan-domain:*`, `unsafe-trigger:*`, `validate_instinct:*`) are
+  bucketed by prefix so the breakdown stays readable; low-cardinality
+  reasons (`low-confidence`, `already-instinct`, `needs-human-judgment`)
+  pass through unchanged. Logging is best-effort: any `OSError` is
+  swallowed so logging cannot break auto-validate. Instrumentation
+  only — no behavior change in any accept / skip / hold / reject path.
+  AD P1-4 absorbed (no 24-48h window: investigation of the 42 stuck
+  AUTO pending proposals is deferred to v3.33+ once 7d of these logs
+  exist).
+- **`hooks/lib/dream_cycle.py:archive_proposals_backups_if_due`** —
+  new function wires `tests/archive_proposals_backups.sh` into the
+  `/cx-dream` weekly cycle so `proposals.json.bak*` files stop
+  accumulating. Reads/writes a `.last-proposals-archive` marker for
+  the 7-day cooldown. Auto-detects repo_root from this file's path;
+  falls back to `script-not-installed` (no crash) when running in an
+  installed setup that does not ship the repo `tests/` directory.
+  Invokes the shell script with `CORTEX_DIR` exported and a 30s
+  timeout. Touches the marker only on `returncode 0` so a failed run
+  is retried next cycle instead of waiting another 7 days.
+- **`commands/cx-dream.md`** — new `Step 3d` documents the helper
+  invocation and the three possible outcomes (archived / cooldown /
+  not-installed).
+
+### Tests
+
+- `tests/test_distill_engine.sh` +7 cases (5 grandfather narrow +
+  2 skip-breakdown logging). 41 PASS / 0 FAIL.
+- `tests/test_dream_cycle.sh` +2 cases (first-run archives + cooldown
+  skip). 40 PASS / 0 FAIL.
+- Baseline: **447/447 PASS** pre-PR1; after PR1: **456/456 PASS** (+9).
+- `test_integrity.sh` and `test_security.sh` green.
+
+### Notes
+
+- This is the PR1 of Sprint 9. PR2 will ship v3.32.0 with §4.4
+  promotion gate `HUMAN→AUTO` + §4.5 laws cap raise + deprecation
+  policy. Sprint 8 plan §5.1/§5.2 (analyze_engine + auto-analyze
+  trigger) are **deferred to v3.33+** per AD P0-2/P0-3 (see
+  `docs/SPRINT-9-AUTOPILOT.md` §4.2+4.3 DEFERRED block).
+- v3.30 was never published (jumped 3.29.5 → 3.31.0); see commit
+  history for details.
+
 ## [3.31.1] — 2026-05-20
 
 ### Fixed
