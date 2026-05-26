@@ -753,12 +753,22 @@ def auto_promote_to_law(
 
         # ── Criteria 2b (v3.29.0 §4.16): ≥ 3 distinct sessions ────────────
         # Grandfather clause: if an instinct already has conf >= 0.95 AND
-        # no tracking entry at all, treat it as if it had 3 distinct
+        # no meaningful tracking yet, treat it as if it had 3 distinct
         # sessions so pre-existing high-confidence instincts (from before
         # v3.29.0 shipped this gate) are not retroactively blocked.
+        # v3.31.2 §4.1.A — narrow per AD P1-1: grandfather ONLY when
+        # (entry absent) OR (sessions == [] explicit). NOT when sessions
+        # is null / missing key / wrong type — those signal tracking
+        # corruption and must keep blocking so the operator notices.
         distinct_sessions = _count_distinct_sessions(iid, tracking_data)
-        has_tracking_entry = isinstance(tracking_data.get(iid), dict)
-        if not has_tracking_entry and conf >= LAW_THRESHOLD_CONF:
+        entry = tracking_data.get(iid)
+        has_tracking_entry = isinstance(entry, dict)
+        no_meaningful_tracking = (
+            not has_tracking_entry  # case 1: no entry at all (pre-v3.29 corpus)
+            or (isinstance(entry, dict) and entry.get("sessions") == [])
+            # case 2: entry exists with explicit empty list
+        )
+        if no_meaningful_tracking and conf >= LAW_THRESHOLD_CONF:
             distinct_sessions = LAW_MIN_DISTINCT_SESSIONS  # grandfathered
         if distinct_sessions < LAW_MIN_DISTINCT_SESSIONS:
             need = LAW_MIN_DISTINCT_SESSIONS - distinct_sessions
