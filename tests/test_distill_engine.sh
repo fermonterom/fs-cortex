@@ -1386,6 +1386,172 @@ else
   fail "count-distinct-sessions-defensive: got '$result'"
 fi
 
+# ── v3.31.2 §4.1.A — grandfather narrow per AD P1-1 ─────────────────────────
+# Tests 36-40 verify the narrowed grandfather clause: it fires ONLY when
+# (entry absent) OR (sessions == [] explicit). Tracking corruption shapes
+# (null, missing key, wrong type) keep blocking so the operator notices.
+
+# ── Test 36: gf-entry-absent — case 1: missing tracking entry promotes ──────
+echo "--- Test 36: gf-entry-absent (v3.31.2 §4.1.A case 1) ---"
+T36="$(mktemp -d -t distill-t36-XXXXXX)"
+export CORTEX_DIR="$T36"
+make_promotable_instinct "$T36/instincts/global" "t36-absent"
+make_impact_events "$T36/impact.jsonl" "t36-absent" 6 0
+# No instinct-tracking.json on disk at all
+mkdir -p "$T36/laws"
+
+result=$(python3 - <<PYEOF
+$(_py_patch "$T36")
+promoted, candidates = de.auto_promote_to_law()
+was_promoted = any(p['id'] == 't36-absent' for p in promoted)
+law_exists = (de.LAWS_DIR / 't36-absent.txt').exists()
+print(was_promoted, law_exists)
+PYEOF
+)
+if echo "$result" | grep -q "True True"; then
+  pass "gf-entry-absent: missing tracking entry + conf=0.95 promotes (grandfather case 1)"
+else
+  fail "gf-entry-absent: got '$result'"
+fi
+rm -rf "$T36"
+
+# ── Test 37: gf-sessions-empty-list — case 2: sessions:[] promotes ──────────
+echo "--- Test 37: gf-sessions-empty-list (v3.31.2 §4.1.A case 2) ---"
+T37="$(mktemp -d -t distill-t37-XXXXXX)"
+export CORTEX_DIR="$T37"
+make_promotable_instinct "$T37/instincts/global" "t37-emptylist"
+make_impact_events "$T37/impact.jsonl" "t37-emptylist" 6 0
+cat > "$T37/instinct-tracking.json" <<'JSON'
+{
+  "t37-emptylist": {
+    "count": 0,
+    "sessions": [],
+    "projects_seen": [],
+    "first_seen": "2026-05-01T00:00:00Z",
+    "last_seen": "2026-05-14T00:00:00Z"
+  }
+}
+JSON
+mkdir -p "$T37/laws"
+
+result=$(python3 - <<PYEOF
+$(_py_patch "$T37")
+promoted, candidates = de.auto_promote_to_law()
+was_promoted = any(p['id'] == 't37-emptylist' for p in promoted)
+law_exists = (de.LAWS_DIR / 't37-emptylist.txt').exists()
+print(was_promoted, law_exists)
+PYEOF
+)
+if echo "$result" | grep -q "True True"; then
+  pass "gf-sessions-empty-list: sessions:[] + conf=0.95 promotes (grandfather case 2)"
+else
+  fail "gf-sessions-empty-list: got '$result'"
+fi
+rm -rf "$T37"
+
+# ── Test 38: gf-sessions-populated — normal path still works ────────────────
+echo "--- Test 38: gf-sessions-populated (v3.31.2 §4.1.A normal path) ---"
+T38="$(mktemp -d -t distill-t38-XXXXXX)"
+export CORTEX_DIR="$T38"
+make_promotable_instinct "$T38/instincts/global" "t38-populated"
+make_impact_events "$T38/impact.jsonl" "t38-populated" 6 0
+cat > "$T38/instinct-tracking.json" <<'JSON'
+{
+  "t38-populated": {
+    "count": 30,
+    "sessions": ["sess-A", "sess-B", "sess-C"],
+    "projects_seen": ["proj-alpha"],
+    "first_seen": "2026-05-01T00:00:00Z",
+    "last_seen": "2026-05-14T00:00:00Z"
+  }
+}
+JSON
+mkdir -p "$T38/laws"
+
+result=$(python3 - <<PYEOF
+$(_py_patch "$T38")
+promoted, candidates = de.auto_promote_to_law()
+was_promoted = any(p['id'] == 't38-populated' for p in promoted)
+law_exists = (de.LAWS_DIR / 't38-populated.txt').exists()
+print(was_promoted, law_exists)
+PYEOF
+)
+if echo "$result" | grep -q "True True"; then
+  pass "gf-sessions-populated: 3 distinct sessions + conf=0.95 promotes (normal path)"
+else
+  fail "gf-sessions-populated: got '$result'"
+fi
+rm -rf "$T38"
+
+# ── Test 39: gf-sessions-null-blocks — corruption guard ─────────────────────
+echo "--- Test 39: gf-sessions-null-blocks (v3.31.2 §4.1.A AD P1-1 negative) ---"
+T39="$(mktemp -d -t distill-t39-XXXXXX)"
+export CORTEX_DIR="$T39"
+make_promotable_instinct "$T39/instincts/global" "t39-null"
+make_impact_events "$T39/impact.jsonl" "t39-null" 6 0
+cat > "$T39/instinct-tracking.json" <<'JSON'
+{
+  "t39-null": {
+    "count": 0,
+    "sessions": null,
+    "projects_seen": [],
+    "first_seen": "2026-05-01T00:00:00Z",
+    "last_seen": "2026-05-14T00:00:00Z"
+  }
+}
+JSON
+mkdir -p "$T39/laws"
+
+result=$(python3 - <<PYEOF
+$(_py_patch "$T39")
+promoted, candidates = de.auto_promote_to_law()
+was_promoted = any(p['id'] == 't39-null' for p in promoted)
+cand = next((c for c in candidates if c['id'] == 't39-null'), None)
+reason_ok = bool(cand) and any('sessions 0/3' in r for r in cand['reasons'])
+print(was_promoted, reason_ok)
+PYEOF
+)
+if echo "$result" | grep -q "False True"; then
+  pass "gf-sessions-null-blocks: sessions:null does NOT grandfather (corruption guard)"
+else
+  fail "gf-sessions-null-blocks: got '$result'"
+fi
+rm -rf "$T39"
+
+# ── Test 40: gf-missing-sessions-key-blocks — corruption guard ──────────────
+echo "--- Test 40: gf-missing-sessions-key-blocks (v3.31.2 §4.1.A AD P1-1 negative) ---"
+T40="$(mktemp -d -t distill-t40-XXXXXX)"
+export CORTEX_DIR="$T40"
+make_promotable_instinct "$T40/instincts/global" "t40-missingkey"
+make_impact_events "$T40/impact.jsonl" "t40-missingkey" 6 0
+cat > "$T40/instinct-tracking.json" <<'JSON'
+{
+  "t40-missingkey": {
+    "count": 0,
+    "projects_seen": [],
+    "first_seen": "2026-05-01T00:00:00Z",
+    "last_seen": "2026-05-14T00:00:00Z"
+  }
+}
+JSON
+mkdir -p "$T40/laws"
+
+result=$(python3 - <<PYEOF
+$(_py_patch "$T40")
+promoted, candidates = de.auto_promote_to_law()
+was_promoted = any(p['id'] == 't40-missingkey' for p in promoted)
+cand = next((c for c in candidates if c['id'] == 't40-missingkey'), None)
+reason_ok = bool(cand) and any('sessions 0/3' in r for r in cand['reasons'])
+print(was_promoted, reason_ok)
+PYEOF
+)
+if echo "$result" | grep -q "False True"; then
+  pass "gf-missing-sessions-key-blocks: missing 'sessions' key does NOT grandfather (corruption guard)"
+else
+  fail "gf-missing-sessions-key-blocks: got '$result'"
+fi
+rm -rf "$T40"
+
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
