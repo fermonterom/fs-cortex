@@ -497,6 +497,64 @@ rm -rf "$CLEANUP_TMP"
 
 echo ""
 
+# ── v3.31.2 §4.1.C: archive_proposals_backups_if_due ────────────────────
+echo "--- Proposals backups archive (v3.31.2 §4.1.C) ---"
+
+# Test 33: first-run with 3 backups → invoked, archive created, marker touched
+T33="$(mktemp -d -t dream-pba-XXXXXX)"
+echo '{"bak":1}' > "$T33/proposals.json.bak-20260101"
+echo '{"bak":2}' > "$T33/proposals.json.bak-20260102"
+echo '{"bak":3}' > "$T33/proposals.json.bak-20260103"
+
+result=$(python3 - <<PYEOF
+import sys
+sys.path.insert(0, "$PROJECT_ROOT/hooks/lib")
+from dream_cycle import archive_proposals_backups_if_due
+out = archive_proposals_backups_if_due("$T33", repo_root="$PROJECT_ROOT")
+import os
+marker = os.path.join("$T33", ".last-proposals-archive")
+remaining = [f for f in os.listdir("$T33") if f.startswith("proposals.json.bak")]
+archive_dir = os.path.join("$T33", "archive")
+has_archive = os.path.isdir(archive_dir) and any(
+    f.endswith(".tar.gz") for f in os.listdir(archive_dir)
+)
+print(f"inv={out['invoked']} rc={out['returncode']} touched={out['marker_touched']} marker={os.path.exists(marker)} bak_left={len(remaining)} archive={has_archive}")
+PYEOF
+)
+if echo "$result" | grep -q "inv=True rc=0 touched=True marker=True bak_left=0 archive=True"; then
+  pass "pba-first-run: 3 backups archived, marker touched, archive tarball present"
+else
+  fail "pba-first-run: got '$result'"
+fi
+rm -rf "$T33"
+
+# Test 34: second call within 7d → cooldown skip, originals untouched
+T34="$(mktemp -d -t dream-pba2-XXXXXX)"
+mkdir -p "$T34"
+# Marker fresh (just touched) — simulates a recent prior run
+touch "$T34/.last-proposals-archive"
+# A new backup arrived after the marker — must NOT be archived during cooldown
+echo '{"bak":new}' > "$T34/proposals.json.bak-20260201"
+
+result=$(python3 - <<PYEOF
+import sys
+sys.path.insert(0, "$PROJECT_ROOT/hooks/lib")
+from dream_cycle import archive_proposals_backups_if_due
+out = archive_proposals_backups_if_due("$T34", repo_root="$PROJECT_ROOT")
+import os
+remaining = [f for f in os.listdir("$T34") if f.startswith("proposals.json.bak")]
+print(f"inv={out['invoked']} reason={out['reason']} bak_left={len(remaining)}")
+PYEOF
+)
+if echo "$result" | grep -qE "inv=False reason=cooldown:.+ bak_left=1"; then
+  pass "pba-cooldown: marker <7d blocks archive, .bak file untouched"
+else
+  fail "pba-cooldown: got '$result'"
+fi
+rm -rf "$T34"
+
+echo ""
+
 # --- Summary ---
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

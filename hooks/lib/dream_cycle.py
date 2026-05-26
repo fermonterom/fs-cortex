@@ -457,3 +457,132 @@ def consolidate_old_archives(cortex_dir, days=90):
         pass
 
     return results
+
+
+# ── Module 6c (v3.31.2 §4.1.C): proposals.json backup archiving ─────
+
+PROPOSALS_ARCHIVE_MARKER = ".last-proposals-archive"
+PROPOSALS_ARCHIVE_COOLDOWN_DAYS = 7
+PROPOSALS_ARCHIVE_TIMEOUT_SEC = 30
+
+
+def _detect_repo_root():
+    """Best-effort: locate the fs-cortex repo root from this file's path.
+
+    Returns absolute path of the directory expected to contain `tests/`,
+    or None when this module lives outside a repo (e.g. post-install at
+    ~/.claude/hooks/cortex/lib/). In that case the caller skips with
+    `script-not-installed` rather than crash.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    # hooks/lib/dream_cycle.py → hooks/lib → hooks → repo
+    candidate = os.path.dirname(os.path.dirname(here))
+    if os.path.isfile(os.path.join(candidate, "tests", "archive_proposals_backups.sh")):
+        return candidate
+    return None
+
+
+def archive_proposals_backups_if_due(cortex_dir, repo_root=None, days=None, now=None):
+    """Invoke tests/archive_proposals_backups.sh on a weekly cooldown.
+
+    Reads/writes a `.last-proposals-archive` marker in cortex_dir. Skips
+    when the marker is younger than `days` days. Also skips (without
+    crashing) when the shell script is not reachable — installed setups
+    that don't ship the repo `tests/` directory keep working.
+
+    Args:
+        cortex_dir: target CORTEX_DIR (also exported to the subprocess
+            env so the script archives the right tree).
+        repo_root: optional override; when None auto-detected from this
+            file's path.
+        days: cooldown days; defaults to PROPOSALS_ARCHIVE_COOLDOWN_DAYS.
+        now: optional epoch seconds (for tests).
+
+    Returns dict:
+        {invoked: bool, reason: str|None, returncode: int|None,
+         stdout: str, marker_touched: bool}
+    """
+    import subprocess
+
+    if days is None:
+        days = PROPOSALS_ARCHIVE_COOLDOWN_DAYS
+    if now is None:
+        now = time.time()
+
+    marker = os.path.join(cortex_dir, PROPOSALS_ARCHIVE_MARKER)
+    cooldown_seconds = days * 86400
+
+    if os.path.exists(marker):
+        try:
+            age = now - os.path.getmtime(marker)
+            if age < cooldown_seconds:
+                return {
+                    "invoked": False,
+                    "reason": f"cooldown:{int(age/86400)}d-of-{days}",
+                    "returncode": None,
+                    "stdout": "",
+                    "marker_touched": False,
+                }
+        except OSError:
+            pass  # treat as expired and proceed
+
+    if repo_root is None:
+        repo_root = _detect_repo_root()
+    if not repo_root:
+        return {
+            "invoked": False,
+            "reason": "script-not-installed",
+            "returncode": None,
+            "stdout": "",
+            "marker_touched": False,
+        }
+
+    script = os.path.join(repo_root, "tests", "archive_proposals_backups.sh")
+    if not os.path.isfile(script):
+        return {
+            "invoked": False,
+            "reason": "script-not-installed",
+            "returncode": None,
+            "stdout": "",
+            "marker_touched": False,
+        }
+
+    env = os.environ.copy()
+    env["CORTEX_DIR"] = cortex_dir
+    try:
+        result = subprocess.run(
+            ["bash", script],
+            env=env,
+            check=False,
+            timeout=PROPOSALS_ARCHIVE_TIMEOUT_SEC,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return {
+            "invoked": False,
+            "reason": f"error:{type(e).__name__}",
+            "returncode": None,
+            "stdout": "",
+            "marker_touched": False,
+        }
+
+    marker_touched = False
+    if result.returncode == 0:
+        # Touch marker only on clean exit so a failed archive run is
+        # retried next cycle instead of waiting another 7 days.
+        try:
+            with open(marker, "a"):
+                pass
+            os.utime(marker, None)
+            marker_touched = True
+        except OSError:
+            pass
+
+    return {
+        "invoked": True,
+        "reason": None,
+        "returncode": result.returncode,
+        "stdout": (result.stdout or "").strip(),
+        "marker_touched": marker_touched,
+    }
