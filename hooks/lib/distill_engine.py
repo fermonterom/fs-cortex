@@ -35,6 +35,7 @@ import os
 import re
 import sys
 import time
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -983,12 +984,92 @@ def _detect_unauthorized_rejections(proposals: list[dict]) -> int:
     return restored
 
 
+# v3.31.2 §4.1.B — auto-validate skip-reason instrumentation (no behavior change).
+
+_SKIP_REASON_BUCKETED_PREFIXES = frozenset({
+    "orphan-domain",
+    "unsafe-trigger",
+    "validate_instinct",
+})
+
+_AUTO_VALIDATE_SKIPS_LOG_MAX_BYTES = 512 * 1024  # 512KB, mirror of session-learner.js
+
+
+def _normalize_skip_reason(reason: str) -> str:
+    """Bucket high-cardinality `<prefix>:<variable>` reasons by their
+    prefix so the breakdown stays readable instead of exploding into
+    one bucket per <variable>. Low-cardinality reasons pass through
+    unchanged (low-confidence, already-instinct, needs-human-judgment)."""
+    if not isinstance(reason, str) or not reason:
+        return "unknown"
+    head = reason.split(":", 1)[0]
+    if head in _SKIP_REASON_BUCKETED_PREFIXES:
+        return head
+    return reason
+
+
+def _summarize_skip_reasons(skipped: list[dict]) -> dict[str, int]:
+    counter: Counter = Counter()
+    for entry in skipped:
+        if isinstance(entry, dict):
+            reason = entry.get("reason", "unknown")
+        else:
+            reason = "unknown"
+        counter[_normalize_skip_reason(reason)] += 1
+    return dict(counter)
+
+
+def _append_skip_breakdown_log(
+    *,
+    total: int,
+    accepted_count: int,
+    skipped_count: int,
+    breakdown: dict[str, int],
+) -> None:
+    """Append one JSONL line to ~/.claude/cortex/log/auto-validate-skips.jsonl.
+
+    Rotates to `.1` when size > 512KB (mirror of session-learner.log rotation
+    at hooks/session-learner.js:60-76). Best-effort: any I/O error is
+    swallowed — logging must never break auto-validate."""
+    log_dir = CORTEX_DIR / "log"
+    log_path = log_dir / "auto-validate-skips.jsonl"
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        if log_path.exists() and log_path.stat().st_size > _AUTO_VALIDATE_SKIPS_LOG_MAX_BYTES:
+            rotated = log_path.with_suffix(log_path.suffix + ".1")
+            try:
+                if rotated.exists():
+                    rotated.unlink()
+            except OSError:
+                pass
+            try:
+                log_path.rename(rotated)
+            except OSError:
+                pass
+        record = {
+            "ts": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+            "total": total,
+            "accepted": accepted_count,
+            "skipped": skipped_count,
+            "skip_breakdown": breakdown,
+        }
+        with open(log_path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
 def auto_validate_proposals(dry_run: bool = False) -> dict:
     """Auto-accept proposals that match whitelist criteria.
 
     Returns: {"accepted": [{id, conf, domain}], "skipped": [{id, reason}],
-              "errors": [], "ghost_restored": int}
-    """
+              "errors": [], "ghost_restored": int, "skip_breakdown": dict}
+
+    v3.31.2 §4.1.B: emit a `skip_breakdown` summary (Counter of normalized
+    skip reasons) in the return dict and append a JSONL row to
+    ~/.claude/cortex/log/auto-validate-skips.jsonl (rotated at 512KB) so
+    the operator can investigate why AUTO pending proposals stay pending.
+    Instrumentation only — no behavior change."""
     today = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
     proposals = _load_proposals()
 
@@ -1133,11 +1214,25 @@ def auto_validate_proposals(dry_run: bool = False) -> dict:
     if not dry_run and (accepted or has_holds or has_auto_rejects or ghost_restored):
         _save_proposals(updated_proposals)
 
+    # v3.31.2 §4.1.B — instrumentation only. Aggregate skip reasons and
+    # persist a single row per run so the operator can investigate why
+    # AUTO pending proposals stay pending. Behavior of accept/skip/hold
+    # paths is unchanged.
+    skip_breakdown = _summarize_skip_reasons(skipped)
+    if not dry_run:
+        _append_skip_breakdown_log(
+            total=len(proposals),
+            accepted_count=len(accepted),
+            skipped_count=len(skipped),
+            breakdown=skip_breakdown,
+        )
+
     return {
         "accepted": accepted,
         "skipped": skipped,
         "errors": errors,
         "ghost_restored": ghost_restored,
+        "skip_breakdown": skip_breakdown,
     }
 
 

@@ -1552,6 +1552,102 @@ else
 fi
 rm -rf "$T40"
 
+# ── v3.31.2 §4.1.B — auto_validate_proposals skip_breakdown logging ─────────
+# Tests 41-42 verify the new instrumentation: aggregated skip-reason
+# Counter returned in dict AND persisted to auto-validate-skips.jsonl.
+
+# ── Test 41: skip-breakdown-counts — return dict has 3 skip reasons ────────
+echo "--- Test 41: skip-breakdown-counts (v3.31.2 §4.1.B return value) ---"
+T41="$(mktemp -d -t distill-t41-XXXXXX)"
+export CORTEX_DIR="$T41"
+mkdir -p "$T41/instincts/global"
+# Pre-existing instinct so p3 triggers `already-instinct`.
+cat > "$T41/instincts/global/p3-exists.yaml" <<'YAML'
+---
+id: p3-exists
+trigger: 'Bash'
+action: 'Test existing instinct'
+confidence: 0.9500
+domain: error-recovery
+type: gotcha
+source: cx-auto-validate
+scope: global
+project_id: 'global'
+project_name: 'cross-project'
+tags: []
+created: '2026-05-01'
+first_seen: '2026-05-01'
+last_seen: '2026-05-01'
+occurrences: 5
+evidence:
+  - '2026-05-01: seeded by test'
+---
+YAML
+cat > "$T41/proposals.json" <<'JSON'
+[
+  {"id": "p1-human", "domain": "correction", "confidence": 0.95, "status": "pending",
+   "trigger": "Bash", "action": "Always verify migrations before applying"},
+  {"id": "p2-low", "domain": "error-recovery", "confidence": 0.30, "status": "pending",
+   "trigger": "Bash", "action": "Catch and retry on transient failure"},
+  {"id": "p3-exists", "domain": "error-recovery", "confidence": 0.95, "status": "pending",
+   "trigger": "Bash", "action": "Test existing instinct"},
+  {"id": "p4-accept", "domain": "error-recovery", "confidence": 0.95, "status": "pending",
+   "trigger": "Bash", "action": "Sanitize input before processing user data"}
+]
+JSON
+
+result=$(python3 - <<PYEOF
+$(_py_patch "$T41")
+out = de.auto_validate_proposals()
+sb = out.get('skip_breakdown', {})
+acc = len(out.get('accepted', []))
+sk = len(out.get('skipped', []))
+print(f"acc={acc} sk={sk} hum={sb.get('needs-human-judgment',0)} low={sb.get('low-confidence',0)} exi={sb.get('already-instinct',0)}")
+PYEOF
+)
+if echo "$result" | grep -q "acc=1 sk=3 hum=1 low=1 exi=1"; then
+  pass "skip-breakdown-counts: 1 accepted + 3 skipped (needs-human, low-conf, already-instinct)"
+else
+  fail "skip-breakdown-counts: got '$result'"
+fi
+rm -rf "$T41"
+
+# ── Test 42: skip-breakdown-log-jsonl — file written + append behavior ─────
+echo "--- Test 42: skip-breakdown-log-jsonl (v3.31.2 §4.1.B persistence) ---"
+T42="$(mktemp -d -t distill-t42-XXXXXX)"
+export CORTEX_DIR="$T42"
+mkdir -p "$T42/instincts/global"
+cat > "$T42/proposals.json" <<'JSON'
+[
+  {"id": "p1-human", "domain": "correction", "confidence": 0.95, "status": "pending",
+   "trigger": "Bash", "action": "Always check git status before pushing"}
+]
+JSON
+
+result=$(python3 - <<PYEOF
+$(_py_patch "$T42")
+import json as _j
+# First run
+de.auto_validate_proposals()
+log_path = de.CORTEX_DIR / 'log' / 'auto-validate-skips.jsonl'
+exists_1 = log_path.exists()
+lines_1 = log_path.read_text(encoding='utf-8').splitlines() if exists_1 else []
+parsed_1 = _j.loads(lines_1[0]) if lines_1 else {}
+keys_1 = sorted(parsed_1.keys()) if parsed_1 else []
+# Second run — appends another line
+de.auto_validate_proposals()
+lines_2 = log_path.read_text(encoding='utf-8').splitlines()
+print(f"exists={exists_1} n1={len(lines_1)} n2={len(lines_2)} keys={keys_1}")
+PYEOF
+)
+expected_keys="['accepted', 'ts', 'skip_breakdown', 'skipped', 'total']"
+if echo "$result" | grep -q "exists=True n1=1 n2=2 keys=\['accepted', 'skip_breakdown', 'skipped', 'total', 'ts'\]"; then
+  pass "skip-breakdown-log-jsonl: file created with 5 keys, append works across runs"
+else
+  fail "skip-breakdown-log-jsonl: got '$result'"
+fi
+rm -rf "$T42"
+
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
