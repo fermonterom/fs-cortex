@@ -13,9 +13,23 @@ Detects instincts that exist in multiple projects (via Jaccard similarity) and o
 ## Usage
 
 ```
-/cx-promote              # Scan all projects for promotion candidates
-/cx-promote --dry-run    # Show candidates without applying changes
+/cx-promote                                # Scan all projects for promotion candidates (default)
+/cx-promote --dry-run                      # Show candidates without applying changes
+/cx-promote --auto <source> --confirm      # v3.32.0 §4.4: promote a HUMAN-gated detector
+                                           # source to AUTO once the statistical gate passes
+                                           # (n ≥ 20 reviewed, accept_rate ≥ 70 %,
+                                           # ≥ 3 distinct sessions, 0 critical rejections)
 ```
+
+## Sub-modes
+
+The default mode promotes cross-project **instincts** (Jaccard ≥ 0.70 in ≥ 2
+projects). Steps 1-5 below describe this mode.
+
+The `--auto <source>` mode (added in v3.32.0 §4.4) is unrelated: it promotes
+a **detector source** (e.g. `session-learner:correction`) from HUMAN-gated
+to AUTO so future proposals from that source are auto-validated without
+operator review. See *Sub-mode --auto* near the bottom.
 
 ## Implementation
 
@@ -88,3 +102,106 @@ PROMOTION SUMMARY:
   Promoted instincts are now in ~/.claude/cortex/instincts/global/
   They will be injected in ALL projects going forward.
 ```
+
+## Sub-mode `--auto <source> --confirm` (v3.32.0 §4.4)
+
+Promotes a **detector source** from HUMAN-gated to AUTO so future
+proposals from that source are auto-validated without operator review.
+This is the ONLY entrypoint that writes `~/.claude/cortex/.promoted-detectors.json` —
+the engine never writes it on its own (AD P0-4 fail-closed design).
+
+### Step 1: Check eligibility
+
+```python
+import sys
+sys.path.insert(0, os.path.expanduser("~/.claude/hooks/cortex/lib"))
+from distill_engine import can_promote_to_auto
+
+eligible, reason, stats = can_promote_to_auto("session-learner:correction")
+```
+
+`stats` = `{reviewed_count, accept_count, distinct_sessions, critical_count}`.
+
+Display the gate snapshot:
+
+```
+Source: session-learner:correction
+  Reviewed:           24
+  Accepted:           19  (79.2 %)
+  Distinct sessions:   4
+  Critical rejections: 0
+  Status: ELIGIBLE — all-gates-pass
+```
+
+Status values:
+- `reviewed N/10 (need review tier)` — not enough data yet
+- `visible-only (N/20)` — partial progress, no promotion
+- `accept_rate X.XX < 0.70` — below acceptance threshold
+- `distinct_sessions N < 3` — too session-local
+- `critical_rejections N > 0` — at least one security / breaking /
+  injection rejection (enum or ES/EN heuristic fallback)
+- `all-gates-pass` — ELIGIBLE
+
+### Step 2: Confirm
+
+`--confirm` is **mandatory** to write the marker. Without it the call
+returns `(False, "missing --confirm", {})` so the operator cannot
+accidentally promote.
+
+```python
+from distill_engine import manual_promote_detector
+
+ok, reason, stats = manual_promote_detector(
+    "session-learner:correction",
+    confirm=True,
+)
+```
+
+On success the marker `.promoted-detectors.json` is written atomically
+(temp+rename) with the schema:
+
+```json
+{
+  "version": 1,
+  "promoted": [
+    {
+      "source": "session-learner:correction",
+      "since": "2026-05-26T15:23:04Z",
+      "approved_by": "operator",
+      "gate_snapshot": {
+        "reviewed_count": 24,
+        "accept_count": 19,
+        "accept_rate": 0.792,
+        "distinct_sessions": 4
+      }
+    }
+  ]
+}
+```
+
+Subsequent calls to `auto_validate_proposals` will pass HUMAN-domain
+proposals from that source through to the AUTO accept path.
+
+### Step 3: Audit logs
+
+Any parse/schema error in the marker is silently treated as
+"not promoted" (fail-closed) AND logged to
+`~/.claude/cortex/log/security-events.jsonl`:
+
+```jsonl
+{"ts":"2026-05-26T15:30:00Z","event":"promoted-detectors:invalid-source","detail":"session-l3@rner:bad"}
+{"ts":"2026-05-26T15:31:00Z","event":"promoted-detectors:invalid-schema","detail":"version=2"}
+```
+
+The operator can `cat` that file to see why a marker was rejected.
+
+### Notes
+
+- The marker is **append-only** via this command. To remove a promoted
+  source you currently edit `.promoted-detectors.json` by hand and
+  remove the entry from the `promoted` list.
+- `rejection_category` is captured by `/cx-validate` (v3.32.0+) when
+  the operator rejects a proposal; legacy rejects without the field
+  fall back to a keyword heuristic over `rejected_reason`
+  (ES: seguridad / inseguro / rompedor / inyecci / vulnerab; EN:
+  security / breaking / injection / unsafe / vulnerab).

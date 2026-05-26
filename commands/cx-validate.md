@@ -142,7 +142,19 @@ This step runs ONLY after the user explicitly confirmed in Step 4.
   ---
   ```
   Confidence is clamped to [0.0, 0.95] after adjustment.
-- Reject proposal: remove from proposals.json
+- Reject proposal: remove from proposals.json **AND** append a terminal
+  entry to `proposals-history.jsonl` (v3.29.5 §F5 storage split). The
+  rejection entry MUST include:
+  - `status: "rejected"`
+  - `rejected_at`, `rejected_by: "cx-validate"`, `session_id`
+  - `rejected_reason` (free-text from the operator)
+  - **`rejection_category`** (v3.32.0 §4.4.c, optional) — one of
+    `security` / `breaking` / `injection` / `noise` / `other`.
+    Ask the operator which bucket applies; if they skip the question,
+    leave the field `null` and the keyword heuristic over
+    `rejected_reason` (ES + EN) will classify legacy-style.
+    Critical categories (`security`, `breaking`, `injection`) block
+    the HUMAN → AUTO promotion gate (see `/cx-promote --auto`).
 - Confirm instinct: update confidence + 0.20, update last_seen
 - Dismiss instinct: reduce confidence by 0.20, archive if below 0.10
 

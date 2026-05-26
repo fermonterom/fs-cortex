@@ -58,6 +58,13 @@ CANDIDATES_FILE = CORTEX_DIR / "auto-distill-candidates.md"
 MARKER_FILE = CORTEX_DIR / ".last-auto-distill"
 LOCK_FILE = CORTEX_DIR / ".distill-engine.lock"
 PROPOSALS_FILE = CORTEX_DIR / "proposals.json"
+# v3.29.5 §F5 storage split: terminal-state (accepted/rejected) is appended
+# to this JSONL by session-learner.js after the per-Stop split. Source of
+# truth for v3.32.0 §4.4 promotion gate (AD P0-1 — `proposals.json` only
+# carries the live pending/held entries).
+PROPOSALS_HISTORY_FILE = CORTEX_DIR / "proposals-history.jsonl"
+PROMOTED_DETECTORS_FILE = CORTEX_DIR / ".promoted-detectors.json"
+SECURITY_LOG_FILE = CORTEX_DIR / "log" / "security-events.jsonl"
 EVOLVED_SKILLS_DIR = CORTEX_DIR / "evolved" / "skills"
 SKILLS_DIR = Path(os.environ.get("SKILLS_DIR", str(Path.home() / ".claude" / "skills")))
 # v3.29.0 §4.16: source of truth for the multi-session promotion gate.
@@ -94,6 +101,31 @@ LAW_MAX_CHARS = 120
 # proposals 24 of which the operator accepts out of fatigue — won't pass
 # until at least 3 different sessions have seen the same pattern.
 LAW_MIN_DISTINCT_SESSIONS = 3
+
+# v3.32.0 §4.4 — promotion gate HUMAN → AUTO. Source: proposals-history.jsonl
+# (AD P0-1). Statistical-strict: prefer false negatives (no promote) over
+# false positives (promote noise). A detector becomes AUTO-eligible only
+# when n ≥ 20 reviewed AND accept_rate ≥ 70% AND distinct_sessions ≥ 3 AND
+# critical_rejections == 0. Visibility tier at n=10 surfaces partial progress
+# in /cx-status without enabling promotion (AD P1-2).
+PROMOTE_REVIEW_THRESHOLD = 10        # visibility tier — not promotion
+PROMOTE_AUTO_THRESHOLD = 20          # AUTO-eligibility floor
+PROMOTE_ACCEPT_RATE = 0.70
+PROMOTE_MIN_SESSIONS = 3
+
+# v3.32.0 §4.4.c — rejection_category enum (AD P1-6). Optional field new
+# rejects via /cx-validate. Legacy rejects without the field fall back to
+# a keyword heuristic over rejected_reason (ES + EN).
+CRITICAL_REJECTION_CATEGORIES = frozenset({"security", "breaking", "injection"})
+CRITICAL_REJECTION_KEYWORDS_FALLBACK = (
+    # ES
+    "seguridad", "inseguro", "rompedor", "inyecci", "vulnerab",
+    # EN
+    "security", "breaking", "injection", "unsafe", "vulnerab",
+)
+REJECTION_CATEGORY_ENUM = frozenset({
+    "security", "breaking", "injection", "noise", "other",
+})
 
 # Sprint 7 — auto-validate
 VALIDATE_MIN_CONF = 0.50
@@ -1059,6 +1091,250 @@ def _append_skip_breakdown_log(
         pass
 
 
+# ── v3.32.0 §4.4 — promotion gate HUMAN → AUTO ──────────────────────────
+
+def _log_security_event(event_type: str, detail: str) -> None:
+    """Append a security-flavored event to a rotated JSONL so the operator
+    can audit fail-closed paths (invalid markers, schema drift, injection
+    attempts). Best-effort: any I/O error is swallowed."""
+    try:
+        SECURITY_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        # Reuse the same 512KB rotation policy as the skip-breakdown log.
+        if (
+            SECURITY_LOG_FILE.exists()
+            and SECURITY_LOG_FILE.stat().st_size > _AUTO_VALIDATE_SKIPS_LOG_MAX_BYTES
+        ):
+            rotated = SECURITY_LOG_FILE.with_suffix(SECURITY_LOG_FILE.suffix + ".1")
+            try:
+                if rotated.exists():
+                    rotated.unlink()
+            except OSError:
+                pass
+            try:
+                SECURITY_LOG_FILE.rename(rotated)
+            except OSError:
+                pass
+        record = {
+            "ts": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+            "event": str(event_type)[:120],
+            "detail": str(detail)[:500],
+        }
+        with open(SECURITY_LOG_FILE, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
+def _load_proposals_history() -> list[dict]:
+    """Read proposals-history.jsonl line-by-line. Skips unparseable lines
+    without raising so partial corruption does not block the gate.
+
+    Returns: list[dict] of all entries. Empty list when the file does
+    not exist OR every line fails to parse. Caller treats empty as
+    "no history" (gate returns reviewed=0)."""
+    history: list[dict] = []
+    if not PROPOSALS_HISTORY_FILE.exists():
+        return history
+    try:
+        with open(PROPOSALS_HISTORY_FILE, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(obj, dict):
+                    history.append(obj)
+    except OSError:
+        return []
+    return history
+
+
+def _count_critical_rejections(reviewed: list[dict]) -> int:
+    """Count rejections marked critical (security / breaking / injection).
+
+    Two-pass: (a) explicit `rejection_category` enum first; (b) fallback
+    keyword heuristic over `rejected_reason` (ES + EN) when the enum is
+    absent — covers legacy rejects from before v3.32.0 added the field.
+    AD P1-6 absorbed."""
+    n = 0
+    for entry in reviewed:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("status") != "rejected":
+            continue
+        category = entry.get("rejection_category")
+        if isinstance(category, str) and category in CRITICAL_REJECTION_CATEGORIES:
+            n += 1
+            continue
+        if category is None:
+            reason = entry.get("rejected_reason") or ""
+            if isinstance(reason, str):
+                low = reason.lower()
+                if any(kw in low for kw in CRITICAL_REJECTION_KEYWORDS_FALLBACK):
+                    n += 1
+    return n
+
+
+def can_promote_to_auto(detector_source: str) -> tuple[bool, str, dict]:
+    """Check HUMAN → AUTO promotion eligibility for one detector source.
+
+    Returns (eligible, reason, stats). `eligible` is True ONLY when ALL
+    four gates pass at the AUTO threshold (n ≥ 20). Between 10 and 20
+    returns (False, 'visible-only', stats) so /cx-status can surface
+    progress without enabling promotion (AD P1-2)."""
+    if not isinstance(detector_source, str) or not detector_source:
+        return False, "invalid-source", {
+            "reviewed_count": 0, "accept_count": 0,
+            "distinct_sessions": 0, "critical_count": 0,
+        }
+
+    history = _load_proposals_history()
+    reviewed = [
+        p for p in history
+        if isinstance(p, dict)
+        and p.get("source") == detector_source
+        and p.get("status") in ("accepted", "rejected")
+    ]
+    accept_count = sum(1 for p in reviewed if p.get("status") == "accepted")
+    distinct_sessions = len({
+        p.get("session_id", "") for p in reviewed if p.get("session_id")
+    })
+    critical_count = _count_critical_rejections(reviewed)
+
+    stats = {
+        "reviewed_count": len(reviewed),
+        "accept_count": accept_count,
+        "distinct_sessions": distinct_sessions,
+        "critical_count": critical_count,
+    }
+
+    n = stats["reviewed_count"]
+    if n < PROMOTE_REVIEW_THRESHOLD:
+        return False, f"reviewed {n}/{PROMOTE_REVIEW_THRESHOLD} (need review tier)", stats
+    if n < PROMOTE_AUTO_THRESHOLD:
+        return False, f"visible-only ({n}/{PROMOTE_AUTO_THRESHOLD})", stats
+
+    accept_rate = accept_count / n
+    if accept_rate < PROMOTE_ACCEPT_RATE:
+        return False, f"accept_rate {accept_rate:.2f} < {PROMOTE_ACCEPT_RATE:.2f}", stats
+    if distinct_sessions < PROMOTE_MIN_SESSIONS:
+        return False, f"distinct_sessions {distinct_sessions} < {PROMOTE_MIN_SESSIONS}", stats
+    if critical_count > 0:
+        return False, f"critical_rejections {critical_count} > 0", stats
+    return True, "all-gates-pass", stats
+
+
+def _load_promoted_detectors() -> set[str]:
+    """Read .promoted-detectors.json. Fail-closed: any parse/schema error
+    returns empty set so HUMAN-gated domains stay HUMAN (AD P0-4).
+
+    NEVER silently treats invalid markers as authorization."""
+    if not PROMOTED_DETECTORS_FILE.exists():
+        return set()
+    try:
+        data = json.loads(PROMOTED_DETECTORS_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        _log_security_event("promoted-detectors:read-error", str(e))
+        return set()
+    if not isinstance(data, dict) or data.get("version") != 1:
+        _log_security_event("promoted-detectors:invalid-schema",
+                            f"version={data.get('version') if isinstance(data, dict) else 'not-a-dict'}")
+        return set()
+    promoted = data.get("promoted", [])
+    if not isinstance(promoted, list):
+        _log_security_event("promoted-detectors:invalid-promoted", str(type(promoted)))
+        return set()
+    result: set[str] = set()
+    src_re = re.compile(r"^[a-z][a-z0-9:_-]{2,80}$")
+    for entry in promoted:
+        if not isinstance(entry, dict):
+            continue
+        src = entry.get("source", "")
+        if not isinstance(src, str) or not src_re.match(src):
+            _log_security_event("promoted-detectors:invalid-source", str(src)[:120])
+            continue
+        since = entry.get("since", "")
+        if not isinstance(since, str):
+            _log_security_event("promoted-detectors:invalid-since", src)
+            continue
+        try:
+            _dt.datetime.fromisoformat(since.replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            _log_security_event("promoted-detectors:invalid-since", src)
+            continue
+        result.add(src)
+    return result
+
+
+def manual_promote_detector(
+    source: str, confirm: bool = False,
+) -> tuple[bool, str, dict]:
+    """ÚNICO writer for `.promoted-detectors.json`. Called from
+    /cx-promote --auto <source> --confirm — never by the engine, never by
+    auto_validate, never by auto_promote_to_law.
+
+    Returns (success, reason, stats_snapshot)."""
+    if not confirm:
+        return False, "missing --confirm", {}
+    eligible, reason, stats = can_promote_to_auto(source)
+    if not eligible:
+        return False, f"gate-blocked: {reason}", stats
+
+    # Read-modify-write with merge so multiple promotions accumulate.
+    existing = {"version": 1, "promoted": []}
+    if PROMOTED_DETECTORS_FILE.exists():
+        try:
+            existing = json.loads(PROMOTED_DETECTORS_FILE.read_text(encoding="utf-8"))
+            if not isinstance(existing, dict) or existing.get("version") != 1:
+                # Corrupted/schema-drift marker: archive + start fresh so the
+                # operator-approved new source isn't lost behind invalid data.
+                _log_security_event(
+                    "promoted-detectors:marker-rewritten-from-invalid",
+                    f"prev-version={existing.get('version') if isinstance(existing, dict) else 'not-dict'}",
+                )
+                existing = {"version": 1, "promoted": []}
+            if not isinstance(existing.get("promoted"), list):
+                existing["promoted"] = []
+        except (OSError, json.JSONDecodeError) as e:
+            _log_security_event("promoted-detectors:marker-rewritten-after-parse-fail", str(e))
+            existing = {"version": 1, "promoted": []}
+
+    # Idempotent: skip if already promoted.
+    if any(
+        isinstance(p, dict) and p.get("source") == source
+        for p in existing.get("promoted", [])
+    ):
+        return True, "already-promoted", stats
+
+    now_iso = _dt.datetime.now(_dt.timezone.utc).isoformat()
+    entry = {
+        "source": source,
+        "since": now_iso,
+        "approved_by": "operator",
+        "gate_snapshot": {
+            "reviewed_count": stats["reviewed_count"],
+            "accept_count": stats["accept_count"],
+            "accept_rate": round(stats["accept_count"] / max(stats["reviewed_count"], 1), 3),
+            "distinct_sessions": stats["distinct_sessions"],
+        },
+    }
+    existing["promoted"].append(entry)
+    try:
+        PROMOTED_DETECTORS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_write(PROMOTED_DETECTORS_FILE, json.dumps(existing, ensure_ascii=False, indent=2) + "\n")
+    except OSError as e:
+        _log_security_event("promoted-detectors:write-error", str(e))
+        return False, f"write-error: {e}", stats
+
+    _log_knowledge("promoted-detector", source, f"reviewed={stats['reviewed_count']} "
+                    f"accept_rate={stats['accept_count']}/{stats['reviewed_count']}",
+                   source="cx-promote")
+    return True, "promoted", stats
+
+
 def auto_validate_proposals(dry_run: bool = False) -> dict:
     """Auto-accept proposals that match whitelist criteria.
 
@@ -1086,11 +1362,16 @@ def auto_validate_proposals(dry_run: bool = False) -> dict:
 
     updated_proposals = list(proposals)  # copy for mutation
 
+    # v3.32.0 §4.4.e — load operator-promoted detectors ONCE. Fail-closed:
+    # invalid marker → empty set, every HUMAN-domain proposal stays human.
+    promoted_sources = _load_promoted_detectors()
+
     for i, proposal in enumerate(proposals):
         iid = proposal.get("id", "")
         status = proposal.get("status", "pending")
         conf_raw = proposal.get("confidence", 0.0)
         domain = proposal.get("domain", "")
+        source = str(proposal.get("source", ""))
 
         if status != "pending":
             continue
@@ -1101,8 +1382,11 @@ def auto_validate_proposals(dry_run: bool = False) -> dict:
             errors.append(f"{iid}: invalid confidence value '{conf_raw}'")
             continue
 
-        # Check skip conditions first (mutually exclusive ordering)
-        if domain in VALIDATE_HUMAN_DOMAINS:
+        # Check skip conditions first (mutually exclusive ordering).
+        # v3.32.0 §4.4.e: HUMAN-domain proposal whose `source` is in the
+        # operator-approved marker falls through to AUTO path; otherwise
+        # the legacy `needs-human-judgment` skip applies.
+        if domain in VALIDATE_HUMAN_DOMAINS and source not in promoted_sources:
             skipped.append({"id": iid, "reason": "needs-human-judgment"})
             continue
 
