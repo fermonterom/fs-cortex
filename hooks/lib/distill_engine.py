@@ -88,11 +88,21 @@ LAW_MIN_PROJECTS = 1  # v3.24.0: was 3 — unreachable for solo-project knowledg
                       # LAW_JACCARD_THRESHOLD=0.50) still preserve quality.
 LAW_MIN_USEFUL_14D = 5
 LAW_MAX_NOISE_14D = 0
-LAW_MAX_ACTIVE = 12  # v3.29.2: was 10. Raised after Sprint 8 cleanup left
-                     # genuinely universal candidates queued with no room.
-                     # Token cost: +80 tok/session baseline (2 extra laws × 40).
+LAW_MAX_ACTIVE = 15  # v3.32.0 §4.5: was 12. Raise + deprecation policy
+                     # hybrid (Sprint 9 D4): subir cap da espacio inmediato a
+                     # candidates conf=0.95 bloqueados HOY; el algoritmo de
+                     # deprecación (_find_least_impactful_law + age guard
+                     # LAW_DEPRECATE_MIN_AGE_DAYS=7) cubre la saturación
+                     # futura. v3.29.2 había subido de 10 → 12.
+                     # Token cost: +120 tok/session baseline (3 extra laws × 40).
                      # Quality gate intact (LAW_THRESHOLD_CONF, LAW_SUSTAINED_DAYS,
                      # LAW_MIN_DISTINCT_SESSIONS, LAW_MAX_NOISE_14D unchanged).
+LAW_DEPRECATE_MIN_AGE_DAYS = 7  # v3.32.0 §4.5 (AD P1-3): laws younger than
+                                # this are NOT deprecation candidates. Without
+                                # the age guard a freshly-promoted law without
+                                # accumulated impact data would have ratio=0
+                                # and be marked for immediate deprecation
+                                # before getting a chance to be exercised.
 LAW_JACCARD_THRESHOLD = 0.50
 LAW_MAX_CHARS = 120
 # v3.29.0 §4.16: minimum distinct sessions (UUIDs) where an instinct must
@@ -635,6 +645,173 @@ def _active_law_count() -> int:
     return count
 
 
+# ── v3.32.0 §4.5 — laws cap deprecation policy ──────────────────────────
+
+def _law_age_days(law_path: Path, today: _dt.date | None = None) -> int:
+    """Return integer days since the law file's mtime. Laws don't have
+    frontmatter (they're one-line .txt), so mtime IS the canonical
+    "last_seen" — set the day the law was promoted or rewritten."""
+    if today is None:
+        today = _dt.date.today()
+    try:
+        mtime = _dt.date.fromtimestamp(law_path.stat().st_mtime)
+    except OSError:
+        return 0
+    return max(0, (today - mtime).days)
+
+
+def _find_least_impactful_law(
+    impact_per_iid: dict,
+    today: _dt.date | None = None,
+) -> str | None:
+    """Find the law most suitable for deprecation when the cap is saturated.
+
+    Heuristic: lowest `useful_14d / (1 + noise_14d)` ratio. Tie-break by
+    oldest mtime (more days idle wins). Laws younger than
+    LAW_DEPRECATE_MIN_AGE_DAYS are NOT candidates (AD P1-3 absorbed):
+    without the age guard a freshly-promoted law without accumulated
+    impact data would have ratio=0 and be marked for immediate
+    deprecation before getting a chance to be exercised.
+
+    Returns law_id (filename stem) when a viable candidate exists, or
+    None when:
+      - LAWS_DIR is missing or empty
+      - every law is younger than LAW_DEPRECATE_MIN_AGE_DAYS
+      - the best candidate's ratio is already > 1.0 (productive cohort,
+        don't deprecate the least-bad of a healthy set)"""
+    if today is None:
+        today = _dt.date.today()
+    if not LAWS_DIR.is_dir():
+        return None
+    candidates: list[tuple[float, int, str]] = []  # (ratio, age_days_neg, iid)
+    for law_path in LAWS_DIR.glob("*.txt"):
+        if "archive" in str(law_path):
+            continue
+        iid = law_path.stem
+        age = _law_age_days(law_path, today)
+        if age < LAW_DEPRECATE_MIN_AGE_DAYS:
+            continue
+        bucket = impact_per_iid.get(iid, {"useful": 0, "noise": 0})
+        useful = int(bucket.get("useful", 0) or 0)
+        noise = int(bucket.get("noise", 0) or 0)
+        ratio = useful / (1 + noise)
+        # Negate age so larger age sorts first under ascending sort
+        candidates.append((ratio, -age, iid))
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: (x[0], x[1]))
+    best_ratio, _, best_iid = candidates[0]
+    if best_ratio > 1.0:
+        return None  # all laws productive, don't deprecate
+    return best_iid
+
+
+def manual_swap_promote(
+    new_iid: str,
+    deprecate_iid: str,
+    dry_run: bool = False,
+    today: _dt.date | None = None,
+) -> tuple[bool, str]:
+    """Atomic swap: promote `new_iid` to a new law + archive `deprecate_iid`
+    in one operation. Called from /cx-distill --swap <to_deprecate>
+    <new_iid> --confirm. (AD P1-7 rollback absorbed.)
+
+    Safety:
+      - Pre-check: deprecate_iid exists in LAWS_DIR
+      - Pre-check: new_iid is an instinct in the global cohort with
+        conf >= LAW_THRESHOLD_CONF (mature enough to graduate)
+      - Backup: copy the old law file to LAWS_DIR/archive/ BEFORE
+        creating the new one (manifest preserved)
+      - Atomic: tmp+rename via _atomic_write avoids half-written state
+      - Rollback: if the new-law write fails, restore the old law from
+        the archive copy so the cohort stays at the same count
+
+    Returns (success, reason). Reason is human-readable, suitable for
+    echo to the operator."""
+    if today is None:
+        today = _dt.date.today()
+
+    deprecate_path = LAWS_DIR / f"{deprecate_iid}.txt"
+    if not deprecate_path.exists() or "archive" in str(deprecate_path):
+        return False, f"deprecate target not found: {deprecate_iid}.txt"
+
+    # Locate the new instinct file (global cohort first; project cohort
+    # secondarily) and confirm conf>=0.95.
+    new_instinct_path = INSTINCTS_DIR / f"{new_iid}.yaml"
+    instinct_fields = None
+    if new_instinct_path.exists():
+        result = _read_instinct(new_instinct_path)
+        if result is not None:
+            instinct_fields, _ = result
+    if instinct_fields is None:
+        proj_dir = CORTEX_DIR / "projects"
+        if proj_dir.is_dir():
+            for proj in proj_dir.iterdir():
+                cand = proj / "instincts" / f"{new_iid}.yaml"
+                if cand.exists():
+                    result = _read_instinct(cand)
+                    if result is not None:
+                        instinct_fields, _ = result
+                        new_instinct_path = cand
+                        break
+    if instinct_fields is None:
+        return False, f"new instinct not found: {new_iid}.yaml"
+
+    try:
+        conf = float(instinct_fields.get("confidence", 0))
+    except (TypeError, ValueError):
+        return False, f"new instinct has invalid confidence: {new_iid}"
+    if conf < LAW_THRESHOLD_CONF:
+        return False, f"new instinct conf {conf:.2f} < {LAW_THRESHOLD_CONF:.2f}"
+
+    if dry_run:
+        return True, (
+            f"dry-run: would archive {deprecate_iid} and promote "
+            f"{new_iid} (conf={conf:.2f})"
+        )
+
+    archive_dir = LAWS_DIR / "archive"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%d-%H%M%S")
+    archive_path = archive_dir / f"{deprecate_iid}.{ts}.txt"
+    backup_content: str | None = None
+    try:
+        backup_content = deprecate_path.read_text(encoding="utf-8")
+        _atomic_write(archive_path, backup_content)
+    except OSError as e:
+        return False, f"archive backup failed: {e}"
+
+    # Remove the old law (we've got it in archive); write the new one.
+    new_law_line = _derive_law_line(instinct_fields)
+    new_law_path = LAWS_DIR / f"{new_iid}.txt"
+    try:
+        deprecate_path.unlink()
+    except OSError as e:
+        # archive exists but old still in place: no harm, just bail
+        return False, f"unlink old law failed: {e}"
+
+    try:
+        _atomic_write(new_law_path, new_law_line + "\n")
+    except OSError as e:
+        # Rollback: restore the old law from archive content we kept in memory.
+        try:
+            _atomic_write(deprecate_path, backup_content or "")
+        except OSError:
+            pass
+        return False, f"write new law failed (rolled back): {e}"
+
+    _log_knowledge(
+        "swap-promoted", new_iid,
+        f"archived={deprecate_iid} archive_file={archive_path.name}",
+        source="cx-distill-swap",
+    )
+    return True, (
+        f"swapped: {deprecate_iid} → archive/{archive_path.name}; "
+        f"{new_iid} promoted (conf={conf:.2f})"
+    )
+
+
 def _law_content_for_jaccard(law_path: Path) -> str:
     """Read first line of a law file for Jaccard comparison."""
     try:
@@ -837,9 +1014,25 @@ def auto_promote_to_law(
                     failed_reasons.append(f"duplicate of {law_id} (Jaccard {sim:.2f})")
                     break
 
-        # ── Criteria 7: active law count < 10 ────────────────────────────
+        # ── Criteria 7: active law count < LAW_MAX_ACTIVE ────────────────
+        # v3.32.0 §4.5: when saturated, propose a deprecation candidate
+        # (lowest useful/(1+noise) ratio, age >= 7d) so the operator
+        # knows which law to retire via /cx-distill --swap. Engine never
+        # auto-swaps — only the operator confirms.
         if active_laws >= LAW_MAX_ACTIVE:
-            failed_reasons.append(f"laws == {active_laws} (max {LAW_MAX_ACTIVE})")
+            candidate = _find_least_impactful_law(impact)
+            if candidate:
+                failed_reasons.append(
+                    f"laws == {active_laws}/{LAW_MAX_ACTIVE} saturated; "
+                    f"would deprecate {candidate} via "
+                    f"/cx-distill --swap {candidate} {iid} --confirm"
+                )
+            else:
+                failed_reasons.append(
+                    f"laws == {active_laws}/{LAW_MAX_ACTIVE} saturated; "
+                    f"no deprecation candidate (all productive OR < "
+                    f"{LAW_DEPRECATE_MIN_AGE_DAYS}d age)"
+                )
 
         if failed_reasons:
             candidates.append({

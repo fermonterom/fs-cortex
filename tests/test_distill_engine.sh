@@ -401,8 +401,8 @@ projects_seen:
 - proj-beta
 - proj-gamma"
 make_impact_events "$T10/impact.jsonl" "t10-full" 6 0
-# Create LAW_MAX_ACTIVE law files (v3.29.2: cap raised 10 → 12)
-for i in $(seq 1 12); do
+# Create LAW_MAX_ACTIVE law files (v3.32.0 §4.5: cap raised 12 → 15)
+for i in $(seq 1 15); do
   make_law "$T10/laws" "existing-law-$i" "Always do thing $i for testing purposes"
 done
 
@@ -425,7 +425,7 @@ reason_ok = any('laws ==' in r for c in candidates if c['id'] == 't10-full' for 
 print(in_cand, reason_ok)
 ")
 if echo "$result" | grep -q "True True"; then
-  pass "promote-rejects-laws-full: 12 active laws → candidate with 'laws == 12'"
+  pass "promote-rejects-laws-full: 15 active laws → candidate with 'laws == 15/15 saturated'"
 else
   fail "promote-rejects-laws-full: got '$result'"
 fi
@@ -1647,6 +1647,225 @@ else
   fail "skip-breakdown-log-jsonl: got '$result'"
 fi
 rm -rf "$T42"
+
+# ── v3.32.0 §4.5 — LAW_MAX_ACTIVE 12 → 15 + deprecation policy ──────────────
+# Tests 43-48 verify the cap raise + _find_least_impactful_law +
+# manual_swap_promote rollback (AD P1-3 + P1-7 absorbed).
+
+# Test 43: cap-raised-allows-13th-promotion
+echo "--- Test 43: cap-raised-12-to-15 (v3.32.0 §4.5 Eje A) ---"
+T43="$(mktemp -d -t distill-t43-XXXXXX)"
+export CORTEX_DIR="$T43"
+mkdir -p "$T43/laws"
+# Seed 12 existing laws (would have saturated the pre-v3.32 cap of 12)
+for i in $(seq 1 12); do
+  echo "Existing law number $i" > "$T43/laws/law-existing-$i.txt"
+done
+make_promotable_instinct "$T43/instincts/global" "t43-new"
+make_impact_events "$T43/impact.jsonl" "t43-new" 6 0
+cat > "$T43/instinct-tracking.json" <<'JSON'
+{
+  "t43-new": {
+    "count": 30,
+    "sessions": ["sess-A", "sess-B", "sess-C"],
+    "projects_seen": ["proj-alpha"],
+    "first_seen": "2026-05-01T00:00:00Z",
+    "last_seen": "2026-05-14T00:00:00Z"
+  }
+}
+JSON
+
+result=$(python3 - <<PYEOF
+$(_py_patch "$T43")
+assert de.LAW_MAX_ACTIVE == 15, f"cap not raised: {de.LAW_MAX_ACTIVE}"
+promoted, candidates = de.auto_promote_to_law()
+was_promoted = any(p['id'] == 't43-new' for p in promoted)
+law_exists = (de.LAWS_DIR / 't43-new.txt').exists()
+count_after = de._active_law_count()
+print(was_promoted, law_exists, count_after)
+PYEOF
+)
+if echo "$result" | grep -q "True True 13"; then
+  pass "cap-raised-12-to-15: 13th law promotes (would have been blocked at old cap=12)"
+else
+  fail "cap-raised-12-to-15: got '$result'"
+fi
+rm -rf "$T43"
+
+# Test 44: _find_least_impactful_law picks lowest ratio
+echo "--- Test 44: deprecation-lowest-ratio (v3.32.0 §4.5 Eje B) ---"
+T44="$(mktemp -d -t distill-t44-XXXXXX)"
+export CORTEX_DIR="$T44"
+mkdir -p "$T44/laws"
+for name in productive marginal worst; do
+  echo "Law $name" > "$T44/laws/law-$name.txt"
+done
+# Age every law to be > 7 days so age guard doesn't filter them out.
+python3 - <<PYEOF
+import os, time
+old = time.time() - (30 * 86400)
+for name in ("productive", "marginal", "worst"):
+    p = "$T44/laws/law-" + name + ".txt"
+    os.utime(p, (old, old))
+PYEOF
+
+result=$(python3 - <<PYEOF
+$(_py_patch "$T44")
+impact = {
+    "law-productive": {"useful": 10, "noise": 0},  # ratio 10.0 — keep
+    "law-marginal":   {"useful": 2,  "noise": 1},  # ratio 1.0 — borderline
+    "law-worst":      {"useful": 0,  "noise": 3},  # ratio 0.0 — top deprecation candidate
+}
+print(de._find_least_impactful_law(impact))
+PYEOF
+)
+if [ "$result" = "law-worst" ]; then
+  pass "deprecation-lowest-ratio: law-worst (useful=0 noise=3) picked"
+else
+  fail "deprecation-lowest-ratio: got '$result'"
+fi
+rm -rf "$T44"
+
+# Test 45: tie-break by oldest mtime
+echo "--- Test 45: deprecation-age-tie-break (v3.32.0 §4.5) ---"
+T45="$(mktemp -d -t distill-t45-XXXXXX)"
+export CORTEX_DIR="$T45"
+mkdir -p "$T45/laws"
+for name in alpha beta gamma; do
+  echo "Law $name" > "$T45/laws/law-$name.txt"
+done
+# Same ratio for all 3, but oldest mtime is alpha (60d old)
+python3 - <<PYEOF
+import os, time
+now = time.time()
+os.utime("$T45/laws/law-alpha.txt", (now - 60*86400, now - 60*86400))
+os.utime("$T45/laws/law-beta.txt",  (now - 30*86400, now - 30*86400))
+os.utime("$T45/laws/law-gamma.txt", (now - 10*86400, now - 10*86400))
+PYEOF
+
+result=$(python3 - <<PYEOF
+$(_py_patch "$T45")
+# All three have identical ratio (useful=0 noise=0 → 0/1=0). Tie-break
+# should pick the oldest law-alpha.
+impact = {
+    "law-alpha": {"useful": 0, "noise": 0},
+    "law-beta":  {"useful": 0, "noise": 0},
+    "law-gamma": {"useful": 0, "noise": 0},
+}
+print(de._find_least_impactful_law(impact))
+PYEOF
+)
+if [ "$result" = "law-alpha" ]; then
+  pass "deprecation-age-tie-break: same ratio → oldest mtime (60d) wins"
+else
+  fail "deprecation-age-tie-break: got '$result'"
+fi
+rm -rf "$T45"
+
+# Test 46: AD P1-3 — laws younger than LAW_DEPRECATE_MIN_AGE_DAYS skipped
+echo "--- Test 46: deprecation-age-guard-7d (v3.32.0 §4.5 AD P1-3) ---"
+T46="$(mktemp -d -t distill-t46-XXXXXX)"
+export CORTEX_DIR="$T46"
+mkdir -p "$T46/laws"
+echo "Law fresh" > "$T46/laws/law-fresh.txt"
+echo "Law mature" > "$T46/laws/law-mature.txt"
+python3 - <<PYEOF
+import os, time
+now = time.time()
+# Fresh = 3 days old (under 7-day guard); mature = 30 days old.
+os.utime("$T46/laws/law-fresh.txt", (now - 3*86400, now - 3*86400))
+os.utime("$T46/laws/law-mature.txt", (now - 30*86400, now - 30*86400))
+PYEOF
+
+result=$(python3 - <<PYEOF
+$(_py_patch "$T46")
+# Fresh has ratio 0 (newer = more candidate by ratio); but age guard
+# must skip it and return the mature law instead.
+impact = {
+    "law-fresh":  {"useful": 0, "noise": 0},
+    "law-mature": {"useful": 0, "noise": 0},
+}
+got = de._find_least_impactful_law(impact)
+# Also test: with ONLY fresh law present → return None (no candidate)
+import os as _os
+_os.remove("$T46/laws/law-mature.txt")
+got2 = de._find_least_impactful_law(impact)
+print(got, got2)
+PYEOF
+)
+if echo "$result" | grep -q "^law-mature None$"; then
+  pass "deprecation-age-guard-7d: <7d law skipped; lone fresh law → None (AD P1-3)"
+else
+  fail "deprecation-age-guard-7d: got '$result'"
+fi
+rm -rf "$T46"
+
+# Test 47: manual_swap_promote golden path
+echo "--- Test 47: swap-promote-golden (v3.32.0 §4.5) ---"
+T47="$(mktemp -d -t distill-t47-XXXXXX)"
+export CORTEX_DIR="$T47"
+mkdir -p "$T47/laws"
+echo "Old law content" > "$T47/laws/law-old.txt"
+# Promote-eligible instinct (conf >= 0.95)
+make_promotable_instinct "$T47/instincts/global" "t47-new-mature"
+
+result=$(python3 - <<PYEOF
+$(_py_patch "$T47")
+ok, reason = de.manual_swap_promote("t47-new-mature", "law-old")
+old_gone = not (de.LAWS_DIR / 'law-old.txt').exists()
+new_present = (de.LAWS_DIR / 't47-new-mature.txt').exists()
+archive_dir = de.LAWS_DIR / 'archive'
+archive_files = sorted(archive_dir.iterdir()) if archive_dir.is_dir() else []
+has_archive = any(f.name.startswith('law-old.') and f.suffix == '.txt' for f in archive_files)
+print(ok, old_gone, new_present, has_archive)
+PYEOF
+)
+if echo "$result" | grep -q "True True True True"; then
+  pass "swap-promote-golden: old archived, new written, all 3 atomic steps"
+else
+  fail "swap-promote-golden: got '$result'"
+fi
+rm -rf "$T47"
+
+# Test 48: AD P1-7 — manual_swap_promote rollback on write failure
+echo "--- Test 48: swap-promote-rollback (v3.32.0 §4.5 AD P1-7) ---"
+T48="$(mktemp -d -t distill-t48-XXXXXX)"
+export CORTEX_DIR="$T48"
+mkdir -p "$T48/laws"
+echo "Old law original content" > "$T48/laws/law-old-rollback.txt"
+make_promotable_instinct "$T48/instincts/global" "t48-new"
+
+result=$(python3 - <<PYEOF
+$(_py_patch "$T48")
+# Monkey-patch _atomic_write to fail ONLY when called on the new-law
+# path. Archive write + rollback write must keep working.
+orig = de._atomic_write
+calls = {"n": 0}
+def failing_atomic_write(path, content):
+    calls["n"] += 1
+    # First call: archive backup → succeed
+    # Second call: NEW law write → fail
+    # Third call: rollback restore → must succeed (use original)
+    if calls["n"] == 2:
+        raise OSError("simulated disk-full on new law write")
+    return orig(path, content)
+de._atomic_write = failing_atomic_write
+
+ok, reason = de.manual_swap_promote("t48-new", "law-old-rollback")
+de._atomic_write = orig  # restore for cleanup
+
+old_back = (de.LAWS_DIR / 'law-old-rollback.txt').exists()
+old_content = (de.LAWS_DIR / 'law-old-rollback.txt').read_text(encoding='utf-8') if old_back else ""
+new_not_present = not (de.LAWS_DIR / 't48-new.txt').exists()
+print(f"ok={ok} reason_has_rolled_back={('rolled back' in reason)} old_back={old_back} content_match={('Old law original' in old_content)} new_absent={new_not_present}")
+PYEOF
+)
+if echo "$result" | grep -q "ok=False reason_has_rolled_back=True old_back=True content_match=True new_absent=True"; then
+  pass "swap-promote-rollback: write-failure → old law restored, new not present (AD P1-7)"
+else
+  fail "swap-promote-rollback: got '$result'"
+fi
+rm -rf "$T48"
 
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo ""

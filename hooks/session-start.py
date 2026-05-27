@@ -49,7 +49,7 @@ LEARN_THRESHOLD = _config.get('learn_threshold', 100)
 
 
 def load_laws():
-    """Read all active law files. Engine caps total at LAW_MAX_ACTIVE=12 (see hooks/lib/distill_engine.py:83)."""
+    """Read all active law files. Engine caps total at LAW_MAX_ACTIVE=15 (see hooks/lib/distill_engine.py:LAW_MAX_ACTIVE)."""
     if not LAWS_DIR.is_dir():
         return []
     law_files = sorted(LAWS_DIR.glob('*.txt'))

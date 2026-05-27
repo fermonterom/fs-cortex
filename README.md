@@ -34,7 +34,7 @@ Parallel systems: **Reflexes** (11 deterministic rules, always fire) and **Agent
 
 ### Dual Injection
 
-1. **SessionStart**: Laws (max 12) + EOD resume + project context bridge (~730 tokens)
+1. **SessionStart**: Laws (max 15) + EOD resume + project context bridge (~850 tokens)
 2. **PreToolUse**: Matched instincts (max 3, domain-filtered) + reflexes (max 2) per tool use (~200 tokens max)
 
 ### Confidence Lifecycle
@@ -265,7 +265,7 @@ Also fires `session-start.py` on `/compact` to re-inject laws.
 ├── reflexes.json            # Deterministic rules (11 default — see below)
 ├── impact.jsonl             # Impact funnel (Sprint 0+, v:1) — inject/follow/feedback/outcome events
 ├── proposals.json           # Pending proposals from session-learner + cx-analyze
-├── laws/                    # One-liners (max 12 active)
+├── laws/                    # One-liners (max 15 active; deprecation via /cx-distill --swap)
 │   ├── *.txt
 │   └── archive/
 ├── instincts/
@@ -333,7 +333,7 @@ Backups include: laws, instincts, memory, reflexes, evolved content, proposals, 
 
 | Component | Tokens | When |
 |-----------|--------|------|
-| Laws (max 12) | ~480 | SessionStart (1x) |
+| Laws (max 15) | ~600 | SessionStart (1x) |
 | EOD resume | ~150 | SessionStart (1x per EOD, not repeated) |
 | Context bridge | ~100 | SessionStart (1x) |
 | Instincts (max 3) | ~120 | PreToolUse (if match) |

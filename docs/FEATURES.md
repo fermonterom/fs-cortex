@@ -109,7 +109,7 @@ or `python3 impact_log.py stats --json`.
 - Project root detection with fallback to cwd hash when no `origin` remote
 
 ### session-start.sh — Session Initialization
-- Injects Laws (max 12) from `~/.claude/cortex/laws/*.txt`
+- Injects Laws (max 15) from `~/.claude/cortex/laws/*.txt`
 - Lightweight skills hint (~50 tokens) listing all `/cx-*` commands
 - EOD resume injection (read-once via `.eod-last-read` marker)
 - Context bridge from project `context.md` (14-day TTL)
@@ -427,7 +427,7 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 ├── .project-domains-cache        # Domain pre-filter cache (v3.15.0, 5-min TTL)
 ├── .fire-once/                   # fire_once markers (v3.15.0): name-sid24 files
 │   └── precompact-flush-<sid>    # PreCompact double-flush guard (1-h TTL)
-├── laws/                         # One-liners (max 12 active)
+├── laws/                         # One-liners (max 15 active; deprecation via /cx-distill --swap)
 │   ├── *.txt
 │   └── archive/
 ├── instincts/
@@ -507,7 +507,7 @@ locally (not installed to `~/.claude/`):
 
 | Component | Tokens | When |
 |---|---|---|
-| Laws (max 12) | ~480 | SessionStart (1x) |
+| Laws (max 15) | ~600 | SessionStart (1x) |
 | Skills hint | ~50 | SessionStart (1x) |
 | EOD resume | ~150 | SessionStart (1x, read-once) |
 | Context bridge | ~100 | SessionStart (1x) |
