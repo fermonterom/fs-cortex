@@ -1462,6 +1462,38 @@ def _load_promoted_detectors() -> set[str]:
     return result
 
 
+def _archive_corrupted_marker(content: str | None, reason: str) -> None:
+    """Rename a corrupted .promoted-detectors.json to
+    `<file>.corrupt-<UTC-ts>` so the operator can recover the prior
+    state instead of seeing it silently overwritten with an empty
+    marker. Falls back to writing `content` to the archive path if the
+    rename fails (because the original file may already be gone after
+    the read).
+
+    Best-effort: any I/O error is swallowed and security-logged."""
+    ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    archive_path = PROMOTED_DETECTORS_FILE.with_name(
+        PROMOTED_DETECTORS_FILE.name + f".corrupt-{ts}"
+    )
+    moved = False
+    if PROMOTED_DETECTORS_FILE.exists():
+        try:
+            PROMOTED_DETECTORS_FILE.rename(archive_path)
+            moved = True
+        except OSError:
+            pass
+    if not moved and content is not None:
+        try:
+            _atomic_write(archive_path, content)
+            moved = True
+        except OSError:
+            pass
+    _log_security_event(
+        "promoted-detectors:archived-corrupt-marker",
+        f"reason={reason} archive={archive_path.name if moved else 'NOT-WRITTEN'}",
+    )
+
+
 def manual_promote_detector(
     source: str, confirm: bool = False,
 ) -> tuple[bool, str, dict]:
@@ -1479,21 +1511,30 @@ def manual_promote_detector(
     # Read-modify-write with merge so multiple promotions accumulate.
     existing = {"version": 1, "promoted": []}
     if PROMOTED_DETECTORS_FILE.exists():
+        prev_content: str | None = None
         try:
-            existing = json.loads(PROMOTED_DETECTORS_FILE.read_text(encoding="utf-8"))
+            prev_content = PROMOTED_DETECTORS_FILE.read_text(encoding="utf-8")
+            existing = json.loads(prev_content)
+        except (OSError, json.JSONDecodeError) as e:
+            _archive_corrupted_marker(prev_content, reason=f"parse-fail:{e}")
+            existing = {"version": 1, "promoted": []}
+        else:
             if not isinstance(existing, dict) or existing.get("version") != 1:
-                # Corrupted/schema-drift marker: archive + start fresh so the
-                # operator-approved new source isn't lost behind invalid data.
-                _log_security_event(
-                    "promoted-detectors:marker-rewritten-from-invalid",
-                    f"prev-version={existing.get('version') if isinstance(existing, dict) else 'not-dict'}",
+                # Schema-drift / unknown version: preserve original by
+                # rename-archive (review-quick-win) so the operator-approved
+                # data isn't silently lost.
+                _archive_corrupted_marker(
+                    prev_content,
+                    reason=f"prev-version={existing.get('version') if isinstance(existing, dict) else 'not-dict'}",
                 )
                 existing = {"version": 1, "promoted": []}
-            if not isinstance(existing.get("promoted"), list):
-                existing["promoted"] = []
-        except (OSError, json.JSONDecodeError) as e:
-            _log_security_event("promoted-detectors:marker-rewritten-after-parse-fail", str(e))
-            existing = {"version": 1, "promoted": []}
+            elif not isinstance(existing.get("promoted"), list):
+                # Schema right but `promoted` field wrong type: also archive.
+                _archive_corrupted_marker(
+                    prev_content,
+                    reason=f"promoted-not-list:{type(existing.get('promoted')).__name__}",
+                )
+                existing = {"version": 1, "promoted": []}
 
     # Idempotent: skip if already promoted.
     if any(

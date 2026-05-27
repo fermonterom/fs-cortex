@@ -247,6 +247,87 @@ else
 fi
 rm -rf "$T8"
 
+# ── v3.32.0 §4.4 quick wins (PR #44 review feedback) ────────────────────────
+
+# ── Test 9: confirm=False blocks the write ──────────────────────────────────
+echo "--- Test 9: confirm-false-blocks-write ---"
+T9="$(mktemp -d -t promo-t9-XXXXXX)"
+export CORTEX_DIR="$T9"
+_seed_history "$T9/proposals-history.jsonl" "session-learner:correction" 22 3 4 0 0
+result=$(python3 - <<PYEOF
+$(_py_patch "$T9")
+ok, reason, stats = de.manual_promote_detector("session-learner:correction", confirm=False)
+marker_written = de.PROMOTED_DETECTORS_FILE.exists()
+print(f"ok={ok} reason={reason} marker={marker_written}")
+PYEOF
+)
+if echo "$result" | grep -q "ok=False reason=missing --confirm marker=False"; then
+  pass "confirm-false-blocks-write: missing --confirm → (False, 'missing --confirm'); no marker on disk"
+else
+  fail "confirm-false-blocks-write: got '$result'"
+fi
+rm -rf "$T9"
+
+# ── Test 10: idempotent double-promote ──────────────────────────────────────
+echo "--- Test 10: idempotent-double-promote ---"
+T10="$(mktemp -d -t promo-t10-XXXXXX)"
+export CORTEX_DIR="$T10"
+_seed_history "$T10/proposals-history.jsonl" "session-learner:correction" 22 3 4 0 0
+result=$(python3 - <<PYEOF
+$(_py_patch "$T10")
+import json as _j
+ok1, reason1, _ = de.manual_promote_detector("session-learner:correction", confirm=True)
+ok2, reason2, _ = de.manual_promote_detector("session-learner:correction", confirm=True)
+data = _j.loads(de.PROMOTED_DETECTORS_FILE.read_text(encoding="utf-8"))
+n_entries = len([
+    e for e in data.get("promoted", [])
+    if isinstance(e, dict) and e.get("source") == "session-learner:correction"
+])
+print(f"first=({ok1},{reason1}) second=({ok2},{reason2}) entries={n_entries}")
+PYEOF
+)
+if echo "$result" | grep -qE "first=\(True,promoted\) second=\(True,already-promoted\) entries=1"; then
+  pass "idempotent-double-promote: 2nd call → 'already-promoted'; marker still has 1 entry"
+else
+  fail "idempotent-double-promote: got '$result'"
+fi
+rm -rf "$T10"
+
+# ── Test 11: corrupted marker preserved by rename-archive ───────────────────
+echo "--- Test 11: corrupt-marker-archive ---"
+T11="$(mktemp -d -t promo-t11-XXXXXX)"
+export CORTEX_DIR="$T11"
+_seed_history "$T11/proposals-history.jsonl" "session-learner:correction" 22 3 4 0 0
+# Seed a marker with a partial / corrupt JSON (deliberate)
+ORIG_CONTENT='{"version": 1, "promoted": [{"source": "OLD-source-not-lost", "since'
+printf '%s' "$ORIG_CONTENT" > "$T11/.promoted-detectors.json"
+result=$(python3 - <<PYEOF
+$(_py_patch "$T11")
+import json as _j, os
+ok, reason, _ = de.manual_promote_detector("session-learner:correction", confirm=True)
+# After the call: marker exists with new entry; archive .corrupt-* exists
+# with the original (corrupt) content preserved verbatim.
+marker_after = _j.loads(de.PROMOTED_DETECTORS_FILE.read_text(encoding="utf-8"))
+has_new = any(e.get("source") == "session-learner:correction"
+              for e in marker_after.get("promoted", []) if isinstance(e, dict))
+archive_files = [
+    f for f in os.listdir(str(de.CORTEX_DIR))
+    if f.startswith(".promoted-detectors.json.corrupt-")
+]
+archive_content = ""
+if archive_files:
+    archive_content = (de.CORTEX_DIR / archive_files[0]).read_text(encoding="utf-8")
+preserved = "OLD-source-not-lost" in archive_content
+print(f"ok={ok} reason={reason} new_in_marker={has_new} archives={len(archive_files)} preserved={preserved}")
+PYEOF
+)
+if echo "$result" | grep -q "ok=True reason=promoted new_in_marker=True archives=1 preserved=True"; then
+  pass "corrupt-marker-archive: corrupt original renamed to .corrupt-<ts>; content preserved verbatim; new marker written"
+else
+  fail "corrupt-marker-archive: got '$result'"
+fi
+rm -rf "$T11"
+
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="

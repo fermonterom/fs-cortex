@@ -1867,6 +1867,40 @@ else
 fi
 rm -rf "$T48"
 
+# ── Test 49: empty-impact-tie-break (PR #44 review quick win) ───────────────
+# Common case in fresh installs: impact.jsonl is empty so every law has
+# ratio=0/1=0. The function must NOT return None — it must fall through to
+# the tie-break-by-age and return the oldest law. (Healthy-cohort guard
+# only kicks in when best ratio > 1.0.)
+echo "--- Test 49: empty-impact-tie-break (PR #44 review quick win) ---"
+T49="$(mktemp -d -t distill-t49-XXXXXX)"
+export CORTEX_DIR="$T49"
+mkdir -p "$T49/laws"
+for name in old middle newer; do
+  echo "Law $name" > "$T49/laws/law-$name.txt"
+done
+python3 - <<PYEOF
+import os, time
+now = time.time()
+os.utime("$T49/laws/law-old.txt",    (now - 60*86400, now - 60*86400))
+os.utime("$T49/laws/law-middle.txt", (now - 30*86400, now - 30*86400))
+os.utime("$T49/laws/law-newer.txt",  (now - 10*86400, now - 10*86400))
+PYEOF
+
+result=$(python3 - <<PYEOF
+$(_py_patch "$T49")
+# Empty impact dict — every law has useful=0 noise=0 → ratio=0.
+got = de._find_least_impactful_law({})
+print(got)
+PYEOF
+)
+if [ "$result" = "law-old" ]; then
+  pass "empty-impact-tie-break: empty impact_per_iid → returns oldest law (tie-break by mtime)"
+else
+  fail "empty-impact-tie-break: got '$result'"
+fi
+rm -rf "$T49"
+
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="

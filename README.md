@@ -191,13 +191,13 @@ You work → Cortex observes → /cx-analyze detects patterns → /cx-validate y
 |---------|-------------|
 | `/cx-status` | Dashboard: laws, instincts, projects, reflexes, tracking, health, domain grouping |
 | `/cx-analyze` | Detect patterns in observations → proposals (with descriptions) |
-| `/cx-distill` | Distill laws (universality gate), decay, Jaccard promotions |
+| `/cx-distill` | Distill laws (universality gate, max 15), decay, Jaccard promotions. Sub-mode `--swap <old> <new> --confirm` (v3.32.0 §4.5): atomic deprecation when the cap saturates |
 | `/cx-validate` | Review proposals with Claude verdicts + shorthand input |
 | `/cx-evolve` | Cluster instincts → skills/commands/rules/agents (checks existing) |
 | `/cx-dream` | Dream Cycle: dedup, contradictions, staleness, regex, health, cleanup |
 | `/cx-timeline` | Knowledge event log: creations, promotions, decays, archives, evolutions |
 | `/cx-router` | Command catalog with token costs and next action suggestion |
-| `/cx-promote` | Promote project instincts to global (cross-project, Jaccard ≥0.70) |
+| `/cx-promote` | Promote project instincts to global (cross-project, Jaccard ≥0.70). Sub-mode `--auto <source> --confirm` (v3.32.0 §4.4): promote a HUMAN-gated detector source to AUTO once the statistical gate passes (n ≥ 20, accept_rate ≥ 70 %, ≥ 3 sessions, 0 critical) |
 | `/cx-audit` | Token overhead, duplicates, conflicts, cleanup |
 | `/cx-eod` | End-of-day summary, saves context for next session |
 | `/cx-gotcha` | Capture error→fix as high-priority instinct |
