@@ -1609,7 +1609,11 @@ def auto_validate_proposals(dry_run: bool = False) -> dict:
                 _log_knowledge("held", iid, f"reason={hold_label}", source="cx-auto-validate")
             continue
 
-        if domain not in VALIDATE_AUTO_DOMAINS:
+        # v3.32.0 §4.4.e: also honor promoted_sources here so a HUMAN-
+        # domain proposal with an operator-promoted source falls through
+        # to the AUTO accept path (otherwise the first skip is bypassed
+        # but this second one would still block it).
+        if domain not in VALIDATE_AUTO_DOMAINS and source not in promoted_sources:
             skipped.append({"id": iid, "reason": "needs-human-judgment"})
             continue
 
