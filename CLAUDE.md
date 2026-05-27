@@ -40,7 +40,28 @@ PR2 — v3.32.0 (shipped 2026-05-27):
   that the per-function unit tests had missed — concrete validation
   of instinct gotcha-ad-por-fase-no-sustituye-e2e.
 
-Tests baseline: 456 (v3.31.2) → 471 PASS, 28 suites.
+**PR #44 review quick wins (e292568 + ae1d9fd, on the same release
+branch before merge):** preserve corrupted `.promoted-detectors.json`
+via rename-archive (new `_archive_corrupted_marker` helper);
+README.md commands table mentions the new `--auto` / `--swap`
+sub-modes; +4 tests covering the new paths.
+
+Tests baseline: 456 (v3.31.2) → 472 (v3.32.0 release) → **476 PASS,
+28 suites** (incl. PR #44 quick wins).
+
+**Next: v3.33+ planning.** See `docs/SPRINT-V3.33-PLAN.md` DRAFT for
+the full backlog. 7-day silent observation window 2026-05-27 →
+2026-06-03 to answer Q1-Q6 from real data before re-planning.
+
+**Follow-up issues opened post-review (v3.33+):**
+[#45](https://github.com/fermonterom/fs-cortex/issues/45) LOCK_FILE
+concurrency wrap for `manual_promote_detector` + `manual_swap_promote`;
+[#46](https://github.com/fermonterom/fs-cortex/issues/46) regression
+test for future schema v2;
+[#47](https://github.com/fermonterom/fs-cortex/issues/47) chmod 0o600
+on `~/.claude/cortex/log/*.jsonl`;
+[#48](https://github.com/fermonterom/fs-cortex/issues/48) trust-boundary
+doc in cx-promote / cx-distill.
 
 **Deferred to v3.33+ (AD P0-2/P0-3 absorbed):** §4.2 `analyze_engine.py`
 + §4.3 auto-analyze trigger in SessionStart. The queue-only design
@@ -48,7 +69,8 @@ contradicted the "autopilot real" promise and Opus 1M detection from a
 hook is not testable. Redesign post-7d-data of `auto-validate-skips.jsonl`
 with explicit `CORTEX_OPUS_1M=1` env var, not hook inference. Also
 deferred: deletion of `docs/SPRINT-8-*.md` / `GHOST-*.md` /
-`SINAPSIS-*.md` per Sprint 9 Q5 (mantener until v3.33+).
+`SINAPSIS-*.md` / `SPRINT-9-AUTOPILOT.md` / `SPRINT-V3.33-PLAN.md` per
+Sprint 9 Q5 (mantener until v3.33+ retro closes).
 
 Sprint 8 invariants protected since v3.29.0: 5 detectors live by
 default, 3 HUMAN-gated via `VALIDATE_HUMAN_DOMAINS` (and now
