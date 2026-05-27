@@ -13,7 +13,7 @@ Maintenance command that:
 2. Applies confidence decay (-0.05 per 30 days unused)
 3. Checks Jaccard promotions (project → global)
 4. Archives decayed instincts (confidence < 0.10)
-5. Enforces max 12 active laws (`LAW_MAX_ACTIVE` in `hooks/lib/distill_engine.py:83`, raised from 10 in v3.29.2)
+5. Enforces max 15 active laws (`LAW_MAX_ACTIVE` in `hooks/lib/distill_engine.py:LAW_MAX_ACTIVE`; raised from 12 in v3.32.0 §4.5 with deprecation policy `_find_least_impactful_law` + age guard `LAW_DEPRECATE_MIN_AGE_DAYS=7` and operator-confirmed swap via `/cx-distill --swap <old> <new> --confirm`)
 
 ## Usage
 
@@ -96,7 +96,7 @@ La pregunta NO es "es util?" sino "lo necesito en TODAS las sesiones?"
 Antes de crear una law nueva:
 1. Listar todas las laws actuales de `~/.claude/cortex/laws/*.txt` con su contenido
 2. Detectar duplicados o solapamientos entre candidatos y laws existentes
-3. Si hay 12 laws activas (`LAW_MAX_ACTIVE` en `hooks/lib/distill_engine.py:83`), evaluar si el candidato es MAS importante que alguna existente:
+3. Si hay 15 laws activas (`LAW_MAX_ACTIVE` en `hooks/lib/distill_engine.py:LAW_MAX_ACTIVE`), evaluar si el candidato es MAS importante que alguna existente:
    - Comparar confidence del instinct fuente vs confidence de las laws actuales
    - Si el candidato supera a alguna law existente: proponer reemplazo
    - Si no supera a ninguna: NO proponer (mantener como instinct)
@@ -245,6 +245,95 @@ touch ~/.claude/cortex/.last-distill
 Clearing the file is safe: `distill_engine.py` → `_write_candidates_file()`
 repopulates it on the next SessionStart if new candidates emerge. Truncating
 here just signals "the user has reviewed what was pending".
+
+## Sub-mode `--swap <to_deprecate> <new_iid> --confirm` (v3.32.0 §4.5)
+
+When the laws cap is saturated (15/15) and a mature instinct
+(conf ≥ 0.95) is queued in `auto-distill-candidates.md` with the gate
+message:
+
+```
+laws == 15/15 saturated; would deprecate <to_deprecate> via
+/cx-distill --swap <to_deprecate> <new_iid> --confirm
+```
+
+The operator can perform an atomic swap that archives the
+least-impactful law and promotes the new candidate in one operation.
+
+### Step 1: Dry-run
+
+```python
+import sys
+sys.path.insert(0, os.path.expanduser("~/.claude/hooks/cortex/lib"))
+from distill_engine import manual_swap_promote, _find_least_impactful_law
+
+# Confirm the suggested candidate matches what the engine would pick
+candidate = _find_least_impactful_law(_impact_per_iid(days=14))
+
+ok, reason = manual_swap_promote(
+    new_iid="gotcha-fs-codex-broker-zombie",
+    deprecate_iid=candidate,
+    dry_run=True,
+)
+print(reason)  # "dry-run: would archive <X> and promote <Y> (conf=0.96)"
+```
+
+The dry-run validates:
+- `deprecate_iid` exists in `~/.claude/cortex/laws/`
+- `new_iid` exists in the instinct cohort with `confidence >= 0.95`
+
+If either pre-check fails it returns `(False, "<reason>")` and no
+filesystem change is made.
+
+### Step 2: Confirm
+
+`--confirm` is **mandatory** to write to disk. Without it the dry-run
+description is returned but no swap is performed.
+
+```python
+ok, reason = manual_swap_promote(
+    new_iid="gotcha-fs-codex-broker-zombie",
+    deprecate_iid="<to_deprecate>",
+    dry_run=False,
+)
+```
+
+On success the operation is atomic:
+
+1. The old law file is copied to
+   `~/.claude/cortex/laws/archive/<to_deprecate>.<ts>.txt` so the line
+   stays recoverable.
+2. The old law file is removed.
+3. The new law file is written via `_atomic_write` (tmp + rename).
+4. A `swap-promoted` row is appended to `knowledge-log.md`.
+
+If step 3 fails (disk full, permission, etc.), the engine
+**automatically rolls back** by restoring the old law from the
+in-memory backup so the cohort stays at the same count.
+
+### Step 3: Verify
+
+```
+ls ~/.claude/cortex/laws/ | wc -l        # still 15
+ls ~/.claude/cortex/laws/archive/        # contains <to_deprecate>.<ts>.txt
+grep swap-promoted ~/.claude/cortex/knowledge-log.md | tail -1
+```
+
+### Deprecation algorithm
+
+`_find_least_impactful_law` ranks the cohort by:
+
+1. **Impact ratio** = `useful_14d / (1 + noise_14d)` — lowest first.
+2. **Age tie-break** — oldest mtime wins (more days idle).
+3. **Age guard** — laws younger than `LAW_DEPRECATE_MIN_AGE_DAYS=7`
+   are skipped (AD P1-3: a freshly-promoted law without accumulated
+   impact data would have ratio=0 and be marked for immediate
+   deprecation before getting a chance to be exercised).
+4. **Healthy-cohort guard** — when the best candidate has
+   `ratio > 1.0` the function returns `None` so the operator does NOT
+   churn a productive cohort. In that state the gate reports
+   `no deprecation candidate (all productive OR < 7d age)` and the new
+   candidate stays queued in `auto-distill-candidates.md`.
 
 ## Recommended schedule
 
