@@ -85,27 +85,50 @@ FINAL (AD Codex GPT-5.5 round 1 absorbed: 4 P0 + 7 P1 + 3 P2).
   via `git mv` (preserves blame). Header / banner / summary refreshed
   for v3.32.0. `.githooks/pre-push` updated (3 references).
 
+### Fixed
+
+- **`hooks/lib/distill_engine.py:manual_promote_detector`** — corrupted
+  `.promoted-detectors.json` (parse fail, schema-version mismatch, or
+  wrong type for `promoted`) is now renamed to
+  `.promoted-detectors.json.corrupt-<UTC-ts>` via new
+  `_archive_corrupted_marker()` helper, instead of silently overwritten
+  with an empty `{"version": 1, "promoted": []}`. Fallback: if rename
+  fails (file already gone after read), the in-memory original is
+  written to the archive path. Every recovery path emits a distinct
+  `promoted-detectors:archived-corrupt-marker` row in
+  `~/.claude/cortex/log/security-events.jsonl` so the operator can
+  recover prior operator-approved sources. Closes the PR #44 review
+  finding "discards corrupted marker silently".
+- **`README.md` Commands table** — `/cx-promote` and `/cx-distill` rows
+  now mention the new `--auto <source> --confirm` and
+  `--swap <old> <new> --confirm` sub-modes plus the cap raise to 15.
+  Previously discoverable only via per-command markdown.
+
 ### Tests
 
-- `tests/test_promotion_gate.sh` NEW — 8 cases covering all four gate
-  branches, n=10 visibility tier, enum + heuristic critical
+- `tests/test_promotion_gate.sh` NEW — 11 cases. Tests 1-8: all four
+  gate branches, n=10 visibility tier, enum + heuristic critical
   rejections, fail-closed marker (corrupted JSON + bad schema version).
-  8 PASS / 0 FAIL.
-- `tests/test_distill_engine.sh` +6 cases (43-48) for §4.5: cap raise
-  promotes the 13th law, `_find_least_impactful_law` lowest-ratio +
-  tie-break by oldest mtime, age guard 7d (AD P1-3), `manual_swap_promote`
-  golden path, write-failure rollback (AD P1-7). Test 10 updated to
-  seed 15 laws (was 12) so the cap check still triggers under the new
-  cap. Suite: 47 PASS / 0 FAIL.
+  Tests 9-11 (PR #44 quick wins): confirm-false-blocks-write,
+  idempotent-double-promote, corrupt-marker-archive (preserves prior
+  content verbatim). 11 PASS / 0 FAIL.
+- `tests/test_distill_engine.sh` +7 cases (43-49) for §4.5 + quick win:
+  cap raise promotes the 13th law, `_find_least_impactful_law`
+  lowest-ratio + tie-break by oldest mtime, age guard 7d (AD P1-3),
+  `manual_swap_promote` golden path, write-failure rollback (AD P1-7),
+  empty-impact-tie-break (PR #44 quick win: empty `impact_per_iid` →
+  oldest law wins). Test 10 updated to seed 15 laws (was 12) so the
+  cap check still triggers under the new cap. Suite: 48 PASS / 0 FAIL.
 - `tests/test_v332_acceptance.sh` +2 e2e asserts (9 + 10) for §4.7:
   marker fail-closed + full promotion cycle (history → can_promote →
   manual_promote → marker → auto_validate ACCEPTS HUMAN proposal).
   Assert 10 surfaced + fixed the second-skip bug in
   `auto_validate_proposals` that all per-function unit tests had
   missed. 11 PASS / 0 FAIL.
-- Baseline post-PR2: 472/472 PASS, 28/28 suites (was 456/456 in
-  v3.31.2 + 16 new cases: 8 promotion-gate + 6 distill §4.5 + 2 e2e
-  asserts).
+- Baseline post-PR2 (incl. PR #44 quick wins): **476/476 PASS, 28/28
+  suites** (was 456/456 in v3.31.2 + 20 new cases: 8 promotion-gate +
+  3 promotion-gate quick wins + 6 distill §4.5 + 1 distill quick win
+  + 2 e2e asserts).
 
 ### Notes
 
