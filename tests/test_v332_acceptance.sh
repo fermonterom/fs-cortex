@@ -1,11 +1,21 @@
 #!/usr/bin/env bash
-# test_v329_acceptance.sh — v3.29.0 (Sprint 8 §4.12)
+# test_v332_acceptance.sh — v3.32.0 (Sprint 8 §4.12 + Sprint 9 §4.7 P1-5)
 #
-# Pre-ship acceptance gate. 8 invariants validated against a CLEAN
+# Pre-ship acceptance gate. Invariants validated against a CLEAN
 # install (HOME-sandbox + bash install.sh). If ANY assert fails this
-# script exits non-zero and the pre-push hook blocks the v3.29.0 tag.
+# script exits non-zero and the pre-push hook blocks the tag.
 #
-# Each invariant maps to a specific §4.* deliverable from the Sprint 8
+# History: renamed from test_v329_acceptance.sh in v3.32.0 §4.7 per
+# AD P1-5 (instinct gotcha-ad-por-fase-no-sustituye-e2e mandatory).
+# Asserts 1-8 are the Sprint 8 invariants (file-coupling regex, ghost
+# guard, banner silent on HUMAN, kill switches, PreCompact obeys
+# OBSERVE_OFF, multi-session promotion gate). Asserts 9-10 added in
+# Sprint 9 verify the end-to-end promotion cycle:
+#   9 — .promoted-detectors.json corrupted → fail-closed (AD P0-4)
+#  10 — proposals-history.jsonl → can_promote → manual_promote → marker
+#       → auto_validate ACCEPTS what was previously HUMAN-gated.
+#
+# Each invariant maps to a specific §4.* deliverable from the Sprint
 # plan. The asserts are intentionally redundant with the unit suites:
 # this script proves the deliverables WORK TOGETHER against a freshly
 # installed layout, not just in isolation.
@@ -20,7 +30,7 @@ FAIL=0
 pass() { PASS=$((PASS + 1)); echo "  PASS: $1"; }
 fail() { FAIL=$((FAIL + 1)); echo "  FAIL: $1"; }
 
-echo "=== v3.29.0 Acceptance Gate (Sprint 8 §4.12) ==="
+echo "=== v3.32.0 Acceptance Gate (Sprint 8 §4.12 + Sprint 9 §4.7) ==="
 
 # ── Sandbox install ──────────────────────────────────────────────────────────
 # install.sh is interactive; feed it 6 newlines to take the defaults
@@ -271,11 +281,134 @@ PYEOF
                        || fail "multi-session at 3: $r2"
 rm -rf "$MS_SANDBOX"
 
+# ── Assert 9: §4.4.d — .promoted-detectors.json corrupted → fail-closed ─────
+echo "--- Assert 9: promoted-detectors marker fail-closed (AD P0-4) ---"
+FC_SANDBOX="$(mktemp -d -t cortex-acc9-XXXXXX)"
+mkdir -p "$FC_SANDBOX/instincts/global" "$FC_SANDBOX/log"
+# Seed history with 25 reviewed → would otherwise be ELIGIBLE for promotion.
+python3 - <<PYEOF
+import json, pathlib
+hist = pathlib.Path("$FC_SANDBOX/proposals-history.jsonl")
+lines = []
+for i in range(20):
+    lines.append(json.dumps({
+        "id": f"acc9-acc-{i}", "status": "accepted",
+        "source": "session-learner:correction",
+        "accepted_at": "2026-05-20", "accepted_by": "cx-validate",
+        "session_id": f"sess-{i % 4}",
+    }))
+for i in range(5):
+    lines.append(json.dumps({
+        "id": f"acc9-rej-{i}", "status": "rejected",
+        "source": "session-learner:correction",
+        "rejected_at": "2026-05-21", "rejected_by": "cx-validate",
+        "session_id": f"sess-{i % 4}", "rejection_category": "noise",
+        "rejected_reason": "too-vague",
+    }))
+hist.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PYEOF
+# Live HUMAN-domain proposal that should STAY pending under fail-closed.
+cat > "$FC_SANDBOX/proposals.json" <<'JSON'
+[{"id": "acc9-live", "domain": "correction", "confidence": 0.95,
+  "status": "pending", "trigger": "Bash",
+  "action": "Always check git status before pushing",
+  "source": "session-learner:correction"}]
+JSON
+# Deliberately broken marker.
+printf '{"version": 1, "promoted": [{"source": "session-learner:correction' \
+  > "$FC_SANDBOX/.promoted-detectors.json"
+r9=$(python3 - <<PYEOF
+import sys
+sys.path.insert(0, '$HOOKS_DIR/lib')
+import distill_engine as de
+from pathlib import Path
+de.CORTEX_DIR = Path('$FC_SANDBOX')
+de.INSTINCTS_DIR = de.CORTEX_DIR / 'instincts' / 'global'
+de.PROPOSALS_FILE = de.CORTEX_DIR / 'proposals.json'
+de.PROPOSALS_HISTORY_FILE = de.CORTEX_DIR / 'proposals-history.jsonl'
+de.PROMOTED_DETECTORS_FILE = de.CORTEX_DIR / '.promoted-detectors.json'
+de.SECURITY_LOG_FILE = de.CORTEX_DIR / 'log' / 'security-events.jsonl'
+de.KNOWLEDGE_LOG = de.CORTEX_DIR / 'knowledge-log.md'
+promoted_set = de._load_promoted_detectors()
+result = de.auto_validate_proposals()
+acc_ids = [p.get('id') for p in result.get('accepted', [])]
+sk_reasons = [s.get('reason') for s in result.get('skipped', []) if s.get('id') == 'acc9-live']
+print('FAILCLOSED' if (promoted_set == set() and 'acc9-live' not in acc_ids
+                       and 'needs-human-judgment' in sk_reasons) else 'LEAKED')
+PYEOF
+)
+[ "$r9" = "FAILCLOSED" ] && pass "promoted-detectors corrupted → empty set, HUMAN proposal stays skipped" \
+                         || fail "promoted-detectors fail-closed: $r9"
+rm -rf "$FC_SANDBOX"
+
+# ── Assert 10: §4.4 e2e — full promotion cycle ──────────────────────────────
+echo "--- Assert 10: full promotion cycle (history → promote → marker → auto_validate) ---"
+PC_SANDBOX="$(mktemp -d -t cortex-acc10-XXXXXX)"
+mkdir -p "$PC_SANDBOX/instincts/global" "$PC_SANDBOX/log"
+python3 - <<PYEOF
+import json, pathlib
+hist = pathlib.Path("$PC_SANDBOX/proposals-history.jsonl")
+lines = []
+for i in range(22):
+    lines.append(json.dumps({
+        "id": f"acc10-acc-{i}", "status": "accepted",
+        "source": "session-learner:correction",
+        "accepted_at": "2026-05-20", "accepted_by": "cx-validate",
+        "session_id": f"sess-{i % 4}",
+    }))
+for i in range(3):
+    lines.append(json.dumps({
+        "id": f"acc10-rej-{i}", "status": "rejected",
+        "source": "session-learner:correction",
+        "rejected_at": "2026-05-21", "rejected_by": "cx-validate",
+        "session_id": f"sess-r-{i}", "rejection_category": "noise",
+        "rejected_reason": "minor",
+    }))
+hist.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PYEOF
+cat > "$PC_SANDBOX/proposals.json" <<'JSON'
+[{"id": "acc10-live", "domain": "correction", "confidence": 0.95,
+  "status": "pending", "trigger": "Bash",
+  "action": "Always run lint before pushing",
+  "source": "session-learner:correction"}]
+JSON
+r10=$(python3 - <<PYEOF
+import sys
+sys.path.insert(0, '$HOOKS_DIR/lib')
+import distill_engine as de
+from pathlib import Path
+de.CORTEX_DIR = Path('$PC_SANDBOX')
+de.INSTINCTS_DIR = de.CORTEX_DIR / 'instincts' / 'global'
+de.PROPOSALS_FILE = de.CORTEX_DIR / 'proposals.json'
+de.PROPOSALS_HISTORY_FILE = de.CORTEX_DIR / 'proposals-history.jsonl'
+de.PROMOTED_DETECTORS_FILE = de.CORTEX_DIR / '.promoted-detectors.json'
+de.SECURITY_LOG_FILE = de.CORTEX_DIR / 'log' / 'security-events.jsonl'
+de.KNOWLEDGE_LOG = de.CORTEX_DIR / 'knowledge-log.md'
+
+# Step 1: gate is eligible
+eligible, reason, stats = de.can_promote_to_auto("session-learner:correction")
+if not eligible:
+    print(f'GATE-BLOCKED:{reason}'); raise SystemExit
+# Step 2: operator-confirmed promote writes marker
+ok, reason, _ = de.manual_promote_detector("session-learner:correction", confirm=True)
+if not ok or not de.PROMOTED_DETECTORS_FILE.exists():
+    print(f'WRITE-FAIL:{reason}'); raise SystemExit
+# Step 3: auto_validate now accepts the previously-HUMAN proposal
+result = de.auto_validate_proposals()
+acc_ids = [p.get('id') for p in result.get('accepted', [])]
+inst_written = (de.INSTINCTS_DIR / 'acc10-live.yaml').exists()
+print(f'ACCEPTED:{"acc10-live" in acc_ids}:{inst_written}')
+PYEOF
+)
+[ "$r10" = "ACCEPTED:True:True" ] && pass "full cycle: history(25) → promote → marker → auto_validate ACCEPTS HUMAN proposal" \
+                                  || fail "full cycle: $r10"
+rm -rf "$PC_SANDBOX"
+
 echo ""
 echo "=== Acceptance Gate: $PASS passed, $FAIL failed ==="
 if [ "$FAIL" -gt "0" ]; then
-  echo "✗ v3.29.0 NOT cleared for tag."
+  echo "✗ v3.32.0 NOT cleared for tag."
   exit 1
 fi
-echo "✓ All v3.29.0 invariants pass — clear to tag."
+echo "✓ All v3.32.0 invariants pass — clear to tag."
 exit 0
