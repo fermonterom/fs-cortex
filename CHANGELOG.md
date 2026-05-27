@@ -4,6 +4,121 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.32.0] — 2026-05-27
+
+Sprint 9 PR2 — autopilot foundation: HUMAN→AUTO promotion gate
+(statistical-strict, operator-confirmed) + laws cap raise (12→15)
+with deprecation policy. Sprint 8 invariants preserved end-to-end via
+the renamed acceptance gate. Plan: `docs/SPRINT-9-AUTOPILOT.md` v3
+FINAL (AD Codex GPT-5.5 round 1 absorbed: 4 P0 + 7 P1 + 3 P2).
+
+### Added
+
+- **`hooks/lib/distill_engine.py:can_promote_to_auto`** (§4.4.b). New
+  4-gate statistical check for HUMAN→AUTO promotion: n ≥ 20 reviewed
+  AND accept_rate ≥ 70 % AND distinct_sessions ≥ 3 AND
+  critical_count == 0. Visibility tier at n=10 surfaces partial
+  progress (`visible-only (N/20)`) without enabling promotion
+  (AD P1-2). Source: `~/.claude/cortex/proposals-history.jsonl`
+  (AD P0-1).
+- **`hooks/lib/distill_engine.py:manual_promote_detector`** (§4.4.d
+  writer). ÚNICO entrypoint that writes `.promoted-detectors.json`
+  with the v1 schema `{version, promoted: [{source, since,
+  approved_by, gate_snapshot}]}`. Requires `confirm=True`. Idempotent
+  re-promotion is a no-op. Atomic via `_atomic_write`. AD P0-4 absorbed.
+- **`hooks/lib/distill_engine.py:_load_promoted_detectors`** —
+  fail-closed reader: any parse / schema / source-regex violation
+  → empty set, every HUMAN domain stays HUMAN. All fail-closed paths
+  are logged to `~/.claude/cortex/log/security-events.jsonl` so the
+  operator can audit (rotated to `.1` at 512KB, mirror of
+  session-learner.js rotation).
+- **`_count_critical_rejections`** (§4.4.c) uses the new optional
+  `rejection_category` enum (`security` / `breaking` / `injection` /
+  `noise` / `other`) first; legacy rejects without the field fall back
+  to a keyword heuristic over `rejected_reason` (ES: seguridad /
+  inseguro / rompedor / inyecci / vulnerab; EN: security / breaking /
+  injection / unsafe / vulnerab). AD P1-6 absorbed.
+- **`hooks/lib/distill_engine.py:auto_validate_proposals`** — now
+  loads `promoted_sources` once per pass; HUMAN-domain proposals with
+  `source ∈ promoted_sources` fall through to the AUTO accept path
+  via BOTH skip checks (first HUMAN-domain skip AND the second
+  AUTO-domain skip, the latter fix surfaced by Assert 10 of the e2e
+  gate — validates AD P1-5 / instinct gotcha-ad-por-fase-no-sustituye-e2e).
+- **`hooks/lib/distill_engine.py:_find_least_impactful_law`** (§4.5).
+  Heuristic: lowest `useful_14d / (1 + noise_14d)` ratio; tie-break
+  by oldest mtime. Returns None when every law is younger than
+  `LAW_DEPRECATE_MIN_AGE_DAYS=7` (AD P1-3) or when the best candidate
+  has ratio > 1.0 (don't churn productive cohorts).
+- **`hooks/lib/distill_engine.py:manual_swap_promote`** (§4.5,
+  AD P1-7). Atomic swap with explicit rollback: pre-check both files,
+  copy old law to `LAWS_DIR/archive/<id>.<ts>.txt`, unlink old, write
+  new via `_atomic_write`. If the new-law write fails, restore old
+  from the in-memory backup so the cohort stays at the same count.
+- **`commands/cx-promote.md`** — new "Sub-mode --auto" section
+  documents `--auto <source> --confirm` (gate snapshot UI, marker
+  schema, audit log, removal note).
+- **`commands/cx-distill.md`** — new "Sub-mode --swap" section
+  documents `--swap <to_deprecate> <new_iid> --confirm` (dry-run,
+  atomic flow, rollback, deprecation algorithm with the 4 guards).
+- **`commands/cx-validate.md`** — Step 4b "Reject proposal" now lists
+  the fields written to `proposals-history.jsonl` and adds the
+  `rejection_category` ask with the 5-enum + legacy fallback.
+
+### Changed
+
+- **`LAW_MAX_ACTIVE` 12 → 15** in `hooks/lib/distill_engine.py`
+  (§4.5 Eje A). Token cost: ~480 → ~600 tok/session baseline. Quality
+  gate intact (`LAW_THRESHOLD_CONF`, `LAW_SUSTAINED_DAYS`,
+  `LAW_MIN_DISTINCT_SESSIONS`, `LAW_MAX_NOISE_14D` unchanged).
+- **Doc sync** for the cap raise: `README.md` (3 sites),
+  `docs/FEATURES.md` (3 sites), `commands/cx-distill.md` (2 sites),
+  `hooks/session-start.py:52` docstring. Stale line-number anchors
+  (`distill_engine.py:83`) replaced with symbol anchors
+  (`distill_engine.py:LAW_MAX_ACTIVE`) to prevent future doc drift.
+- **`auto_promote_to_law` Criterion 7** (cap check) now reports a
+  human-actionable `failed_reason`. When a candidate exists:
+  `laws == 15/15 saturated; would deprecate <X> via /cx-distill
+  --swap <X> <new> --confirm`. When none qualifies: `laws == 15/15
+  saturated; no deprecation candidate (all productive OR < 7d age)`.
+  Engine NEVER auto-swaps.
+- **`tests/test_v329_acceptance.sh` renamed → `tests/test_v332_acceptance.sh`**
+  via `git mv` (preserves blame). Header / banner / summary refreshed
+  for v3.32.0. `.githooks/pre-push` updated (3 references).
+
+### Tests
+
+- `tests/test_promotion_gate.sh` NEW — 8 cases covering all four gate
+  branches, n=10 visibility tier, enum + heuristic critical
+  rejections, fail-closed marker (corrupted JSON + bad schema version).
+  8 PASS / 0 FAIL.
+- `tests/test_distill_engine.sh` +6 cases (43-48) for §4.5: cap raise
+  promotes the 13th law, `_find_least_impactful_law` lowest-ratio +
+  tie-break by oldest mtime, age guard 7d (AD P1-3), `manual_swap_promote`
+  golden path, write-failure rollback (AD P1-7). Test 10 updated to
+  seed 15 laws (was 12) so the cap check still triggers under the new
+  cap. Suite: 47 PASS / 0 FAIL.
+- `tests/test_v332_acceptance.sh` +2 e2e asserts (9 + 10) for §4.7:
+  marker fail-closed + full promotion cycle (history → can_promote →
+  manual_promote → marker → auto_validate ACCEPTS HUMAN proposal).
+  Assert 10 surfaced + fixed the second-skip bug in
+  `auto_validate_proposals` that all per-function unit tests had
+  missed. 11 PASS / 0 FAIL.
+- Baseline post-PR2: 472/472 PASS, 28/28 suites (was 456/456 in
+  v3.31.2 + 16 new cases: 8 promotion-gate + 6 distill §4.5 + 2 e2e
+  asserts).
+
+### Notes
+
+- This is PR2 of Sprint 9. Sprint 8 plan §5.1/§5.2 (`analyze_engine.py`
+  + auto-analyze trigger) remain **deferred to v3.33+** per AD P0-2 /
+  P0-3 (queue-only contradicted "autopilot real"; Opus 1M detection
+  from a hook is not testable). Reentry post-7d-data of
+  `auto-validate-skips.jsonl` with explicit `CORTEX_OPUS_1M=1` env var.
+- (deferred) `docs/SPRINT-8-*.md`, `GHOST-*.md`, `SINAPSIS-*.md`
+  scheduled for deletion at v3.33+ once Sprint 9 retrospective is
+  complete (§4.6 — Q5 mantener until v3.33+).
+- v3.30 was never published (jumped 3.29.5 → 3.31.0).
+
 ## [3.31.2] — 2026-05-26
 
 Sprint 9 PR1 — three cleanup bug fixes. No detector signal changes:
