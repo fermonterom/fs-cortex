@@ -4,6 +4,82 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.33.0] — 2026-05-30
+
+Post-ship fix for a critical bug found by running `/cx-status` +
+`/cx-analyze` against live production data two days after v3.32.0:
+the resolved `sessionId` was never propagated from `session-learner.js`
+into proposals (field was named `session`, not `session_id`) nor into
+instinct-tracking entries. This made the v3.32.0 HUMAN→AUTO promotion
+gate structurally unreachable (`distinct_sessions=0` for every detector)
+and made the v3.31.2 grandfather clause auto-promote 71% of the corpus
+(every `sessions:[]` entry) to LAW. Diagnosis + remediation spec:
+`docs/SPRINT9-POSTSHIP-DIAGNOSIS.md`. Three AD rounds (Codex GPT-5.5)
++ Claude Opus review hardened the fix.
+
+### Fixed
+
+- **`hooks/session-learner.js`** — the 5 proposal producer sites now
+  emit `session_id` (was `session`, or absent for agent-error-rate /
+  file-coupling), so `can_promote_to_auto` can count distinct sessions.
+  The `|| 'unknown'` fallback was dropped (`|| ''`) so the literal
+  `"unknown"` never reaches a counting path.
+- **`hooks/session-learner.js:_mirrorToTrackingMem`** — now fills the
+  tracking `sessions[]` (dedup + cap 20) from the resolved sessionId,
+  rejecting `""` and `"unknown"`. The single `_flushTracking` after the
+  loop (v3.29.3 invariant) is preserved.
+- **`hooks/lib/distill_engine.py:can_promote_to_auto`** — counts
+  distinct sessions via new `_proposal_session(p)` helper with legacy
+  fallback `session_id ?? session ?? _incident.sid`, returning `""`
+  for the literal `"unknown"`.
+- **`hooks/lib/distill_engine.py:auto_promote_to_law`** — grandfather
+  clause narrowed to **entry-absent only** (Option B). `sessions:[]`
+  entries no longer auto-grandfather to LAW, because production data
+  showed `sessions:[]` is the norm (71%), not the rare corruption case
+  the v3.31.2 narrow assumed.
+- **`commands/cx-analyze.md`** — the cx-analyze proposal producer now
+  stamps `session_id` too.
+
+### Added
+
+- **`/cx-backfill`** command (`commands/cx-backfill.md`,
+  `hooks/lib/distill_engine.py:backfill_session_data`) — recovers
+  legacy `session` → `session_id` in `proposals-history.jsonl` and
+  selectively rebuilds empty tracking `sessions[]` for high-confidence
+  instincts (conf≥0.95 + ≥3 distinct recovered sessions + 0 critical
+  rejections). The write path is lossless (line-preserving, preserves
+  unparseable/non-dict lines verbatim), atomic (tmp+os.replace), and
+  has a (size, mtime_ns) concurrency guard.
+  **`--apply` is GATED OFF in v3.33.0** (runs a safe dry-run + prints a
+  deferral notice): the normal Stop hook appends to history without a
+  shared lock, leaving a residual write race. Enabling `--apply` is
+  deferred to v3.34 (issue #49). The dry-run report is fully safe.
+
+### Tests
+
+- `tests/test_backfill.sh` NEW — 11 cases (dry-run safety, apply
+  lossless/atomic, concurrency-guard abort, hybrid eligibility,
+  idempotency, CLI `--apply` gate).
+- `tests/test_promotion_gate.sh` — +2 cases (legacy `session` field
+  fallback, `"unknown"` excluded from distinct_sessions).
+- `tests/test_distill_engine.sh` — grandfather test inverted
+  (`sessions:[]` now BLOCKS, not promotes) per Option B.
+- `tests/test_hooks_e2e.sh` — asserts the REAL session-learner.js
+  writer persists `session_id` on proposals (regression guard for the
+  exact bug; not a hand fixture).
+- `tests/test_install.sh` + `tests/test_integrity.sh` — command count
+  bumped for `/cx-backfill` (21 files; 20 in EXPECTED_COMMANDS subset).
+- Full suite: **487 PASS, 29 suites**.
+
+### Notes
+
+- This bug existed since v3.32.0 (gate) and v3.31.2 (grandfather). The
+  fix is forward-only; historical proposals without `session_id` are
+  not retroactively repaired (the gated `/cx-backfill` will do that in
+  v3.34). On the operator's real corpus the backfill dry-run reports
+  `newly_eligible=0` — the fix unblocks the gate going forward, it does
+  not manufacture past promotions.
+
 ## [3.32.0] — 2026-05-27
 
 Sprint 9 PR2 — autopilot foundation: HUMAN→AUTO promotion gate

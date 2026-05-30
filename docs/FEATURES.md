@@ -1,7 +1,7 @@
-# fs-cortex v3.32.0 — Feature Reference
+# fs-cortex v3.33.0 — Feature Reference
 
 > Complete inventory of all features, commands, hooks, modules, and capabilities.
-> Last updated: 2026-05-27
+> Last updated: 2026-05-30
 
 ---
 
@@ -387,7 +387,7 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 | `test_install.sh` | 42 | Fresh install, upgrade, idempotency, **strict** path traversal (no fake-green), **v3.19.0 env merge** (CORTEX_AGENT_DISABLE_REFLEXES added, user vars preserved, idempotency, opt-out respected) |
 | `test_hooks_e2e.sh` | 14 | Full pipeline: observe→inject→learn, **token budget reset** |
 | `test_uninstall.sh` | 13 | Cleanup, backup creation, data preservation, **safety guard**, CLAUDE.md preservation, **v3.19.0 env removal** (Cortex var removed, user vars preserved, empty env block dropped) |
-| `test_integrity.sh` | 14 | observe.py direct, **20 commands** validated, core file schemas, **version consistency** |
+| `test_integrity.sh` | 14 | observe.py direct, **20 commands** validated (EXPECTED_COMMANDS subset; 21 command files total incl. cx-feedback-auto + cx-backfill), core file schemas, **version consistency** |
 | `test_install_ps1.ps1` | 10 | PowerShell syntax, version consistency, security features, backup categories, hook config, v3.26-v3.28 source files present, **CI on windows-latest** |
 | `test_impact.sh` | 32 | **Sprint 0/1 funnel** — schema v1, JS↔Python compat, concurrent writes (10 parallel → 0 loss), rotation, gate GO/NO-GO, formulas, input validation, **v3.17.0 source split** (user/agent ratios, gate input, legacy default), **v3.18.0 auto-eval** (3 evaluator types, no-evaluator default, reflex iid prefix) |
 | `test_cross_day_tracker.sh` | 10 | Roundtrip, boost tiers (1/2/4/8 days), confidence cap 0.95, Jaccard match, single-token guard, prune >365d, concurrent append |

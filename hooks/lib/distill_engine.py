@@ -33,6 +33,7 @@ import datetime as _dt
 import json
 import os
 import re
+import shutil
 import sys
 import time
 from collections import Counter
@@ -962,22 +963,11 @@ def auto_promote_to_law(
                 failed_reasons.append(f"sustained < 14d ({days_at_threshold}d so far)")
 
         # ── Criteria 2b (v3.29.0 §4.16): ≥ 3 distinct sessions ────────────
-        # Grandfather clause: if an instinct already has conf >= 0.95 AND
-        # no meaningful tracking yet, treat it as if it had 3 distinct
-        # sessions so pre-existing high-confidence instincts (from before
-        # v3.29.0 shipped this gate) are not retroactively blocked.
-        # v3.31.2 §4.1.A — narrow per AD P1-1: grandfather ONLY when
-        # (entry absent) OR (sessions == [] explicit). NOT when sessions
-        # is null / missing key / wrong type — those signal tracking
-        # corruption and must keep blocking so the operator notices.
+        # v3.33.0 §7.2 C4: grandfather ONLY when tracking entry is absent.
         distinct_sessions = _count_distinct_sessions(iid, tracking_data)
         entry = tracking_data.get(iid)
         has_tracking_entry = isinstance(entry, dict)
-        no_meaningful_tracking = (
-            not has_tracking_entry  # case 1: no entry at all (pre-v3.29 corpus)
-            or (isinstance(entry, dict) and entry.get("sessions") == [])
-            # case 2: entry exists with explicit empty list
-        )
+        no_meaningful_tracking = not has_tracking_entry
         if no_meaningful_tracking and conf >= LAW_THRESHOLD_CONF:
             distinct_sessions = LAW_MIN_DISTINCT_SESSIONS  # grandfathered
         if distinct_sessions < LAW_MIN_DISTINCT_SESSIONS:
@@ -1345,6 +1335,17 @@ def _load_proposals_history() -> list[dict]:
     return history
 
 
+def _proposal_session(p: dict) -> str:
+    """Canonical proposal session field with legacy fallbacks."""
+    if not isinstance(p, dict):
+        return ""
+    sid = p.get("session_id") or p.get("session") or (p.get("_incident") or {}).get("sid") or ""
+    sid_norm = str(sid).strip()
+    if sid_norm.lower() == "unknown":
+        return ""
+    return sid_norm
+
+
 def _count_critical_rejections(reviewed: list[dict]) -> int:
     """Count rejections marked critical (security / breaking / injection).
 
@@ -1392,9 +1393,7 @@ def can_promote_to_auto(detector_source: str) -> tuple[bool, str, dict]:
         and p.get("status") in ("accepted", "rejected")
     ]
     accept_count = sum(1 for p in reviewed if p.get("status") == "accepted")
-    distinct_sessions = len({
-        p.get("session_id", "") for p in reviewed if p.get("session_id")
-    })
+    distinct_sessions = len({_proposal_session(p) for p in reviewed if _proposal_session(p)})
     critical_count = _count_critical_rejections(reviewed)
 
     stats = {
@@ -2467,6 +2466,197 @@ def _cmd_status() -> None:
         print("\nRate-limit: clear (ready to run)")
 
 
+def backfill_session_data(dry_run: bool = True) -> dict:
+    """v3.33.0 C5: normalize session fields + selectively rebuild tracking sessions."""
+    history = _load_proposals_history()
+    tracking = _load_instinct_tracking()
+    raw_history_lines: list[str] = []
+    history_stat_before: tuple[int, int] | None = None
+    if PROPOSALS_HISTORY_FILE.exists():
+        st = PROPOSALS_HISTORY_FILE.stat()
+        history_stat_before = (st.st_size, st.st_mtime_ns)
+        with open(PROPOSALS_HISTORY_FILE, encoding="utf-8") as fh:
+            raw_history_lines = fh.read().splitlines()
+
+    def _sessions_by_source(items: list[dict]) -> dict[str, int]:
+        out: dict[str, set[str]] = {}
+        for e in items:
+            if not isinstance(e, dict):
+                continue
+            src = str(e.get("source", "")).strip()
+            sid = _proposal_session(e)
+            if not src or not sid:
+                continue
+            out.setdefault(src, set()).add(sid)
+        return {k: len(v) for k, v in out.items()}
+
+    before_sessions = _sessions_by_source(history)
+
+    normalized = 0
+    normalized_history: list[dict] = []
+    for entry in history:
+        if not isinstance(entry, dict):
+            normalized_history.append(entry)
+            continue
+        current = dict(entry)
+        if not current.get("session_id"):
+            legacy = str(current.get("session", "")).strip()
+            if legacy:
+                current["session_id"] = legacy
+                normalized += 1
+        normalized_history.append(current)
+
+    conf_by_iid: dict[str, float] = {}
+    for path in _all_instinct_paths():
+        parsed = _read_instinct(path)
+        if not parsed:
+            continue
+        fields, _ = parsed
+        iid = str(fields.get("id", "")).strip()
+        if not iid:
+            continue
+        try:
+            conf_by_iid[iid] = float(fields.get("confidence", 0.0))
+        except (TypeError, ValueError):
+            conf_by_iid[iid] = 0.0
+
+    accepted_by_iid: dict[str, list[dict]] = {}
+    for entry in normalized_history:
+        if not isinstance(entry, dict) or entry.get("status") != "accepted":
+            continue
+        iid = str(entry.get("id", "")).strip()
+        if iid:
+            accepted_by_iid.setdefault(iid, []).append(entry)
+
+    rebuilt = 0
+    eligible = 0
+    if isinstance(tracking, dict):
+        for iid, entry in tracking.items():
+            if not isinstance(entry, dict) or entry.get("sessions") != []:
+                continue
+            accepted = accepted_by_iid.get(iid, [])
+            distinct = []
+            seen = set()
+            for item in accepted:
+                sid = _proposal_session(item)
+                if sid and sid not in seen:
+                    seen.add(sid)
+                    distinct.append(sid)
+            distinct = distinct[-20:]
+            if len(distinct) < LAW_MIN_DISTINCT_SESSIONS:
+                continue
+            if conf_by_iid.get(iid, 0.0) < LAW_THRESHOLD_CONF:
+                continue
+            source = str(accepted[0].get("source", "")).strip() if accepted else ""
+            reviewed = [
+                p for p in normalized_history
+                if isinstance(p, dict)
+                and p.get("source") == source
+                and p.get("status") in ("accepted", "rejected")
+            ]
+            if _count_critical_rejections(reviewed) != 0:
+                continue
+            entry["sessions"] = distinct
+            rebuilt += 1
+            eligible += 1
+
+    after_sessions = _sessions_by_source(normalized_history)
+    backup_dir = CORTEX_DIR / "archive" / f"backfill-{_dt.datetime.now(_dt.timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+    backup_files: list[str] = []
+    wrote_history = False
+    wrote_tracking = False
+
+    if not dry_run:
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        if PROPOSALS_HISTORY_FILE.exists():
+            dst = backup_dir / PROPOSALS_HISTORY_FILE.name
+            shutil.copy2(PROPOSALS_HISTORY_FILE, dst)
+            backup_files.append(str(dst))
+        if INSTINCT_TRACKING_FILE.exists():
+            dst = backup_dir / INSTINCT_TRACKING_FILE.name
+            shutil.copy2(INSTINCT_TRACKING_FILE, dst)
+            backup_files.append(str(dst))
+
+        if normalized != 0:
+            PROPOSALS_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+            out_lines: list[str] = []
+            for line in raw_history_lines:
+                if not line.strip():
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    out_lines.append(line)
+                    continue
+                if not isinstance(obj, dict):
+                    out_lines.append(line)
+                    continue
+                if obj.get("session_id"):
+                    out_lines.append(line)
+                    continue
+                legacy = str(obj.get("session", "")).strip()
+                if not legacy:
+                    out_lines.append(line)
+                    continue
+                updated = dict(obj)
+                updated["session_id"] = legacy
+                out_lines.append(json.dumps(updated, ensure_ascii=False))
+
+            if history_stat_before is not None:
+                if not PROPOSALS_HISTORY_FILE.exists():
+                    raise RuntimeError("backfill: history changed during run, aborted — no data written; re-run")
+                st_now = PROPOSALS_HISTORY_FILE.stat()
+                if (st_now.st_size, st_now.st_mtime_ns) != history_stat_before:
+                    raise RuntimeError("backfill: history changed during run, aborted — no data written; re-run")
+
+            hist_tmp = PROPOSALS_HISTORY_FILE.with_name(f"{PROPOSALS_HISTORY_FILE.name}.tmp.{os.getpid()}")
+            payload = ("\n".join(out_lines) + "\n") if out_lines else ""
+            hist_tmp.write_text(payload, encoding="utf-8")
+            os.replace(hist_tmp, PROPOSALS_HISTORY_FILE)
+            wrote_history = True
+        if rebuilt != 0:
+            INSTINCT_TRACKING_FILE.parent.mkdir(parents=True, exist_ok=True)
+            tracking_tmp = INSTINCT_TRACKING_FILE.with_name(f"{INSTINCT_TRACKING_FILE.name}.tmp.{os.getpid()}")
+            tracking_tmp.write_text(json.dumps(tracking, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+            os.replace(tracking_tmp, INSTINCT_TRACKING_FILE)
+            wrote_tracking = True
+
+    return {
+        "dry_run": dry_run,
+        "normalized": normalized,
+        "tracking_rebuilt": rebuilt,
+        "newly_eligible": eligible,
+        "before_distinct_sessions_by_source": before_sessions,
+        "after_distinct_sessions_by_source": after_sessions,
+        "backup_dir": str(backup_dir),
+        "backup_files": backup_files,
+        "wrote_history": wrote_history,
+        "wrote_tracking": wrote_tracking,
+    }
+
+
+def _cmd_backfill(apply: bool) -> None:
+    # v3.33.0: --apply is GATED OFF. The write path has a residual TOCTOU
+    # race against the Stop hook (session-learner.js appends to
+    # proposals-history.jsonl WITHOUT taking LOCK_FILE), so a lock on the
+    # backfill side alone does not close it. Shipping --apply would risk
+    # production history loss. The dry-run report is fully safe (read-only)
+    # and still useful as a diagnostic. The lossless+atomic write path
+    # stays in backfill_session_data() for v3.34, which will add a shared
+    # Stop+backfill lock (or a hooks-quiesced requirement) before enabling
+    # --apply. See GitHub issue (v3.34 backfill apply hardening).
+    if apply:
+        print("[GATED] /cx-backfill --apply is deferred to v3.34.")
+        print("  Reason: residual write race with the Stop hook could lose")
+        print("  history lines. Running a SAFE dry-run instead (no writes).")
+        print("")
+    out = backfill_session_data(dry_run=True)
+    print("[DRY-RUN] Backfill preview (no files written):")
+    print(f"  normalized       : {out['normalized']}")
+    print(f"  tracking_rebuilt : {out['tracking_rebuilt']}")
+    print(f"  newly_eligible   : {out['newly_eligible']}")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="distill_engine",
@@ -2482,6 +2672,9 @@ def main(argv: list[str] | None = None) -> int:
 
     p_promote = sub.add_parser("promote", help="Check promotion candidates")
     p_promote.add_argument("--dry-run", action="store_true")
+
+    p_backfill = sub.add_parser("backfill", help="Preview legacy session_id/session recovery (dry-run only in v3.33.0)")
+    p_backfill.add_argument("--apply", action="store_true", help="DEFERRED to v3.34 — currently runs a safe dry-run (see _cmd_backfill)")
 
     sub.add_parser("status", help="Show current candidates and rate-limit state")
 
@@ -2506,6 +2699,8 @@ def main(argv: list[str] | None = None) -> int:
         _cmd_decay(args.dry_run)
     elif args.cmd == "promote":
         _cmd_promote(args.dry_run)
+    elif args.cmd == "backfill":
+        _cmd_backfill(args.apply)
     elif args.cmd == "status":
         _cmd_status()
     elif args.cmd == "pipeline-stats":

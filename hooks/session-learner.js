@@ -293,7 +293,7 @@ function detectErrorResolutions(observations) {
           source: 'session-learner:error-fix',
           status: 'pending',
           detected: TODAY,
-          session: obs._resolvedSession || obs.sid || 'unknown',
+          session_id: obs._resolvedSession || obs.sid || '',
           _incident: {
             sid: obs._resolvedSession || obs.sid || null,
             ts: obs.ts || null,
@@ -387,7 +387,7 @@ function detectUserCorrections(observations) {
         source: 'session-learner:correction',
         status: 'pending',
         detected: TODAY,
-        session: edits[0]._resolvedSession || edits[0].sid || 'unknown',
+        session_id: edits[0]._resolvedSession || edits[0].sid || '',
         _incident: {
           sid: edits[0]._resolvedSession || edits[0].sid || null,
           ts: edits[0].ts || null,
@@ -461,7 +461,7 @@ function detectAgentPatterns(observations) {
         source: 'session-learner:agent-pattern',
         status: 'pending',
         detected: TODAY,
-        session: items[0].obs._resolvedSession || items[0].obs.sid || 'unknown',
+        session_id: items[0].obs._resolvedSession || items[0].obs.sid || '',
       };
     });
 }
@@ -470,7 +470,7 @@ function detectAgentPatterns(observations) {
 // Step 3e-g: New detectors v3.27.0
 // -------------------------------------------------------------------
 
-function detectAgentSubtypes(observations) {
+function detectAgentSubtypes(observations, resolvedSessionId) {
   const agentObs = observations.filter(o => o.tool === 'Agent' && o.input);
   if (agentObs.length < AGENT_SUBTYPE_MIN_USES) return [];
 
@@ -538,6 +538,7 @@ function detectAgentSubtypes(observations) {
       source: 'session-learner:agent-error-rate',
       status: 'pending',
       detected: TODAY,
+      session_id: resolvedSessionId || agentObs[0]._resolvedSession || agentObs[0].sid || '',
       tags: ['agent-quality', `subtype-${subtype}`],
       occurrences: total,
     });
@@ -558,7 +559,7 @@ function detectAgentSubtypes(observations) {
 // so they will NOT auto-promote without manual review. scope: 'project' is
 // critical — a coupling between repo-local files in project A must never
 // fire in project B.
-function detectFileCoupling(observations) {
+function detectFileCoupling(observations, resolvedSessionId) {
   const editObs = observations.filter(o =>
     (o.tool === 'Edit' || o.tool === 'Write') && o.input
   );
@@ -618,6 +619,7 @@ function detectFileCoupling(observations) {
       source: 'session-learner:file-coupling',
       status: 'pending',
       detected: TODAY,
+      session_id: resolvedSessionId || observations[0]._resolvedSession || observations[0].sid || '',
       tags: ['coupling'],
       occurrences: sessionCount,
     });
@@ -835,6 +837,7 @@ function updateInstincts(observations) {
       //     positives ratcheting up by ~200/day
       // The injector and session-learner now share the same match semantics.
       let matched = false;
+      let matchedSessionId = '';
       for (const o of observations) {
         const toolName = o.tool || '';
         if (!toolName) continue;
@@ -842,6 +845,7 @@ function updateInstincts(observations) {
         const matchTarget = toolName + ' ' + inputStr;
         if (triggerRegex.test(matchTarget)) {
           matched = true;
+          matchedSessionId = o._resolvedSession || o.sid || '';
           break;
         }
       }
@@ -859,7 +863,7 @@ function updateInstincts(observations) {
         // staleness filter sees every instinct, not just the 1 it seeds.
         // (YAML keeps its fields for human readability + backups; the JSON
         // file becomes the operational source of truth for staleness.)
-        _mirrorToTrackingMem(loadTrackingLazy(), parsed.fields.id, TODAY, currentOccurrences + 1);
+        _mirrorToTrackingMem(loadTrackingLazy(), parsed.fields.id, TODAY, currentOccurrences + 1, matchedSessionId);
         trackingDirty = true;
       }
     } catch (e) {
@@ -879,7 +883,7 @@ function updateInstincts(observations) {
 
 const TRACKING_FILE_PATH = path.join(CORTEX_DIR, 'instinct-tracking.json');
 
-function _mirrorToTrackingMem(tracking, instinctId, isoDate, count) {
+function _mirrorToTrackingMem(tracking, instinctId, isoDate, count, sessionId) {
   if (!instinctId || !tracking) return;
   const entry = tracking[instinctId] || {
     count: 0,
@@ -889,6 +893,13 @@ function _mirrorToTrackingMem(tracking, instinctId, isoDate, count) {
   };
   // Never regress the count (injector may have higher value from live PreToolUse)
   if (count > (entry.count || 0)) entry.count = count;
+  const sid = String(sessionId || '').trim();
+  if (sid && sid.toLowerCase() !== 'unknown' && !entry.sessions.includes(sid)) {
+    entry.sessions.push(sid);
+    if (entry.sessions.length > 20) {
+      entry.sessions = entry.sessions.slice(-20);
+    }
+  }
   entry.last_seen = new Date().toISOString();
   if (!entry.first_seen) entry.first_seen = entry.last_seen;
   tracking[instinctId] = entry;
@@ -1681,12 +1692,13 @@ async function main() {
 
     // Step 3e: Detect agent subtypes (v3.29.0 §4.4 HUMAN-gated rewrite —
     // domain `agent-quality`, conf 0.50, imperative action)
-    const agentSubtypeProposals = detectorsOff ? [] : detectAgentSubtypes(observations);
+    const resolvedSessionId = observations[0]._resolvedSession || observations[0].sid || '';
+    const agentSubtypeProposals = detectorsOff ? [] : detectAgentSubtypes(observations, resolvedSessionId);
     log(`Detected ${agentSubtypeProposals.length} agent subtype issue(s)`);
 
     // Step 3f: Detect file coupling (v3.29.0 §4.2 HUMAN-gated rewrite —
     // domain `coupling`, conf 0.55, regex trigger, scope `project`)
-    const couplingProposals = detectorsOff ? [] : detectFileCoupling(observations);
+    const couplingProposals = detectorsOff ? [] : detectFileCoupling(observations, resolvedSessionId);
     log(`Detected ${couplingProposals.length} file coupling pattern(s)`);
 
     // Step 3g: Detect time-of-day patterns (v3.27.0, side-effect to
