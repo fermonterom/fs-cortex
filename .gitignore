@@ -41,4 +41,6 @@ docs/*
 !docs/SINAPSIS-COMPARISON.md
 !docs/SPRINT-9-AUTOPILOT.md
 !docs/SPRINT-V3.33-PLAN.md
+!docs/SPRINT-V3.34-PLAN.md
+!docs/SPRINT9-POSTSHIP-DIAGNOSIS.md
 .claude/worktrees/
