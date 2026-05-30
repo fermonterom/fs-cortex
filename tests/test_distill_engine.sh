@@ -1415,8 +1415,8 @@ else
 fi
 rm -rf "$T36"
 
-# ── Test 37: gf-sessions-empty-list — case 2: sessions:[] promotes ──────────
-echo "--- Test 37: gf-sessions-empty-list (v3.31.2 §4.1.A case 2) ---"
+# ── Test 37: gf-sessions-empty-list — v3.33.0 Option B: sessions:[] blocks ─
+echo "--- Test 37: gf-sessions-empty-list (v3.33.0 Option B) ---"
 T37="$(mktemp -d -t distill-t37-XXXXXX)"
 export CORTEX_DIR="$T37"
 make_promotable_instinct "$T37/instincts/global" "t37-emptylist"
@@ -1438,12 +1438,13 @@ result=$(python3 - <<PYEOF
 $(_py_patch "$T37")
 promoted, candidates = de.auto_promote_to_law()
 was_promoted = any(p['id'] == 't37-emptylist' for p in promoted)
-law_exists = (de.LAWS_DIR / 't37-emptylist.txt').exists()
-print(was_promoted, law_exists)
+cand = next((c for c in candidates if c['id'] == 't37-emptylist'), None)
+reason_ok = bool(cand) and any('sessions 0/3' in r for r in cand['reasons'])
+print(was_promoted, reason_ok)
 PYEOF
 )
-if echo "$result" | grep -q "True True"; then
-  pass "gf-sessions-empty-list: sessions:[] + conf=0.95 promotes (grandfather case 2)"
+if echo "$result" | grep -q "False True"; then
+  pass "gf-sessions-empty-list: sessions:[] + conf=0.95 blocks (must earn sessions)"
 else
   fail "gf-sessions-empty-list: got '$result'"
 fi

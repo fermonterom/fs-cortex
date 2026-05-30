@@ -8,8 +8,20 @@ files — it provides a complete inventory and is kept up-to-date with every rel
 
 ## Active sprint
 
-**Sprint 9 SHIPPED in v3.32.0 (PR1 v3.31.2 + PR2 v3.32.0).** Next:
-7 days of silent observation before planning v3.33+.
+**v3.33.0 SHIPPED — post-ship session_id propagation fix.** Running
+`/cx-status` + `/cx-analyze` on live data 2 days after v3.32.0 exposed
+a critical bug: the resolved sessionId was never propagated into
+proposals (field named `session`, not `session_id`) nor tracking. This
+made the v3.32.0 HUMAN→AUTO gate structurally unreachable AND the
+v3.31.2 grandfather auto-promote 71% of the corpus. Fixed: 5 producer
+sites emit `session_id`, `_mirrorToTrackingMem` fills sessions[],
+`_proposal_session` fallback + `"unknown"` exclusion, grandfather
+narrowed to entry-absent (Option B). New `/cx-backfill` recovers legacy
+data (`--apply` gated to v3.34, issue #49). Diagnosis:
+`docs/SPRINT9-POSTSHIP-DIAGNOSIS.md`. 3 AD rounds (Codex GPT-5.5) +
+Opus review. Tests: 487 PASS, 29 suites.
+
+**Prior: Sprint 9 SHIPPED in v3.32.0 (PR1 v3.31.2 + PR2 v3.32.0).**
 `docs/SPRINT-9-AUTOPILOT.md` v3 FINAL (AD Codex GPT-5.5 round 1
 absorbed: 4 P0 + 7 P1 + 3 P2 findings) tracks both PRs.
 

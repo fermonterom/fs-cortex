@@ -215,7 +215,7 @@ Launch a SINGLE Opus 1M agent (`model: opus`) with:
 
 For each YAML instinct returned by the agent, create a JSON proposal:
 - Include ALL agent fields
-- Add: `detected` (today), `project_id`, `project_name`, `status: "pending"`, `source: "cx-analyze"`
+- Add: `detected` (today), `project_id`, `project_name`, `status: "pending"`, `source: "cx-analyze"`, `session_id`
 - For cross-project patterns: set `project_id: "global"`, `project_name: "cross-project"`
 
 Example:
@@ -237,6 +237,7 @@ projects_seen: ['claude-testing-kit', 'storyweaver', 'LinkedIn']
   "domain": "gotcha",
   "scope": "global",
   "source": "cx-analyze",
+  "session_id": "<current-session-id>",
   "detected": "2026-04-08",
   "project_id": "global",
   "project_name": "cross-project",
@@ -264,6 +265,7 @@ Write to `~/.claude/cortex/proposals.json`:
     "confidence": 0.35,
     "domain": "domain",
     "source": "cx-analyze",
+    "session_id": "<current-session-id>",
     "detected": "2026-04-04",
     "project_id": "hash",
     "project_name": "name",

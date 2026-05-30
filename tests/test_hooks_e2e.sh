@@ -227,6 +227,11 @@ with open('$SANDBOX/.claude/cortex/proposals.json') as f:
     proposals = json.load(f)
 assert len(proposals) > 0, 'No proposals generated'
 assert any('gotcha' in p.get('id','') or 'fix' in p.get('id','') for p in proposals), 'No error-fix proposals'
+assert any(
+    p.get('source','').startswith('session-learner:')
+    and p.get('session_id') == 'learner-test'
+    for p in proposals
+), 'No persisted session-learner proposal with session_id'
 print(f'OK ({len(proposals)} proposals)')
 " 2>/dev/null | grep -q OK && pass "session-learner.js: proposals generated" || fail "session-learner.js: no proposals"
 else

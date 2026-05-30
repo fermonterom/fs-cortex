@@ -33,9 +33,9 @@ PYEOF
 
 _seed_history() {
   # _seed_history <file> <source> <accepted_n> <rejected_n> <distinct_sessions>
-  #               <critical_enum_n> <critical_legacy_n>
+  #               <critical_enum_n> <critical_legacy_n> [session_key=session_id]
   HIST_FILE="$1" HIST_SRC="$2" HIST_ACC="$3" HIST_REJ="$4" \
-  HIST_SES="$5" HIST_CRIT_ENUM="$6" HIST_CRIT_LEGACY="$7" \
+  HIST_SES="$5" HIST_CRIT_ENUM="$6" HIST_CRIT_LEGACY="$7" HIST_SESSION_KEY="${8:-session_id}" \
   python3 - <<'PYEOF'
 import json, os, pathlib
 path = pathlib.Path(os.environ["HIST_FILE"])
@@ -46,38 +46,47 @@ rejected = int(os.environ["HIST_REJ"])
 sessions = int(os.environ["HIST_SES"])
 crit_enum = int(os.environ["HIST_CRIT_ENUM"])
 crit_legacy = int(os.environ["HIST_CRIT_LEGACY"])
+session_key = os.environ.get("HIST_SESSION_KEY", "session_id")
 session_ids = [f"sess-{i}" for i in range(sessions)]
 lines = []
 for i in range(accepted):
     sid = session_ids[i % len(session_ids)] if session_ids else f"sess-{i}"
-    lines.append(json.dumps({
+    row = {
         "id": f"acc-{i}", "status": "accepted",
         "source": source, "accepted_at": "2026-05-20",
-        "accepted_by": "cx-validate", "session_id": sid,
-    }))
+        "accepted_by": "cx-validate",
+    }
+    row[session_key] = sid
+    lines.append(json.dumps(row))
 for i in range(rejected):
     sid = session_ids[i % len(session_ids)] if session_ids else f"sess-r-{i}"
     if i < crit_enum:
-        lines.append(json.dumps({
+        row = {
             "id": f"rej-c-{i}", "status": "rejected", "source": source,
             "rejected_at": "2026-05-21", "rejected_by": "cx-validate",
-            "session_id": sid, "rejection_category": "security",
+            "rejection_category": "security",
             "rejected_reason": "looks-fine-but-tagged",
-        }))
+        }
+        row[session_key] = sid
+        lines.append(json.dumps(row))
     elif i < crit_enum + crit_legacy:
-        lines.append(json.dumps({
+        row = {
             "id": f"rej-L-{i}", "status": "rejected", "source": source,
             "rejected_at": "2026-05-21", "rejected_by": "cx-validate",
-            "session_id": sid, "rejection_category": None,
+            "rejection_category": None,
             "rejected_reason": "Esto es un problema de seguridad serio",
-        }))
+        }
+        row[session_key] = sid
+        lines.append(json.dumps(row))
     else:
-        lines.append(json.dumps({
+        row = {
             "id": f"rej-{i}", "status": "rejected", "source": source,
             "rejected_at": "2026-05-21", "rejected_by": "cx-validate",
-            "session_id": sid, "rejection_category": "noise",
+            "rejection_category": "noise",
             "rejected_reason": "too-vague",
-        }))
+        }
+        row[session_key] = sid
+        lines.append(json.dumps(row))
 path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 PYEOF
 }
@@ -155,6 +164,62 @@ else
   fail "distinct-sessions-below: got '$result'"
 fi
 rm -rf "$T4"
+
+# ── Test 4b: legacy-session-field-fallback ───────────────────────────────────
+echo "--- Test 4b: legacy-session-field-fallback ---"
+T4B="$(mktemp -d -t promo-t4b-XXXXXX)"
+export CORTEX_DIR="$T4B"
+_seed_history "$T4B/proposals-history.jsonl" "session-learner:agent-quality" 16 4 3 0 0 session
+result=$(python3 - <<PYEOF
+$(_py_patch "$T4B")
+eligible, reason, stats = de.can_promote_to_auto("session-learner:agent-quality")
+print(f"elig={eligible} sessions={stats['distinct_sessions']} reason={reason}")
+PYEOF
+)
+if echo "$result" | grep -q "elig=True sessions=3 reason=all-gates-pass"; then
+  pass "legacy-session-field-fallback: counts distinct sessions from 'session'"
+else
+  fail "legacy-session-field-fallback: got '$result'"
+fi
+rm -rf "$T4B"
+
+# ── Test 4c: unknown-session-must-not-count ──────────────────────────────────
+echo "--- Test 4c: unknown-session-must-not-count ---"
+T4C="$(mktemp -d -t promo-t4c-XXXXXX)"
+export CORTEX_DIR="$T4C"
+python3 - <<PYEOF
+$(_py_patch "$T4C")
+import json
+rows = []
+for i in range(19):
+    rows.append({
+        "id": f"acc-{i}",
+        "status": "accepted",
+        "source": "session-learner:agent-quality",
+        "session_id": "sess-a" if i % 2 == 0 else "sess-b",
+    })
+rows.append({
+    "id": "acc-unknown",
+    "status": "accepted",
+    "source": "session-learner:agent-quality",
+    "session_id": "  UnKnOwN  ",
+})
+with open(de.PROPOSALS_HISTORY_FILE, "w", encoding="utf-8") as fh:
+    for row in rows:
+        fh.write(json.dumps(row) + "\\n")
+PYEOF
+result=$(python3 - <<PYEOF
+$(_py_patch "$T4C")
+eligible, reason, stats = de.can_promote_to_auto("session-learner:agent-quality")
+print(f"elig={eligible} sessions={stats['distinct_sessions']} reason={reason}")
+PYEOF
+)
+if echo "$result" | grep -q "elig=False sessions=2 reason=distinct_sessions 2 < 3"; then
+  pass "unknown-session-must-not-count: gate remains blocked"
+else
+  fail "unknown-session-must-not-count: got '$result'"
+fi
+rm -rf "$T4C"
 
 # ── Test 5: critical-rejection-enum ──────────────────────────────────────────
 echo "--- Test 5: critical-rejection-enum ---"
