@@ -99,8 +99,17 @@ a un futuro split de la skill `cortex` en sub-skills — no al cap de leyes.
 | Mecanismo Sinapsis | Detalle (evidencia) | ¿Cortex lo tiene? |
 |---|---|---|
 | Sin leyes-siempre-on | Todo el conocimiento es contextual (regex PreToolUse). `permanent` = instinto que no decae pero sigue siendo contextual | NO — Cortex sí inyecta 15 leyes fijas |
-| **Per-injection token cap** | 1500 chars/tool-use (`_instinct-activator.sh:166`) | NO — solo cap por nº (3) |
-| **Domain dedup** | máx 1 instinto por dominio + máx 6 por tool-use (`:138-147`) | NO |
+| **Per-injection token cap** | 1500 chars/tool-use (`_instinct-activator.sh:166`) | **SÍ YA** — `MAX_TOTAL_CHARS = 1500` (`injector-engine.js:332`) además del cap por nº (3) |
+| **Domain dedup** | máx 1 instinto por dominio + máx 6 por tool-use (`:138-147`) | **SÍ YA** — `seenDomains` Set, máx 1/dominio (`injector-engine.js:334-340`) |
+
+> **Corrección (2026-05-31, verificado en código):** este documento afirmó
+> originalmente que Cortex NO tenía per-injection token cap ni domain dedup. Es
+> **falso**: el injector (`hooks/lib/injector-engine.js:329-343`) ordena por
+> confidence desc, deduplica por dominio (`seenDomains`), y corta a
+> `MAX_TOTAL_CHARS = 1500`. La «Fase 3» de robar estos a Sinapsis es por tanto
+> **innecesaria** — ya están. Lo único pendiente del lado injector es que
+> `MAX_TOTAL_CHARS` está hardcodeado (no en `memory.json` config) y `Operator
+> State` (capa estratégica cross-project) que Fer ya cubre a medias en el Brain.
 | Passive rules separadas de instintos | engine aparte, 6 reglas (`_passive-rules.json`) | Parcial (10 reflexes) |
 | Project stack detection | filtra instintos por tech del `context.md` (`:64-98`) | Parcial (project scope) |
 
@@ -166,13 +175,25 @@ Cortex está mejor posicionado; Sinapsis aporta exactamente **3 ideas robables**
    matchea (gate ejecutable, no AD-por-fase — ver instinct
    `gotcha-ad-por-fase-no-sustituye-e2e`).
 
-### Fase 3 — Robos de Sinapsis (v3.34/35)
+### Fase 3 — Robos de Sinapsis (revisado 2026-05-31)
 
-1. **Per-injection token cap** (1500 ch/tool-use) en el injector, junto al cap
-   por nº actual (`max_instincts_per_injection=3`).
-2. **Domain dedup**: máx 1 instinto por dominio por tool-use.
-3. (Opcional) **Operator State** explícito cross-project — Fer ya tiene esto a
+**Ya implementados (no hacer nada):** per-injection token cap
+(`MAX_TOTAL_CHARS = 1500`, `injector-engine.js:332`) y domain dedup
+(`seenDomains`, `injector-engine.js:334-340`). El injector ya ordena por
+confidence desc, mete máx 1 por dominio, corta a 3 instintos / 1500 chars.
+
+**Pendiente real (bajo, opcional):**
+1. Exponer `MAX_TOTAL_CHARS` en `memory.json` config (hoy hardcodeado) para que
+   sea ajustable como `max_instincts_per_injection`. Cambio trivial.
+2. (Opcional) **Operator State** explícito cross-project — Fer ya lo cubre a
    medias en el Brain (`/Users/fmm/fersora/`); evaluar solapamiento antes.
+
+**Starvation (revisado):** 143 instintos global en 16 dominios. El domain-dedup
+llena las 3 plazas con los 3 dominios de mayor confidence que matcheen → sin
+starvation por nº de dominios. Único riesgo: intra-dominio en `error-recovery`
+(60 instintos, 1 plaza/inyección) — preexistente y by-design (gotcha-X de baja
+señal). Las degradaciones Fase 2 no lo empeoran (triggers específicos, dominios
+holgados: `general`/`gotcha`/`pattern`).
 
 ### TAREA A residual — 170 instintos sin `.yaml`
 
