@@ -4,6 +4,24 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.33.1] — 2026-05-31
+
+### Fixed
+- **`max_laws` config desync (10 → 15).** `core/memory.template.json` and the
+  `docs/FEATURES.md` config table still declared `max_laws: 10` while the engine
+  has enforced `LAW_MAX_ACTIVE = 15` since v3.32.0 §4.5. New installs therefore
+  seeded a stale `max_laws: 10` into their `memory.json` config. Both synced to
+  15. Runtime was unaffected (the engine constant always governed) — but the
+  operator-facing config and the docs were lying.
+
+### Added
+- **`docs/DESIGN-LAW-INJECTION-V2.md`** — design doc for the Core/Domain law
+  split (Phase 2/3 of the law-cap redesign). Grounded in live-Cortex curation
+  data (1714 proposals-history rows, 300 tracked instincts, 170 yaml-orphans)
+  and an honest comparison against Sinapsis v4.5 (`skill-router`,
+  `_instinct-activator.sh`, per-injection token cap). Informs
+  `docs/SPRINT-V3.34-PLAN.md`. No code behavior change.
+
 ## [3.33.0] — 2026-05-30
 
 Post-ship fix for a critical bug found by running `/cx-status` +

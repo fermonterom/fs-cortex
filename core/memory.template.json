@@ -4,7 +4,7 @@
     "max_observations_mb": 10,
     "archive_days": 30,
     "law_threshold": 0.90,
-    "max_laws": 10,
+    "max_laws": 15,
     "max_instincts_per_injection": 3,
     "max_reflexes_per_injection": 2,
     "decay_per_30_days": 0.05,
