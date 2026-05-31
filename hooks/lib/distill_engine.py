@@ -813,6 +813,96 @@ def manual_swap_promote(
     )
 
 
+def demote_law_to_domain(
+    law_id: str,
+    dry_run: bool = False,
+) -> tuple[bool, str]:
+    """Demote a Domain law back to the instinct cohort (v3.34 Core/Domain split).
+
+    Inverse of promotion: the law stops being injected at every SessionStart and
+    re-joins the relevance-gated instinct pool (injected via PreToolUse only when
+    its `trigger` matches). Steps:
+      1. Locate the instinct yaml backing this law (global/ first, archive/ as
+         fallback). If NONE exists, REFUSE — we never invent a trigger, because a
+         law with no usable trigger would silently stop injecting entirely.
+      2. Refuse if the backing yaml has no `trigger` (same silent-drop risk).
+      3. Ensure the yaml lives in instincts/global/ with `law_eligible: false`
+         so `auto_promote_to_law` never re-promotes it back to a law.
+      4. Archive laws/<id>.txt → laws/archive/<id>.<ts>.txt (reversible).
+
+    Returns (success, human-readable reason)."""
+    law_path = LAWS_DIR / f"{law_id}.txt"
+    if not law_path.exists() or "archive" in str(law_path):
+        return False, f"law not found: {law_id}.txt"
+
+    instincts_archive = INSTINCTS_DIR.parent / "archive"
+    global_yaml = INSTINCTS_DIR / f"{law_id}.yaml"
+    archive_yaml = instincts_archive / f"{law_id}.yaml"
+    src_yaml: Path | None = None
+    restore_from_archive = False
+    if global_yaml.exists():
+        src_yaml = global_yaml
+    elif archive_yaml.exists():
+        src_yaml = archive_yaml
+        restore_from_archive = True
+    if src_yaml is None:
+        return False, (
+            f"no instinct yaml backing for {law_id}; materialize it (with a "
+            f"validated trigger) before demoting — refusing to invent one"
+        )
+
+    result = _read_instinct(src_yaml)
+    if result is None:
+        return False, f"instinct yaml unreadable: {law_id}"
+    _fields, text = result
+    if not str(_fields.get("trigger", "")).strip():
+        return False, (
+            f"instinct yaml for {law_id} has no trigger; it would never inject "
+            f"as a Domain instinct — refusing to demote"
+        )
+
+    if dry_run:
+        return True, (
+            f"dry-run: would archive law {law_id} and keep instinct in global/ "
+            f"with law_eligible:false"
+        )
+
+    # 1. Ensure the instinct yaml is in global/ flagged law_eligible:false.
+    new_text = _set_frontmatter_field(text, "law_eligible", "false")
+    INSTINCTS_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        _atomic_write(global_yaml, new_text)
+    except OSError as e:
+        return False, f"write instinct yaml failed: {e}"
+    if restore_from_archive:
+        try:
+            archive_yaml.unlink()
+        except OSError:
+            pass  # archive copy left behind is harmless
+
+    # 2. Archive the law .txt (reversible — kept in laws/archive/).
+    archive_dir = LAWS_DIR / "archive"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%d-%H%M%S")
+    archive_path = archive_dir / f"{law_id}.{ts}.txt"
+    try:
+        law_content = law_path.read_text(encoding="utf-8")
+        _atomic_write(archive_path, law_content)
+        law_path.unlink()
+    except OSError as e:
+        return False, f"archive law failed: {e}"
+
+    _log_knowledge(
+        "demoted-to-domain", law_id,
+        f"archive_file={archive_path.name}",
+        source="cx-distill-demote",
+    )
+    return True, (
+        f"demoted {law_id}: law → archive/{archive_path.name}; instinct active "
+        f"in global/ (law_eligible:false)"
+    )
+
+
 def _law_content_for_jaccard(law_path: Path) -> str:
     """Read first line of a law file for Jaccard comparison."""
     try:
@@ -922,6 +1012,12 @@ def auto_promote_to_law(
         fields, text = result
         iid = str(fields.get("id", ""))
         if not iid:
+            continue
+
+        # v3.34 Core/Domain split: an instinct explicitly demoted from a law
+        # (law_eligible:false) must never be re-promoted, or the split unravels
+        # on the next distill cycle. Skip it entirely (not even a candidate).
+        if str(fields.get("law_eligible", "")).strip().lower() == "false":
             continue
 
         conf = fields.get("confidence")

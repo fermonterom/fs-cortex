@@ -4,6 +4,29 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.34.0] — 2026-05-31
+
+### Added
+- **Core/Domain law split — `demote_law_to_domain()` + `/cx-distill --demote`
+  (Phase 2 of `docs/DESIGN-LAW-INJECTION-V2.md`).** A Domain law can now be
+  demoted back to the relevance-gated instinct pool: it stops being injected at
+  every SessionStart (~40 tok saved each) and re-joins the PreToolUse injector,
+  surfacing only when its `trigger` matches. Reversible (law `.txt` archived to
+  `laws/archive/<id>.<ts>.txt`) and **fail-safe** — it refuses to demote a law
+  with no instinct-yaml backing or no `trigger`, rather than inventing one and
+  silently dropping the law from all injection.
+- **`law_eligible: false` instinct frontmatter flag + guard in
+  `auto_promote_to_law`.** A demoted instinct is never re-promoted to a law, so
+  the next distill cycle cannot unravel the split.
+- **`tests/test_law_tier.sh`** (14 cases) — unit coverage for demote
+  (success / no-yaml refusal / archive-restore / dry-run / missing-law) and the
+  promote guard, plus an **e2e gate** that demotes a law and asserts the real
+  `injector-engine.js` re-injects it via its trigger (satisfies instinct
+  `gotcha-ad-por-fase-no-sustituye-e2e`). Wired into `.githooks/pre-push`.
+
+### Changed
+- `commands/cx-distill.md` documents the new `--demote` sub-mode.
+
 ## [3.33.1] — 2026-05-31
 
 ### Fixed

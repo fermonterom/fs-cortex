@@ -246,6 +246,63 @@ Clearing the file is safe: `distill_engine.py` → `_write_candidates_file()`
 repopulates it on the next SessionStart if new candidates emerge. Truncating
 here just signals "the user has reviewed what was pending".
 
+## Sub-mode `--demote <law_id> --confirm` (v3.34 Core/Domain split)
+
+Demote a **Domain** law back to the relevance-gated instinct pool. The law
+stops being injected at every SessionStart (~40 tok saved each) and re-joins
+the PreToolUse injector, surfacing only when its `trigger` matches. Use this
+for laws that are contextual (release-only, changelog-only, onboarding-only)
+rather than universal — they don't need a permanent law slot.
+
+### Safety contract
+
+`demote_law_to_domain(law_id)` **refuses** (returns `(False, reason)`, no
+filesystem change) when:
+- the law `.txt` is not in `~/.claude/cortex/laws/`
+- no instinct yaml backs the law (neither `instincts/global/<id>.yaml` nor
+  `instincts/archive/<id>.yaml`) — it will **never invent a trigger**, because
+  a law with no usable trigger would silently stop injecting altogether
+- the backing yaml has no `trigger` field
+
+On success it is reversible: the law `.txt` is archived to
+`laws/archive/<id>.<ts>.txt`, the instinct yaml is ensured in
+`instincts/global/` with `law_eligible: false`, and a `demoted-to-domain` row
+is appended to `knowledge-log.md`. The `law_eligible: false` flag makes
+`auto_promote_to_law` skip the instinct forever, so the next distill cycle
+never silently re-promotes it back to a law.
+
+### Step 1: Dry-run
+
+```python
+import os, sys
+sys.path.insert(0, os.path.expanduser("~/.claude/hooks/cortex/lib"))
+from distill_engine import demote_law_to_domain
+
+ok, reason = demote_law_to_domain("agent-prompt-absolute-path", dry_run=True)
+print(reason)  # "dry-run: would archive law ... (law_eligible:false)" OR refusal
+```
+
+### Step 2: Confirm
+
+```python
+ok, reason = demote_law_to_domain("agent-prompt-absolute-path", dry_run=False)
+print(ok, reason)
+```
+
+### Step 3: Verify
+
+```
+ls ~/.claude/cortex/laws/ | wc -l                       # one fewer
+ls ~/.claude/cortex/laws/archive/ | grep <law_id>       # archived
+grep -A1 law_eligible ~/.claude/cortex/instincts/global/<law_id>.yaml
+grep demoted-to-domain ~/.claude/cortex/knowledge-log.md | tail -1
+```
+
+Design rationale and the Core vs Domain partition live in
+`docs/DESIGN-LAW-INJECTION-V2.md`.
+
+---
+
 ## Sub-mode `--swap <to_deprecate> <new_iid> --confirm` (v3.32.0 §4.5)
 
 When the laws cap is saturated (15/15) and a mature instinct
