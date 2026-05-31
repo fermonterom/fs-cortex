@@ -60,6 +60,18 @@ if [ -f "$REPO_ROOT/tests/test_context_bridge.sh" ]; then
     echo ""
 fi
 
+# ── 2a-bis. Law tier Core/Domain split + demote gate (v3.34) ──────────
+echo "--- Law tier (Core/Domain) ---"
+if [ -f "$REPO_ROOT/tests/test_law_tier.sh" ]; then
+    if bash "$REPO_ROOT/tests/test_law_tier.sh" 2>&1 | grep -qE "^=== Results: [0-9]+ passed, 0 failed"; then
+        _pass "test_law_tier.sh — demote + promote-guard + e2e injection pass"
+    else
+        bash "$REPO_ROOT/tests/test_law_tier.sh" 2>&1 | grep -E "(FAIL|Results)" || true
+        _fail "test_law_tier.sh — failures detected"
+    fi
+    echo ""
+fi
+
 # ── 2b. v3.29.0 Sprint 8 acceptance gate (Sprint 8 §4.12) ─────────────
 # Validates 8 invariants in a clean install sandbox: detector regex
 # triggers compile, ghost guard restores, banner stays silent on
