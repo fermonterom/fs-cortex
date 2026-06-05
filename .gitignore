@@ -27,21 +27,10 @@ node_modules/
 # OS
 Thumbs.db
 
-# Docs — public surface kept narrow: feature reference + canonical ADRs
-# Use `docs/*` not `docs/` so per-file negations below take effect
+# Docs — public surface is FEATURES.md only. Everything else under docs/
+# (sprint plans, design notes, audits, métricas) is local/internal scratch
+# the operator uses for development and is intentionally NOT versioned.
+# See .claude/rules/release-workflow.md §4b.
 docs/*
 !docs/FEATURES.md
-!docs/IMPACT-METRICS.md
-!docs/AGENT-FEEDBACK.md
-!docs/AUTO-EVALUATION.md
-!docs/OUTCOME-RANKING.md
-!docs/V3.27-GATES-CLOSED.md
-!docs/SPRINT-8-DETECTOR-OVERHAUL.md
-!docs/GHOST-CX-VALIDATE-AUTO.md
-!docs/SINAPSIS-COMPARISON.md
-!docs/SPRINT-9-AUTOPILOT.md
-!docs/SPRINT-V3.33-PLAN.md
-!docs/SPRINT-V3.34-PLAN.md
-!docs/SPRINT9-POSTSHIP-DIAGNOSIS.md
-!docs/DESIGN-LAW-INJECTION-V2.md
 .claude/worktrees/
