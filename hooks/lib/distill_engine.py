@@ -1120,6 +1120,20 @@ def auto_promote_to_law(
                     f"{LAW_DEPRECATE_MIN_AGE_DAYS}d age)"
                 )
 
+        # ── Criteria 8 (v3.34.2): universality opt-in ────────────────────
+        # A law injects at EVERY SessionStart, so promotion is high-impact and
+        # must be deliberate. Statistical maturity ≠ universality: a frequent
+        # instinct can still be project/stack-specific (the bug that let
+        # contextual instincts silently inflate the Core). Require an explicit
+        # `law_eligible: true` to AUTO-promote; everything else is routed to
+        # candidates for human review via /cx-distill — which already surfaces
+        # a "Pending review: N law candidate" reminder at SessionStart, so the
+        # decision is never lost.
+        if str(fields.get("law_eligible", "")).strip().lower() != "true":
+            failed_reasons.append(
+                "not marked law_eligible:true — review + promote via /cx-distill"
+            )
+
         if failed_reasons:
             candidates.append({
                 "id": iid,

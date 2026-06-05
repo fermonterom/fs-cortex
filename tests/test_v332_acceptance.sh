@@ -222,6 +222,7 @@ first_seen: $TODAY
 occurrences: 20
 project_id: proj-a
 at_law_threshold_since: $FIFTEEN
+law_eligible: true
 ---
 YAML
 # Make impact criteria pass (≥5 useful, 0 noise).
