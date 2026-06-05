@@ -8,18 +8,24 @@ files — it provides a complete inventory and is kept up-to-date with every rel
 
 ## Active sprint
 
-**v3.33.0 SHIPPED — post-ship session_id propagation fix.** Running
-`/cx-status` + `/cx-analyze` on live data 2 days after v3.32.0 exposed
-a critical bug: the resolved sessionId was never propagated into
-proposals (field named `session`, not `session_id`) nor tracking. This
-made the v3.32.0 HUMAN→AUTO gate structurally unreachable AND the
-v3.31.2 grandfather auto-promote 71% of the corpus. Fixed: 5 producer
-sites emit `session_id`, `_mirrorToTrackingMem` fills sessions[],
-`_proposal_session` fallback + `"unknown"` exclusion, grandfather
-narrowed to entry-absent (Option B). New `/cx-backfill` recovers legacy
-data (`--apply` gated to v3.34, issue #49). Diagnosis:
-`docs/SPRINT9-POSTSHIP-DIAGNOSIS.md`. 3 AD rounds (Codex GPT-5.5) +
-Opus review. Tests: 487 PASS, 29 suites.
+**v3.34.2 SHIPPED — Cortex deep-fix session (2026-06-05).** A live deep
+audit exposed the root cause of months of "Cortex a medias": repo edits
+were never deployed (`install.sh` not run), so the live system ran stale
+code — which silently re-promoted demoted laws. Fixed end-to-end across
+5 PRs (#51–55):
+- **v3.33.1**: `max_laws` config desync (10→15) + Core/Domain law-split design.
+- **v3.34.0**: `demote_law_to_domain` + `/cx-distill --demote` (split Phase 2).
+- **v3.34.1**: **anti-drift guard** (`session-start.py:check_deploy_drift` warns
+  when deployed < repo via `~/.claude/cortex/.repo-path`) — the root-cause fix —
+  plus noise pruning (`noisy_detectors_off` gates correction/coupling detectors).
+- **v3.34.2**: **universality opt-in** (Criteria 8): `auto_promote_to_law` only
+  auto-promotes instincts with `law_eligible: true`; everything else routes to
+  candidates for human review (`/cx-distill`), stopping silent Core inflation.
+Live system curated (reversible, backup in `/tmp/cortex-pre-deploy-*`): 15→12
+Core laws, 25→15 reflexes, 363→84 proposals, 171→116 instincts, 329→228
+tracking. Deployed + in sync. Residual hygiene (low, criteria-gated) tracked
+in issue #56. Design: `docs/DESIGN-LAW-INJECTION-V2.md`. Tests: all suites
+green (incl. `test_deploy_drift` 6, `test_distill_engine` 49, `test_kill_switches` 12).
 
 **Prior: Sprint 9 SHIPPED in v3.32.0 (PR1 v3.31.2 + PR2 v3.32.0).**
 `docs/SPRINT-9-AUTOPILOT.md` v3 FINAL (AD Codex GPT-5.5 round 1
