@@ -60,6 +60,18 @@ if [ -f "$REPO_ROOT/tests/test_context_bridge.sh" ]; then
     echo ""
 fi
 
+# ── 2a-ter. Anti-drift guard (v3.34.1) ───────────────────────────────
+echo "--- Deploy drift guard ---"
+if [ -f "$REPO_ROOT/tests/test_deploy_drift.sh" ]; then
+    if bash "$REPO_ROOT/tests/test_deploy_drift.sh" 2>&1 | grep -qE "^=== Results: [0-9]+ passed, 0 failed"; then
+        _pass "test_deploy_drift.sh — drift warning fires/silences correctly"
+    else
+        bash "$REPO_ROOT/tests/test_deploy_drift.sh" 2>&1 | grep -E "(FAIL|Results)" || true
+        _fail "test_deploy_drift.sh — failures detected"
+    fi
+    echo ""
+fi
+
 # ── 2a-bis. Law tier Core/Domain split + demote gate (v3.34) ──────────
 echo "--- Law tier (Core/Domain) ---"
 if [ -f "$REPO_ROOT/tests/test_law_tier.sh" ]; then

@@ -21,7 +21,7 @@ COMMANDS_DIR="$CLAUDE_DIR/commands"
 HOOKS_DIR="$CLAUDE_DIR/hooks/cortex"
 SETTINGS_FILE="$CLAUDE_DIR/settings.json"
 CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
-NEW_VERSION="3.34.0"
+NEW_VERSION="3.34.1"
 
 # v3.25.1 — explicit downgrade flag. The installer is a copy-not-merge of
 # hooks/commands, so running an older `install.sh` over a newer install
@@ -619,8 +619,12 @@ os.replace(tmp, mem_path)
     fi
 fi
 
-# Step 14: Write version marker
+# Step 14: Write version marker + repo path (anti-drift guard, v3.34.1)
 echo "$NEW_VERSION" > "$CORTEX_DIR/version"
+# Record where this repo lives so SessionStart's check_deploy_drift() can warn
+# when the deployed system falls behind the source (the root cause of stale,
+# never-deployed fixes). Best-effort: a missing/stale path fails silent.
+printf '%s\n' "$SCRIPT_DIR" > "$CORTEX_DIR/.repo-path"
 
 # Step 15: Summary
 echo ""

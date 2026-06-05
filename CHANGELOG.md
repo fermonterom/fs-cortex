@@ -4,6 +4,28 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.34.1] — 2026-06-05
+
+### Added
+- **Anti-drift guard — root-cause fix for "Cortex a medias".** SessionStart now
+  warns when the live deployed system is behind the repo source. `install.sh`
+  records its path in `~/.claude/cortex/.repo-path`; new
+  `session-start.py:check_deploy_drift()` compares the deployed `version` file
+  against the repo's `install.sh` `NEW_VERSION` and surfaces a loud actionable
+  warning when a deploy was forgotten. Closes the failure mode where edits land
+  in the repo but `install.sh` is never run — silently stranding new code (the
+  very bug that let the auto-distill re-promote demoted laws). New
+  `tests/test_deploy_drift.sh` (6 cases), wired into `.githooks/pre-push`.
+- **`noisy_detectors_off` config flag** (opt-in, default `false`). Gates the
+  `correction` + `file-coupling` detectors — both with a lifetime ~0% accept
+  rate that only generated backlog — without touching the error-fix / agent
+  detectors that carry real signal.
+
+### Changed
+- Reflex + instinct hygiene tooling: noisy non-security reflexes and
+  junk-`action` gotcha instincts are now archivable as data cleanup (no engine
+  behavior change).
+
 ## [3.34.0] — 2026-05-31
 
 ### Added
