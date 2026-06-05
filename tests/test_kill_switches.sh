@@ -225,6 +225,48 @@ fi
 rm -rf "$T3"
 trap - EXIT
 
+# ── Test 4: noisy_detectors_off — correction/coupling gated, error-fix kept ──
+echo "--- Test 4: noisy_detectors_off (v3.34.1) ---"
+T4="$(mktemp -d -t cortex-killsw-t4-XXXXXX)"
+trap 'rm -rf "$T4"' EXIT
+
+PROJ4="nz-proj"
+mkdir -p "$T4/projects/$PROJ4"
+cat > "$T4/projects/registry.json" <<JSON
+{ "$PROJ4": { "name": "nz-proj", "root": "/tmp/nz" } }
+JSON
+# Same file edited 3x with overlapping regions → fires detectUserCorrections.
+cat > "$T4/projects/$PROJ4/observations.jsonl" <<'OBS'
+{"ts":"2026-05-15T10:00:00Z","ev":"PostToolUse","tool":"Edit","input":"{\"file_path\":\"/tmp/nz/app.ts\",\"old_string\":\"const x = 1\"}","output":"ok","err":false,"sid":"sess-nz","pid":"nz-proj"}
+{"ts":"2026-05-15T10:01:00Z","ev":"PostToolUse","tool":"Edit","input":"{\"file_path\":\"/tmp/nz/app.ts\",\"old_string\":\"const x = 1;\"}","output":"ok","err":false,"sid":"sess-nz","pid":"nz-proj"}
+{"ts":"2026-05-15T10:02:00Z","ev":"PostToolUse","tool":"Edit","input":"{\"file_path\":\"/tmp/nz/app.ts\",\"old_string\":\"const x = 1; //\"}","output":"ok","err":false,"sid":"sess-nz","pid":"nz-proj"}
+OBS
+stdin4='{"session_id":"sess-nz"}'
+
+# WITH the flag (env override) → 0 correction/coupling proposals.
+CORTEX_DIR="$T4" CORTEX_NOISY_DETECTORS_OFF=1 \
+  bash -c "echo '$stdin4' | node '$LEARNER_JS'" >/dev/null 2>&1 || true
+if [ -e "$T4/proposals.json" ]; then
+  leaked=$(grep -cE '"session-learner:(correction|file-coupling)"' "$T4/proposals.json" 2>/dev/null || true)
+else
+  leaked=0
+fi
+[ "${leaked:-0}" = "0" ] && pass "NOISY_DETECTORS_OFF=1 → 0 correction/coupling proposals" \
+                        || fail "NOISY_OFF=1: $leaked correction/coupling leaked"
+
+# Negative control: WITHOUT the flag the same fixture DOES emit a correction.
+rm -f "$T4/proposals.json"
+CORTEX_DIR="$T4" \
+  bash -c "echo '$stdin4' | node '$LEARNER_JS'" >/dev/null 2>&1 || true
+if [ -e "$T4/proposals.json" ] && grep -qE '"session-learner:correction"' "$T4/proposals.json"; then
+  pass "NOISY_DETECTORS_OFF=0 negative control → correction proposal created"
+else
+  fail "NOISY negative control: no correction proposal (control broken)"
+fi
+
+rm -rf "$T4"
+trap - EXIT
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1
