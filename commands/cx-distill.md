@@ -56,6 +56,14 @@ Scan instincts with confidence >= 0.90 that don't have a corresponding law.
 
 #### 3a. Filtro de universalidad
 
+> **Enforced en el motor (v3.34.2, Criteria 8):** `auto_promote_to_law` solo
+> AUTO-promueve instintos con `law_eligible: true` explícito. Todo lo demás —
+> por maduro que sea — va a `auto-distill-candidates.md` para revisión humana
+> (con recordatorio "Pending review: N law candidate" en SessionStart). La
+> madurez estadística no implica universalidad; este gate impide que instintos
+> contextuales inflen el Core silenciosamente. El humano (o /cx-distill) marca
+> `law_eligible: true` tras aplicar el filtro de abajo.
+
 Para cada candidato, evaluar ANTES de proponer:
 
 ```

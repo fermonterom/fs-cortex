@@ -4,6 +4,23 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.34.2] — 2026-06-05
+
+### Changed
+- **Auto-promotion to law is now universality opt-in (Criteria 8).**
+  `auto_promote_to_law` only auto-promotes instincts carrying an explicit
+  `law_eligible: true`; everything else — however statistically mature — is
+  routed to `auto-distill-candidates.md` for human review via `/cx-distill`
+  (already surfaced as a "Pending review: N law candidate" reminder at
+  SessionStart, so the decision is never lost). Statistical maturity ≠
+  universality: this closes the gap that let contextual (project / stack /
+  fersora-specific) instincts silently inflate the always-injected Core. The
+  current Core laws are unaffected (they already exist as `.txt`); the 14
+  contextual instincts that previously qualified are held back. Tests:
+  `test_distill_engine` +1 (49), all promotion fixtures updated to the new
+  contract (`make_instinct` / `make_promotable_instinct` now seed
+  `law_eligible: true`).
+
 ## [3.34.1] — 2026-06-05
 
 ### Added

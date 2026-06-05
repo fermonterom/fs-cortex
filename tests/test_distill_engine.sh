@@ -43,6 +43,7 @@ first_seen: ${last_seen}
 occurrences: 10
 project_id: proj-alpha
 project_name: test-project
+law_eligible: true
 ${extra}
 ---
 YAML
@@ -498,6 +499,7 @@ cat > "$T12/instincts/global/t12-good.yaml" <<YAML
 ---
 id: t12-good
 confidence: 0.9500
+law_eligible: true
 domain: testing
 trigger: "Bash"
 action: "Always verify test results before reporting success to user"
@@ -1257,6 +1259,7 @@ first_seen: $today
 occurrences: 20
 project_id: proj-alpha
 at_law_threshold_since: $fifteen
+law_eligible: true
 ---
 YAML
 }
@@ -1903,6 +1906,49 @@ fi
 rm -rf "$T49"
 
 # ── Summary ──────────────────────────────────────────────────────────────────
+echo ""
+# ── Test 49: criteria-8 universality opt-in (v3.34.2) ────────────────────────
+# An instinct that passes EVERY statistical criterion but lacks an explicit
+# law_eligible:true must NOT auto-promote — it goes to candidates for human
+# review (so contextual instincts can't silently inflate the Core).
+echo "--- Test 49: criteria-8 law_eligible opt-in ---"
+TC8="$(mktemp -d -t distill-c8-XXXXXX)"
+export CORTEX_DIR="$TC8"
+TODAY8=$(python3 -c "from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime('%Y-%m-%d'))")
+FIFTEEN8=$(python3 -c "from datetime import datetime, timezone, timedelta; print((datetime.now(timezone.utc)-timedelta(days=15)).strftime('%Y-%m-%d'))")
+mkdir -p "$TC8/instincts/global" "$TC8/laws"
+cat > "$TC8/instincts/global/c8-ctx.yaml" <<YAML
+---
+id: c8-ctx
+confidence: 0.9500
+domain: testing
+trigger: "Bash"
+action: "Some contextual project-specific thing"
+last_seen: $TODAY8
+first_seen: $TODAY8
+occurrences: 20
+project_id: proj-alpha
+at_law_threshold_since: $FIFTEEN8
+---
+YAML
+make_impact_events "$TC8/impact.jsonl" "c8-ctx" 6 0
+cat > "$TC8/instinct-tracking.json" <<JSON
+{ "c8-ctx": { "count": 30, "sessions": ["s-A", "s-B", "s-C"], "projects_seen": ["proj-alpha"] } }
+JSON
+result=$(python3 - <<PYEOF
+$(_py_patch "$TC8")
+promoted, candidates = de.auto_promote_to_law()
+prom = any(p['id'] == 'c8-ctx' for p in promoted)
+cand = next((c for c in candidates if c['id'] == 'c8-ctx'), None)
+has_reason = bool(cand and any('law_eligible' in r for r in cand['reasons']))
+law = (de.LAWS_DIR / 'c8-ctx.txt').exists()
+print(prom, has_reason, law)
+PYEOF
+)
+[ "$result" = "False True False" ] && pass "criteria-8: unmarked mature instinct → candidate (not law)" \
+                                  || fail "criteria-8: got '$result' (expected 'False True False')"
+rm -rf "$TC8"
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1
