@@ -367,6 +367,43 @@ def inject_eod_resume():
     return tagged, priorities, eod_date
 
 
+def _parse_semver(s):
+    nums = re.findall(r'\d+', s or '')
+    return tuple(int(x) for x in nums[:3]) if nums else (0, 0, 0)
+
+
+def check_deploy_drift():
+    """Warn when the live deployed engine is behind the repo source.
+
+    Root cause of the recurring "Cortex a medias": edits land in the repo but
+    ``install.sh`` is never run, so the live system keeps running stale code
+    (e.g. a guard you wrote never actually runs). ``install.sh`` records its own
+    path in ``~/.claude/cortex/.repo-path``; here we read the repo's shipped
+    version (``install.sh`` ``NEW_VERSION``) and compare it against the deployed
+    ``version`` file. Returns a warning string or None. Fail-silent on any
+    missing/unreadable file so legacy installs (no .repo-path) stay quiet."""
+    try:
+        deployed = (CORTEX_DIR / 'version').read_text().strip()
+        repo_path = (CORTEX_DIR / '.repo-path').read_text().strip()
+    except OSError:
+        return None
+    if not repo_path:
+        return None
+    try:
+        install_txt = (Path(repo_path) / 'install.sh').read_text()
+    except OSError:
+        return None
+    m = re.search(r'NEW_VERSION="([0-9][0-9.]*)"', install_txt)
+    if not m:
+        return None
+    repo_ver = m.group(1)
+    if _parse_semver(repo_ver) > _parse_semver(deployed):
+        return (f'CORTEX DRIFT: el sistema vivo es v{deployed} pero el repo va por '
+                f'v{repo_ver}. Corre `bash {repo_path}/install.sh` para desplegar — '
+                f'si no, el codigo nuevo (motor, hooks, leyes) NO esta activo.')
+    return None
+
+
 def main():
     # Reset per-session token budget
     budget_file = CORTEX_DIR / '.session-token-budget'
@@ -445,6 +482,14 @@ def main():
         # [ACTION] and [MAINT] markers signal the user should know about it.
         if '[ACTION]' in reminder or '[MAINT]' in reminder:
             user_actionable.append(f'• {reminder.strip()}')
+
+    # 3b-bis. Deploy drift guard (v3.34.1) — root-cause fix for "Cortex a
+    # medias": surface loudly when the live system is behind the repo source
+    # so a forgotten `install.sh` can never silently strand new code again.
+    drift = check_deploy_drift()
+    if drift:
+        parts.append(f'\n⚠️ {drift}')
+        user_actionable.append(f'• ⚠️ {drift}')
 
     # 3d. Knowledge pipeline summary (Sprint 7).
     # v3.29.0 (Sprint 8 §4.8): the CORTEX_AUTODISTILL_OFF kill switch lives

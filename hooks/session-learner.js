@@ -1676,6 +1676,16 @@ async function main() {
     // tracking data is preserved.
     const detectorsOff = process.env.CORTEX_DETECTORS_OFF === '1';
 
+    // v3.34.1: `correction` + `file-coupling` have a lifetime ~0% accept rate
+    // (pure backlog noise). Gate them selectively via memory.json
+    // config.noisy_detectors_off (opt-in, default false) or env override —
+    // WITHOUT touching error-fix / agent detectors, which carry real signal.
+    let noisyOff = process.env.CORTEX_NOISY_DETECTORS_OFF === '1';
+    try {
+      const _cfg = JSON.parse(fs.readFileSync(path.join(CORTEX_DIR, 'memory.json'), 'utf8')).config || {};
+      if (_cfg.noisy_detectors_off === true) noisyOff = true;
+    } catch { /* missing/unreadable config → leave default */ }
+
     // Step 2: Detect error-fix pairs (KEEP — only detector with valid trigger,
     // actionable action, and whitelisted domain)
     const errorProposals = detectorsOff ? [] : detectErrorResolutions(observations);
@@ -1683,7 +1693,7 @@ async function main() {
 
     // Step 3b: Detect user corrections (v3.29.0 §4.3 HUMAN-gated rewrite —
     // domain `correction`, conf 0.55, imperative action, scope `project`)
-    const correctionProposals = detectorsOff ? [] : detectUserCorrections(observations);
+    const correctionProposals = (detectorsOff || noisyOff) ? [] : detectUserCorrections(observations);
     log(`Detected ${correctionProposals.length} user correction(s)`);
 
     // Step 3d: Detect agent patterns (v3.29.0 §4.5 — min items 3 → 4)
@@ -1698,7 +1708,7 @@ async function main() {
 
     // Step 3f: Detect file coupling (v3.29.0 §4.2 HUMAN-gated rewrite —
     // domain `coupling`, conf 0.55, regex trigger, scope `project`)
-    const couplingProposals = detectorsOff ? [] : detectFileCoupling(observations, resolvedSessionId);
+    const couplingProposals = (detectorsOff || noisyOff) ? [] : detectFileCoupling(observations, resolvedSessionId);
     log(`Detected ${couplingProposals.length} file coupling pattern(s)`);
 
     // Step 3g: Detect time-of-day patterns (v3.27.0, side-effect to

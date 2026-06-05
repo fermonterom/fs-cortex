@@ -12,7 +12,8 @@
     "promote_min_confidence": 0.80,
     "jaccard_threshold": 0.70,
     "confidence_cap": 0.95,
-    "context_ttl_days": 14
+    "context_ttl_days": 14,
+    "noisy_detectors_off": false
   },
   "stats": {
     "installed": "",
