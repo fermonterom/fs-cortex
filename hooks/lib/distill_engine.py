@@ -378,6 +378,25 @@ def _lock_release(fh) -> None:
         pass
 
 
+def _write_locked(fn):
+    """Serialize a write-path engine operation under the shared advisory lock
+    (issue #45). Blocks until our turn so a manual swap / promote / demote never
+    races a concurrent auto-distill or another manual op. This serializes the
+    Python engine against itself; the Stop hook's append to
+    proposals-history.jsonl is a separate cross-runtime race (issue #49)."""
+    import functools
+
+    @functools.wraps(fn)
+    def _wrapper(*args, **kwargs):
+        fh, _ = _lock_acquire(nonblocking=False)
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            _lock_release(fh)
+
+    return _wrapper
+
+
 # ── Knowledge log ─────────────────────────────────────────────────────────────
 
 def _log_knowledge(event: str, iid: str, detail: str, source: str = "cx-auto-distill") -> None:
@@ -708,6 +727,7 @@ def _find_least_impactful_law(
     return best_iid
 
 
+@_write_locked
 def manual_swap_promote(
     new_iid: str,
     deprecate_iid: str,
@@ -813,6 +833,7 @@ def manual_swap_promote(
     )
 
 
+@_write_locked
 def demote_law_to_domain(
     law_id: str,
     dry_run: bool = False,
@@ -1380,6 +1401,10 @@ def _append_skip_breakdown_log(
         }
         with open(log_path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        try:
+            os.chmod(log_path, 0o600)  # #47 — logs are operator-only
+        except OSError:
+            pass
     except OSError:
         pass
 
@@ -1414,6 +1439,10 @@ def _log_security_event(event_type: str, detail: str) -> None:
         }
         with open(SECURITY_LOG_FILE, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        try:
+            os.chmod(SECURITY_LOG_FILE, 0o600)  # #47 — security log is operator-only
+        except OSError:
+            pass
     except OSError:
         pass
 
@@ -1603,6 +1632,7 @@ def _archive_corrupted_marker(content: str | None, reason: str) -> None:
     )
 
 
+@_write_locked
 def manual_promote_detector(
     source: str, confirm: bool = False,
 ) -> tuple[bool, str, dict]:

@@ -1949,6 +1949,29 @@ PYEOF
                                   || fail "criteria-8: got '$result' (expected 'False True False')"
 rm -rf "$TC8"
 
+# ── Test 50: write-path ops acquire the engine LOCK_FILE (#45) ───────────────
+echo "--- Test 50: #45 demote serializes under LOCK_FILE ---"
+T50="$(mktemp -d -t distill-t50-XXXXXX)"
+export CORTEX_DIR="$T50"
+mkdir -p "$T50/laws"
+make_instinct "$T50/instincts/global" "t50-law" "0.9900" "$TODAY"
+printf 'When X, do the t50 thing\n' > "$T50/laws/t50-law.txt"
+result=$(python3 - <<PYEOF
+$(_py_patch "$T50")
+calls = {'n': 0}
+_orig = de._lock_acquire
+def _spy(*a, **k):
+    calls['n'] += 1
+    return _orig(*a, **k)
+de._lock_acquire = _spy
+ok, _ = de.demote_law_to_domain('t50-law')
+print('LOCKED' if (ok and calls['n'] >= 1) else f'NO_LOCK ok={ok} n={calls["n"]}')
+PYEOF
+)
+[ "$result" = "LOCKED" ] && pass "#45: demote_law_to_domain serializes under LOCK_FILE" \
+                         || fail "#45: $result"
+rm -rf "$T50"
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1
