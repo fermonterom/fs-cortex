@@ -131,6 +131,24 @@ print('OK' if (ok_nl and ok_tab and ok_cr and ok_bell) else 'FAIL')
 ")
 [ "$result" = "OK" ] && pass "sanitize preserves \\n \\t \\r, strips BEL" || fail "sanitize whitespace handling broken"
 
+# --- Test: log/*.jsonl files are operator-only (0o600) — issue #47 ---
+T47="$(mktemp -d)"
+CORTEX_DIR="$T47" python3 - <<PYEOF >/dev/null 2>&1
+import sys, os
+sys.path.insert(0, 'hooks/lib')
+os.environ['CORTEX_DIR'] = '$T47'
+import distill_engine as de
+from pathlib import Path
+de.CORTEX_DIR = Path('$T47')
+de.SECURITY_LOG_FILE = Path('$T47') / 'log' / 'security-events.jsonl'
+de._log_security_event('test-event', 'detail')
+PYEOF
+LOG47="$T47/log/security-events.jsonl"
+perm47=$(stat -f '%Lp' "$LOG47" 2>/dev/null || stat -c '%a' "$LOG47" 2>/dev/null)
+[ "$perm47" = "600" ] && pass "log/*.jsonl created operator-only (0600) — #47" \
+                      || fail "log perm=$perm47 (expected 600) — #47"
+rm -rf "$T47"
+
 # --- Summary ---
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="

@@ -4,6 +4,29 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.34.3] — 2026-06-06
+
+### Security
+- **#47 — `log/*.jsonl` are now created `0o600` (operator-only).** The
+  skip-breakdown, security-events, and timeline logs were created under the
+  default umask (often `0644`, world-readable). `_append_skip_breakdown_log`,
+  `_log_security_event` (Python) and the timeline writer (JS) now `chmod 0o600`
+  after each write. New `test_security.sh` case writes a real log and asserts
+  the mode. Live logs re-permed.
+- **#45 — write-path engine ops serialize under `LOCK_FILE`.** New
+  `_write_locked` decorator wraps `manual_swap_promote`, `demote_law_to_domain`
+  and `manual_promote_detector` with a blocking advisory lock, so a manual op
+  never races a concurrent auto-distill or another manual op. New
+  `test_distill_engine` Test 50. Serializes the Python engine against itself;
+  the Stop hook's cross-runtime append to `proposals-history.jsonl` remains
+  issue #49.
+
+### Changed
+- **#48 — `commands/cx-promote.md` now documents the trust boundary** of
+  `--auto --confirm`: no second factor, the local operator account is the trust
+  boundary, mitigations (statistical gate + fail-closed `.promoted-detectors.json`),
+  and a note to add a second factor before exposing Cortex beyond one operator.
+
 ## [3.34.2] — 2026-06-05
 
 ### Changed

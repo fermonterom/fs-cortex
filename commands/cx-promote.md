@@ -31,6 +31,29 @@ a **detector source** (e.g. `session-learner:correction`) from HUMAN-gated
 to AUTO so future proposals from that source are auto-validated without
 operator review. See *Sub-mode --auto* near the bottom.
 
+## Trust boundary (security)
+
+The `--auto <source> --confirm` flow has **no second factor**. `--confirm` is
+the only gate: anything that can run this command — the local operator, or any
+process with write access to `~/.claude/cortex/` and the ability to invoke the
+engine — can flip a detector source from HUMAN-gated to AUTO, after which its
+proposals are auto-validated into instincts without review.
+
+The trust boundary is therefore the **local machine / operator account**, not
+the command itself. This is acceptable because:
+- Cortex is a single-operator, local-only system; there is no multi-user or
+  remote surface to authenticate against.
+- The statistical gate (`can_promote_to_auto`) still requires n ≥ 20 reviewed
+  + accept_rate ≥ 70 % + ≥ 3 distinct sessions + 0 critical rejections, so a
+  source cannot be promoted until it has a real human-reviewed track record.
+- `.promoted-detectors.json` is the only writer of AUTO state and is
+  fail-closed: any parse / schema / source-regex violation reverts to an empty
+  set (no source trusted) and logs to `log/security-events.jsonl`.
+
+**If Cortex is ever exposed beyond a single trusted operator** (shared host,
+CI, remote trigger), add an explicit second factor here before enabling
+`--auto`.
+
 ## Implementation
 
 ### Step 1: Collect All Project Instincts

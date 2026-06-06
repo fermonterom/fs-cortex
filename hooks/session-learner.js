@@ -764,6 +764,7 @@ function detectCommandUsage(observations) {
     fs.mkdirSync(LOG_DIR, { recursive: true });
     const lines = commands.map((c) => JSON.stringify(c)).join('\n') + '\n';
     fs.appendFileSync(TIMELINE_PATH, lines);
+    try { fs.chmodSync(TIMELINE_PATH, 0o600); } catch {}  // #47 — operator-only log
     log(`Wrote ${commands.length} command(s) to timeline`);
   } catch (e) {
     log(`Timeline write failed: ${e.message}`);
