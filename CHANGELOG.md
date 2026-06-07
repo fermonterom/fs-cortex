@@ -57,6 +57,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   within 12 s it does NOT write without it (which would reintroduce the race):
   history appends are kept in `proposals.json` for the next Stop; the tracking
   flush is skipped (snapshot, re-emitted next Stop).
+- **Ubuntu CI green again — `stat` portability in `test_security.sh` (#47
+  test).** The `0o600` log-perm check tried BSD `stat -f '%Lp'` first, but on
+  GNU coreutils `-f` means `--file-system` and SUCCEEDS (exit 0) with garbage,
+  so the `|| stat -c '%a'` fallback never ran and every Ubuntu matrix job
+  failed at the security step. Now GNU `stat -c '%a'` is tried first (BSD
+  rejects `-c` cleanly → falls back to `-f '%Lp'`). Pre-existing since v3.34.3;
+  fixed here so the matrix is green for this release.
 
 ## [3.34.3] — 2026-06-06
 
