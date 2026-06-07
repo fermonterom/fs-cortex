@@ -25,7 +25,9 @@ const { applyCrossDayBoost } = require(path.join(__dirname, 'lib', 'cross-day-tr
 const {
   migrateAcceptedRejectedToHistory,
   splitForPersist,
+  HISTORY_LOCK_PATH,
 } = require(path.join(__dirname, 'lib', 'proposals-storage'));
+const fileLock = require(path.join(__dirname, 'lib', 'file-lock'));
 
 const HOME = process.env.HOME || process.env.USERPROFILE || '/tmp';
 const CORTEX_DIR = process.env.CORTEX_DIR || path.join(HOME, '.claude', 'cortex');
@@ -907,12 +909,35 @@ function _mirrorToTrackingMem(tracking, instinctId, isoDate, count, sessionId) {
 }
 
 function _flushTracking(tracking) {
+  // Issue #49 — take the shared cross-runtime lock so /cx-backfill --apply
+  // (which atomically rewrites instinct-tracking.json) cannot overwrite this
+  // flush. Same lockfile as proposals-history.jsonl; both files belong to the
+  // same Stop-hook critical section.
+  // AD P0-2 fix: if we cannot acquire the lock, SKIP the flush (do not
+  // write without it). Tracking is a snapshot, so the next Stop hook will
+  // simply re-flush; no data is lost.
+  const token = fileLock.acquire(HISTORY_LOCK_PATH, { timeoutMs: 12000, staleMs: 30000 });
+  if (token === null) {
+    process.stderr.write(
+      '[cortex:learner] tracking lock unavailable after 12s; ' +
+      'skipping flush — next Stop will re-emit the same snapshot\n'
+    );
+    return;
+  }
+  const tmp = TRACKING_FILE_PATH + '.tmp.' + process.pid;
   try {
-    const tmp = TRACKING_FILE_PATH + '.tmp.' + process.pid;
     fs.writeFileSync(tmp, JSON.stringify(tracking, null, 2), { mode: 0o600 });
-    fs.renameSync(tmp, TRACKING_FILE_PATH);
+    try {
+      fs.renameSync(tmp, TRACKING_FILE_PATH);
+    } catch (e) {
+      // Cleanup the .tmp.PID so a failed rename does not leak it. P2 of #49.
+      try { fs.unlinkSync(tmp); } catch (_) {}
+      throw e;
+    }
   } catch (e) {
     if (process.env.CORTEX_DEBUG) process.stderr.write('[cortex:learner] tracking flush: ' + e.message + '\n');
+  } finally {
+    fileLock.release(token);
   }
 }
 
