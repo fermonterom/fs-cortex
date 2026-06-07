@@ -4,6 +4,60 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.35.0] — 2026-06-07
+
+### Security
+- **#49 — `/cx-backfill --apply` re-enabled with a cross-runtime write lock
+  (closes the P0 data-loss race).** The backfill write path
+  (`backfill_session_data`, `hooks/lib/distill_engine.py`) atomically rewrites
+  `proposals-history.jsonl`, but the Node Stop hook
+  (`hooks/lib/proposals-storage.js::_appendHistory`,
+  `hooks/session-learner.js::_flushTracking`) appended to the SAME file with
+  **no lock**, so a backfill `os.replace` could silently drop lines the Stop
+  hook had just written. The Python-only `fcntl.flock` shipped in v3.34.3
+  (#45) could not serialize against Node. **Fix:** a shared `O_EXCL` lockfile
+  (`~/.claude/cortex/.proposals-history.lock`) coordinated by both runtimes —
+  `hooks/lib/file_lock.py` (`os.open(O_CREAT|O_EXCL)`) and
+  `hooks/lib/file-lock.js` (`fs.openSync(path,'wx')`). Zero new dependencies,
+  cross-platform (Linux/macOS/Windows). Both `_appendHistory` and
+  `_flushTracking` now take this lock; the backfill apply path takes it before
+  its stat-recheck + `os.replace`.
+
+### Added
+- **`hooks/lib/file_lock.py` / `hooks/lib/file-lock.js` — cross-runtime
+  advisory lock.** `acquire`/`release`/`refresh` with stale detection
+  (mtime + PID-alive), a per-lock nonce verified on `release` (a paused owner
+  never unlinks a lock a stale-stealer reclaimed), and atomic rename-to-claim
+  reclaim (two concurrent stealers can never both win the same reclaim). PID
+  liveness via `os.kill(pid, 0)` (POSIX) and `ctypes`/`process.kill` (Windows).
+- **`tests/test_file_lock.sh`** (11 cases) — unit + cross-runtime (Python↔Node)
+  acquire/contend/stale/nonce, plus an 8-way concurrent rename-to-claim race
+  asserting exactly one winner.
+- **`tests/test_backfill_concurrency.sh`** (30 cases) — 5 race rounds (Node
+  appends 50 lines while backfill `--apply` rewrites; asserts zero line loss,
+  no `.tmp` leak, no residual lock) plus a §B serialization-success scenario
+  proving the writer actually blocked on the lock (`wait_ms ≥ 600`).
+
+### Changed
+- **`_cmd_backfill` no longer gated.** `--apply` writes (atomically + locked);
+  the v3.33.0 `[GATED]` deferral notice is removed. `tests/test_backfill.sh`
+  updated: the old gate assertions are replaced with apply-writes assertions.
+- **backfill history/tracking are now a consistent pair.** Both payloads are
+  prepared and both `(size, mtime_ns)` guards validated before any
+  `os.replace`; if the tracking write fails after history was replaced, history
+  is restored from the pre-write backup so the pair never diverges.
+
+### Fixed
+- **#49 P2 — tmp-file leak on replace failure.** Backfill now writes both files
+  via `_atomic_write` (try/finally cleanup); the Node `_flushTracking` unlinks
+  its `.tmp.PID` on a failed rename.
+- **#49 P2 — tracking concurrency guard.** `instinct-tracking.json` gets the
+  same `(size, mtime_ns)` stat guard as history, under the shared lock.
+- **AD-surfaced lock degrade.** If a Stop-hook writer cannot acquire the lock
+  within 12 s it does NOT write without it (which would reintroduce the race):
+  history appends are kept in `proposals.json` for the next Stop; the tracking
+  flush is skipped (snapshot, re-emitted next Stop).
+
 ## [3.34.3] — 2026-06-06
 
 ### Security

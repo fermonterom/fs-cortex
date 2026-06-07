@@ -47,6 +47,7 @@ if _LIB_DIR not in sys.path:
 
 from regex_guard import unsafe_reason as _guard_unsafe_reason
 from validate_instinct import validate_yaml_content as _validate_yaml_content
+import file_lock as _file_lock  # issue #49 — cross-runtime advisory lock
 
 # ── Environment & paths ─────────────────────────────────────────────────────
 
@@ -58,6 +59,12 @@ KNOWLEDGE_LOG = CORTEX_DIR / "knowledge-log.md"
 CANDIDATES_FILE = CORTEX_DIR / "auto-distill-candidates.md"
 MARKER_FILE = CORTEX_DIR / ".last-auto-distill"
 LOCK_FILE = CORTEX_DIR / ".distill-engine.lock"
+# Issue #49 — shared cross-runtime lock for proposals-history.jsonl and
+# instinct-tracking.json. The Node Stop hook
+# (hooks/lib/proposals-storage.js + hooks/session-learner.js) takes the SAME
+# lockfile via fs.openSync(path, 'wx'); coordination is at the filesystem
+# level. Distinct from LOCK_FILE (which only serializes the Python engine).
+HISTORY_LOCK_FILE = CORTEX_DIR / ".proposals-history.lock"
 PROPOSALS_FILE = CORTEX_DIR / "proposals.json"
 # v3.29.5 §F5 storage split: terminal-state (accepted/rejected) is appended
 # to this JSONL by session-learner.js after the per-Stop split. Source of
@@ -2607,16 +2614,29 @@ def _cmd_status() -> None:
 
 
 def backfill_session_data(dry_run: bool = True) -> dict:
-    """v3.33.0 C5: normalize session fields + selectively rebuild tracking sessions."""
+    """v3.33.0 C5: normalize session fields + selectively rebuild tracking sessions.
+
+    v3.35.0 / issue #49: when ``dry_run=False`` the write path takes the
+    shared cross-runtime lock (``HISTORY_LOCK_FILE``) so the Node Stop hook
+    cannot append to ``proposals-history.jsonl`` or flush
+    ``instinct-tracking.json`` between our stat-guard and ``os.replace``.
+    Both files use the SAME lock — they belong to one critical section in
+    the Stop hook flow. Tracking now has a (size, mtime_ns) guard too (P2
+    of #49).
+    """
     history = _load_proposals_history()
     tracking = _load_instinct_tracking()
     raw_history_lines: list[str] = []
     history_stat_before: tuple[int, int] | None = None
+    tracking_stat_before: tuple[int, int] | None = None
     if PROPOSALS_HISTORY_FILE.exists():
         st = PROPOSALS_HISTORY_FILE.stat()
         history_stat_before = (st.st_size, st.st_mtime_ns)
         with open(PROPOSALS_HISTORY_FILE, encoding="utf-8") as fh:
             raw_history_lines = fh.read().splitlines()
+    if INSTINCT_TRACKING_FILE.exists():
+        st = INSTINCT_TRACKING_FILE.stat()
+        tracking_stat_before = (st.st_size, st.st_mtime_ns)
 
     def _sessions_by_source(items: list[dict]) -> dict[str, int]:
         out: dict[str, set[str]] = {}
@@ -2717,49 +2737,107 @@ def backfill_session_data(dry_run: bool = True) -> dict:
             shutil.copy2(INSTINCT_TRACKING_FILE, dst)
             backup_files.append(str(dst))
 
-        if normalized != 0:
-            PROPOSALS_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-            out_lines: list[str] = []
-            for line in raw_history_lines:
-                if not line.strip():
-                    continue
-                try:
-                    obj = json.loads(line)
-                except json.JSONDecodeError:
-                    out_lines.append(line)
-                    continue
-                if not isinstance(obj, dict):
-                    out_lines.append(line)
-                    continue
-                if obj.get("session_id"):
-                    out_lines.append(line)
-                    continue
-                legacy = str(obj.get("session", "")).strip()
-                if not legacy:
-                    out_lines.append(line)
-                    continue
-                updated = dict(obj)
-                updated["session_id"] = legacy
-                out_lines.append(json.dumps(updated, ensure_ascii=False))
+        # Issue #49 — acquire the cross-runtime lock BEFORE the stat re-check
+        # so the Node Stop hook cannot append/flush between the check and our
+        # os.replace. Backfill is operator-driven and rare; 15 s timeout is
+        # plenty (the Stop hook critical section is <50 ms typically).
+        lock_token = _file_lock.acquire(str(HISTORY_LOCK_FILE), timeout_ms=15000, stale_ms=30000)
+        if lock_token is None:
+            raise RuntimeError(
+                "backfill: could not acquire proposals-history.lock within 15s; "
+                "another writer (Stop hook or concurrent backfill) is active — retry later"
+            )
 
-            if history_stat_before is not None:
+        try:
+            # AD P1-2 fix: validate BOTH guards before any os.replace, then
+            # apply history first and tracking second; if the tracking
+            # replace fails, restore history from the backup we copied above
+            # so we never leave the pair in an inconsistent state.
+
+            history_payload: str | None = None
+            tracking_payload: str | None = None
+
+            if normalized != 0:
+                PROPOSALS_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+                out_lines: list[str] = []
+                for idx, line in enumerate(raw_history_lines):
+                    # AD P0-2 fix: refresh the lock mtime every 1000 lines so a
+                    # large-corpus backfill does not look stale to a concurrent
+                    # stealer after stale_ms.
+                    if idx and idx % 1000 == 0:
+                        _file_lock.refresh(lock_token)
+                    if not line.strip():
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except json.JSONDecodeError:
+                        out_lines.append(line)
+                        continue
+                    if not isinstance(obj, dict):
+                        out_lines.append(line)
+                        continue
+                    if obj.get("session_id"):
+                        out_lines.append(line)
+                        continue
+                    legacy = str(obj.get("session", "")).strip()
+                    if not legacy:
+                        out_lines.append(line)
+                        continue
+                    updated = dict(obj)
+                    updated["session_id"] = legacy
+                    out_lines.append(json.dumps(updated, ensure_ascii=False))
+                history_payload = ("\n".join(out_lines) + "\n") if out_lines else ""
+
+            if rebuilt != 0:
+                INSTINCT_TRACKING_FILE.parent.mkdir(parents=True, exist_ok=True)
+                tracking_payload = json.dumps(tracking, indent=2, ensure_ascii=False) + "\n"
+
+            # Re-stat both files under the lock — belt + suspenders for any
+            # writer that bypassed the lock (e.g. a stale legacy install).
+            if history_payload is not None and history_stat_before is not None:
                 if not PROPOSALS_HISTORY_FILE.exists():
                     raise RuntimeError("backfill: history changed during run, aborted — no data written; re-run")
                 st_now = PROPOSALS_HISTORY_FILE.stat()
                 if (st_now.st_size, st_now.st_mtime_ns) != history_stat_before:
                     raise RuntimeError("backfill: history changed during run, aborted — no data written; re-run")
+            if tracking_payload is not None and tracking_stat_before is not None:
+                if not INSTINCT_TRACKING_FILE.exists():
+                    raise RuntimeError("backfill: tracking changed during run, aborted — no data written; re-run")
+                st_now = INSTINCT_TRACKING_FILE.stat()
+                if (st_now.st_size, st_now.st_mtime_ns) != tracking_stat_before:
+                    raise RuntimeError("backfill: tracking changed during run, aborted — no data written; re-run")
 
-            hist_tmp = PROPOSALS_HISTORY_FILE.with_name(f"{PROPOSALS_HISTORY_FILE.name}.tmp.{os.getpid()}")
-            payload = ("\n".join(out_lines) + "\n") if out_lines else ""
-            hist_tmp.write_text(payload, encoding="utf-8")
-            os.replace(hist_tmp, PROPOSALS_HISTORY_FILE)
-            wrote_history = True
-        if rebuilt != 0:
-            INSTINCT_TRACKING_FILE.parent.mkdir(parents=True, exist_ok=True)
-            tracking_tmp = INSTINCT_TRACKING_FILE.with_name(f"{INSTINCT_TRACKING_FILE.name}.tmp.{os.getpid()}")
-            tracking_tmp.write_text(json.dumps(tracking, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-            os.replace(tracking_tmp, INSTINCT_TRACKING_FILE)
-            wrote_tracking = True
+            if history_payload is not None:
+                _atomic_write(PROPOSALS_HISTORY_FILE, history_payload)
+                wrote_history = True
+
+            if tracking_payload is not None:
+                try:
+                    _atomic_write(INSTINCT_TRACKING_FILE, tracking_payload)
+                    wrote_tracking = True
+                except Exception:
+                    # AD P1-2: tracking write failed AFTER history was already
+                    # replaced. Restore history from the backup so the pair
+                    # stays consistent, then re-raise.
+                    if wrote_history:
+                        hist_backup = backup_dir / PROPOSALS_HISTORY_FILE.name
+                        if hist_backup.exists():
+                            try:
+                                shutil.copy2(hist_backup, PROPOSALS_HISTORY_FILE)
+                                wrote_history = False
+                            except OSError:
+                                # AD round 3 P2 (accepted, documented risk):
+                                # double fault — tracking write failed AND the
+                                # history restore failed. History is now the
+                                # new content while tracking is unchanged
+                                # (slightly inconsistent pair). This requires
+                                # two simultaneous disk faults; the pre-write
+                                # backup remains in `backup_dir` for manual
+                                # recovery. Re-raise the original failure.
+                                pass
+                    raise
+        finally:
+            _file_lock.release(lock_token)
 
     return {
         "dry_run": dry_run,
@@ -2776,25 +2854,24 @@ def backfill_session_data(dry_run: bool = True) -> dict:
 
 
 def _cmd_backfill(apply: bool) -> None:
-    # v3.33.0: --apply is GATED OFF. The write path has a residual TOCTOU
-    # race against the Stop hook (session-learner.js appends to
-    # proposals-history.jsonl WITHOUT taking LOCK_FILE), so a lock on the
-    # backfill side alone does not close it. Shipping --apply would risk
-    # production history loss. The dry-run report is fully safe (read-only)
-    # and still useful as a diagnostic. The lossless+atomic write path
-    # stays in backfill_session_data() for v3.34, which will add a shared
-    # Stop+backfill lock (or a hooks-quiesced requirement) before enabling
-    # --apply. See GitHub issue (v3.34 backfill apply hardening).
-    if apply:
-        print("[GATED] /cx-backfill --apply is deferred to v3.34.")
-        print("  Reason: residual write race with the Stop hook could lose")
-        print("  history lines. Running a SAFE dry-run instead (no writes).")
-        print("")
-    out = backfill_session_data(dry_run=True)
-    print("[DRY-RUN] Backfill preview (no files written):")
+    # v3.35.0 / issue #49: --apply is now safe to run. The write path takes
+    # the shared cross-runtime HISTORY_LOCK_FILE so the Node Stop hook
+    # (proposals-storage._appendHistory + session-learner._flushTracking)
+    # cannot interleave with our os.replace. Re-stat-under-lock + atomic
+    # write give us belt + suspenders. Backup copies of both files land in
+    # CORTEX_DIR/archive/backfill-<ISO> before any write.
+    out = backfill_session_data(dry_run=not apply)
+    prefix = "" if apply else "[DRY-RUN] "
+    label = "Backfill applied:" if apply else "Backfill preview (no files written):"
+    print(f"{prefix}{label}")
     print(f"  normalized       : {out['normalized']}")
     print(f"  tracking_rebuilt : {out['tracking_rebuilt']}")
     print(f"  newly_eligible   : {out['newly_eligible']}")
+    if apply:
+        print(f"  wrote_history    : {out['wrote_history']}")
+        print(f"  wrote_tracking   : {out['wrote_tracking']}")
+        if out.get("backup_files"):
+            print(f"  backup_dir       : {out['backup_dir']}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2813,8 +2890,8 @@ def main(argv: list[str] | None = None) -> int:
     p_promote = sub.add_parser("promote", help="Check promotion candidates")
     p_promote.add_argument("--dry-run", action="store_true")
 
-    p_backfill = sub.add_parser("backfill", help="Preview legacy session_id/session recovery (dry-run only in v3.33.0)")
-    p_backfill.add_argument("--apply", action="store_true", help="DEFERRED to v3.34 — currently runs a safe dry-run (see _cmd_backfill)")
+    p_backfill = sub.add_parser("backfill", help="Recover legacy session_id/session fields and rebuild tracking sessions (preview by default; --apply writes)")
+    p_backfill.add_argument("--apply", action="store_true", help="Write changes (atomically + cross-runtime locked since v3.35.0 / issue #49)")
 
     sub.add_parser("status", help="Show current candidates and rate-limit state")
 

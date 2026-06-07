@@ -204,34 +204,53 @@ else
   fail "idempotency failed: $out"
 fi
 
-# ── CLI --apply gated OFF in v3.33.0 (deferred to v3.34, P0 write race) ───────
-# backfill_session_data() itself is lossless/atomic/safe (tested above), but the
-# operator-facing `_cmd_backfill(apply=True)` must NOT write in v3.33.0 — the
-# residual Stop-hook write race is closed by gating the CLI write path off.
-T_GATE="$(mktemp -d -t backfill-gate-XXXXXX)"
-mkdir -p "$T_GATE/archive"
-cat > "$T_GATE/proposals-history.jsonl" <<'JSONL'
-{"id":"g1","source":"session-learner:correction","status":"accepted","session":"s1"}
+# ── CLI --apply re-enabled in v3.35.0 (issue #49 closed) ─────────────────────
+# The operator-facing `_cmd_backfill(apply=True)` now writes. The cross-runtime
+# lock (HISTORY_LOCK_FILE) closes the Stop-hook race; see
+# tests/test_backfill_concurrency.sh for the actual concurrency proof.
+T_APPLY="$(mktemp -d -t backfill-apply-XXXXXX)"
+mkdir -p "$T_APPLY/archive" "$T_APPLY/instincts/global"
+cat > "$T_APPLY/instincts/global/inst-cli.yaml" <<'YAML'
+---
+id: inst-cli
+trigger: 'Bash'
+action: 'noop'
+confidence: 0.5
+domain: gotcha
+---
+YAML
+cat > "$T_APPLY/proposals-history.jsonl" <<'JSONL'
+{"id":"inst-cli","source":"session-learner:correction","status":"accepted","session":"legacy-1"}
 JSONL
-cat > "$T_GATE/instinct-tracking.json" <<'JSON'
+cat > "$T_APPLY/instinct-tracking.json" <<'JSON'
 {}
 JSON
-H_GATE_BEFORE="$(shasum "$T_GATE/proposals-history.jsonl" | awk '{print $1}')"
-out=$(CORTEX_DIR="$T_GATE" python3 - <<'PYEOF'
+H_APPLY_BEFORE="$(shasum "$T_APPLY/proposals-history.jsonl" | awk '{print $1}')"
+out=$(CORTEX_DIR="$T_APPLY" python3 - <<'PYEOF'
 import io, contextlib
 import distill_engine as de
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
-    de._cmd_backfill(apply=True)   # operator requested write...
+    de._cmd_backfill(apply=True)
 msg = buf.getvalue()
-print("GATED" if "deferred to v3.34" in msg else "NOTGATED")
+flags = []
+if "Backfill applied:" in msg: flags.append("APPLIED")
+if "deferred" in msg.lower() or "[GATED]" in msg: flags.append("STILLGATED")
+if "wrote_history" in msg: flags.append("WROTE")
+print(" ".join(flags) or "NONE")
 PYEOF
 )
-H_GATE_AFTER="$(shasum "$T_GATE/proposals-history.jsonl" | awk '{print $1}')"
-[ "$out" = "GATED" ] && pass "CLI --apply prints v3.34 deferral notice" || fail "gate notice missing: $out"
-[ "$H_GATE_BEFORE" = "$H_GATE_AFTER" ] && pass "CLI --apply writes nothing (P0 closed at CLI layer)" || fail "CLI --apply mutated history despite gate"
-ls "$T_GATE"/archive/backfill-* >/dev/null 2>&1 && fail "backup created despite gate" || pass "CLI --apply creates no backup (no write attempted)"
-rm -rf "$T_GATE"
+H_APPLY_AFTER="$(shasum "$T_APPLY/proposals-history.jsonl" | awk '{print $1}')"
+if echo "$out" | grep -q "APPLIED" && ! echo "$out" | grep -q "STILLGATED"; then
+  pass "CLI --apply now writes (gate removed in v3.35.0)"
+else
+  fail "CLI --apply output unexpected: $out"
+fi
+[ "$H_APPLY_BEFORE" != "$H_APPLY_AFTER" ] && pass "CLI --apply mutates history (legacy session normalized)" \
+  || fail "CLI --apply did not mutate history"
+ls "$T_APPLY"/archive/backfill-* >/dev/null 2>&1 && pass "CLI --apply creates backup before writing" \
+  || fail "CLI --apply should create backup directory"
+rm -rf "$T_APPLY"
 
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
