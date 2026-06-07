@@ -144,7 +144,12 @@ de.SECURITY_LOG_FILE = Path('$T47') / 'log' / 'security-events.jsonl'
 de._log_security_event('test-event', 'detail')
 PYEOF
 LOG47="$T47/log/security-events.jsonl"
-perm47=$(stat -f '%Lp' "$LOG47" 2>/dev/null || stat -c '%a' "$LOG47" 2>/dev/null)
+# GNU coreutils first: on Linux `stat -c '%a'` returns the octal mode. On BSD/
+# macOS `-c` is rejected (exit 1) so we fall back to `stat -f '%Lp'`. The
+# reverse order is BROKEN on GNU: `stat -f '%Lp'` is parsed as --file-system
+# and SUCCEEDS (exit 0) printing filesystem info, so the `||` fallback never
+# runs and perm comes back as garbage (the Ubuntu CI failure this fixes).
+perm47=$(stat -c '%a' "$LOG47" 2>/dev/null || stat -f '%Lp' "$LOG47" 2>/dev/null)
 [ "$perm47" = "600" ] && pass "log/*.jsonl created operator-only (0600) — #47" \
                       || fail "log perm=$perm47 (expected 600) — #47"
 rm -rf "$T47"
