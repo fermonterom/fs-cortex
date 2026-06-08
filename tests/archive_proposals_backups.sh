@@ -59,8 +59,11 @@ mkdir -p "$ARCHIVE_DIR"
     echo "# archive=$ARCHIVE"
     echo
     for f in "${BAKS[@]}"; do
-        size=$(stat -f %z "$f" 2>/dev/null || stat -c %s "$f" 2>/dev/null || echo "?")
-        mtime=$(stat -f %Sm "$f" 2>/dev/null || stat -c %y "$f" 2>/dev/null || echo "?")
+        # GNU coreutils first: BSD `stat -f` is parsed as --file-system on GNU
+        # and succeeds (exit 0) with garbage, so a BSD-first order skips the
+        # GNU fallback. `stat -c` is rejected by BSD (exit 1) → falls back to -f.
+        size=$(stat -c %s "$f" 2>/dev/null || stat -f %z "$f" 2>/dev/null || echo "?")
+        mtime=$(stat -c %y "$f" 2>/dev/null || stat -f %Sm "$f" 2>/dev/null || echo "?")
         echo "$f|${size}|${mtime}"
     done
 } > "$MANIFEST"

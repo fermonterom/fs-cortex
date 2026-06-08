@@ -191,11 +191,15 @@ for _ in $(seq 1 20); do
   [ -f "$S6/.claude/cortex/.precompact-spy" ] && break
   sleep 0.1
 done
-first_mtime=$(stat -f %m "$S6/.claude/cortex/.precompact-spy" 2>/dev/null || stat -c %Y "$S6/.claude/cortex/.precompact-spy" 2>/dev/null)
+# GNU coreutils first: BSD `stat -f %m` is parsed as --file-system on GNU and
+# returns garbage with exit 0, so a BSD-first order skipped the GNU fallback —
+# both mtimes came back identical ('?') and this idempotency check passed
+# vacuously on Linux. `stat -c` is rejected by BSD (exit 1) → falls back to -f.
+first_mtime=$(stat -c %Y "$S6/.claude/cortex/.precompact-spy" 2>/dev/null || stat -f %m "$S6/.claude/cortex/.precompact-spy" 2>/dev/null)
 sleep 1
 run_precompact "$S6" "$payload" >/dev/null 2>&1
 sleep 0.5
-second_mtime=$(stat -f %m "$S6/.claude/cortex/.precompact-spy" 2>/dev/null || stat -c %Y "$S6/.claude/cortex/.precompact-spy" 2>/dev/null)
+second_mtime=$(stat -c %Y "$S6/.claude/cortex/.precompact-spy" 2>/dev/null || stat -f %m "$S6/.claude/cortex/.precompact-spy" 2>/dev/null)
 [ "$first_mtime" = "$second_mtime" ] \
   && pass "idempotent: second invocation did not re-spawn learner" \
   || fail "idempotent: spy file mtime changed ($first_mtime → $second_mtime)"
