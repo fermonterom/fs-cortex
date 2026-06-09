@@ -1,7 +1,7 @@
-# fs-cortex v3.35.0 — Feature Reference
+# fs-cortex v3.35.1 — Feature Reference
 
 > Complete inventory of all features, commands, hooks, modules, and capabilities.
-> Last updated: 2026-06-07
+> Last updated: 2026-06-09
 
 ---
 
@@ -145,6 +145,7 @@ or `python3 impact_log.py stats --json`.
 - readStdin with proper timeout cleanup
 - ReDoS guard on instinct/reflex regex compilation
 - **512KB log rotation** (renames to `.1` when threshold exceeded)
+- **Step 5f — storage rotation** (v3.35.1, #56.2): calls `hooks/lib/storage-rotation.js::maybeRotateStorage()`. Size-gated (`impact.jsonl` ≥ 10 MB → `impact_log.py rotate` spawned detached; `cross-day-tracker.jsonl` ≥ 1 MB → `prune()`), at most once per 24 h via marker `.last-storage-rotate`. Env overrides: `CORTEX_IMPACT_ROTATE_MB`, `CORTEX_TRACKER_PRUNE_MB`, `CORTEX_ROTATE_SYNC=1` (tests)
 - Imports shared YAML parser from `hooks/lib/yaml-utils.js`
 - Exports functions for testability via `require.main` guard
 - **Error patterns aligned** with observe.py (9 + ENOENT/EACCES/EPERM)
@@ -209,7 +210,7 @@ or `python3 impact_log.py stats --json`.
   - `noise_event  = feedback.noise  OR follow.followed == false`
   - `useful_ratio = useful / inject`,  `health_ratio = useful_ratio / max(noise_ratio, 0.01)`
 - Sprint 0.5 Go/No-Go Gate: GO ≥ 0.25 / 1.5  ·  PARTIAL ≥ 0.10 / 1.0  ·  NO-GO < 0.10 / 1.0
-- Auto rotation at 30 days to `~/.claude/cortex/impact.archive/impact-<ts>.jsonl`
+- Rotation at 30 days to `~/.claude/cortex/impact.archive/impact-<ts>-<pid>.jsonl` — **wired in v3.35.1** (#56.2) from session-learner Step 5f; rename-first algorithm is loss-proof under concurrent JS/Python writers and never deletes events (pre-scan no-op → atomic rename → recent events re-appended in line-aligned chunks on an `O_APPEND` fd → static archive rewritten with only old events)
 - Writes never block calling hook — best-effort with retry + silent stderr fallback
 
 ### hooks/lib/impact_log.js — JS Writer Mirror (v3.14.0)
@@ -374,7 +375,12 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 
 ---
 
-## Tests (15 suites, 235 tests)
+## Tests (34 bash suites, 569+ tests, + 1 PowerShell suite)
+
+> Totals verified with `run_all.sh` on 2026-06-09 (34/34 suites green; 569 tests
+> across the 31 suites that print the standard `Results:` counter). The table
+> below describes the core suites — `run_all.sh` and CI execute every
+> `tests/test_*.sh` regardless of whether it is listed here.
 
 | Suite | Tests | Coverage |
 |---|---|---|
@@ -393,6 +399,7 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 | `test_cross_day_tracker.sh` | 10 | Roundtrip, boost tiers (1/2/4/8 days), confidence cap 0.95, Jaccard match, single-token guard, prune >365d, concurrent append |
 | `test_detectors_v327.sh` | 12 | detectAgentSubtypes (emit/no-emit/rate), detectFileCoupling (emit/no-emit/missing-path, `::` in paths), detectTimeOfDayPatterns (buckets, empty, merge, reflect JSON structure, corrupted-file no-clobber) |
 | `test_v328_operational.sh` | 4 | `write_daily_snapshot` (creates JSON, idempotent, empty CORTEX_DIR), cx-analyze `--deep` spec present |
+| `test_storage_rotation.sh` | 28 | **v3.35.1 #56.2** — rotate() rename-first split (no-loss invariant, idempotency, 0600 perms, malformed-line preservation, pre-scan no-op), storage-rotation.js size + 24h-marker gates, tracker prune wiring, learner Step 5f wiring |
 
 ### CI
 - GitHub Actions: macOS + Linux × Python 3.11/3.13 × Node 22/24
@@ -422,6 +429,7 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 ├── .last-distill                 # Timestamp of last cx-distill
 ├── .last-audit                   # Timestamp of last cx-audit
 ├── .last-session-date            # Last session date
+├── .last-storage-rotate          # 24h gate for Step 5f storage rotation (v3.35.1)
 ├── .last-instinct                # IDs of last batch injected (used by /cx-downvote and /cx-feedback)
 ├── .eod-last-read                # EOD read-once guard
 ├── .project-domains-cache        # Domain pre-filter cache (v3.15.0, 5-min TTL)
@@ -577,6 +585,7 @@ locally (not installed to `~/.claude/`):
 | v3.23.1 | 2026-05-01 | **`/cx-status --pipeline` — single source of truth for pipeline activity.** Triggered by Fer asking "debería tener datos o un informe que poder consultar". Sprint 7's auto-validate/auto-evolve write data across 5 dispersed sources (`knowledge-log.md`, `proposals.json`, `auto-distill-candidates.md`, `evolved/skills/`, last-run markers); the new flag aggregates them in one read. New `compute_pipeline_stats(days=14)` in `hooks/lib/distill_engine.py` (+276 LOC, 1252 → 1528) plus `pipeline-stats` CLI subcommand with `--days N` and `--json` flags mirroring the `--impact`/`--reflexes` pattern. ASCII output groups data into 5 sections: VALIDATE (auto/manual accepted, rejected, pending by domain with whitelist tag), PROMOTE (auto/manual promoted, candidates queued, active laws/cap), EVOLVE (auto/manual drafts, pending install), MAINTENANCE (decayed, archived), LAST RUNS (5 marker mtimes). 4 new tests 24-27 in `test_distill_engine.sh` (zero-state, source counters, pending-by-domain, evolve-drafts) — 23 → **27/27 PASS**. `commands/cx-status.md` extended with `--pipeline` flag spec. `commands/cx-router.md` and the FEATURES.md commands table reference the new flag. **Bug-fix-as-side-effect:** Sprint 7 (v3.23.0) had been pushed but never installed locally — Fer's `~/.claude/hooks/cortex/lib/distill_engine.py` was running v3.22.x code with 0 occurrences of `auto_validate_proposals`. The `bash install.sh` run during this release sync-ed it (now MD5 matches repo, 8 occurrences). Forced `run_auto_distill()` confirmed `validated: 0, skipped_validate: 33` is correct behavior — all 33 pending proposals are `workflow`/`user-preference` outside the auto-accept whitelist. |
 | v3.23.2 | 2026-05-01 | **Restore zero-deps invariant — drop PyYAML from `yaml_normalize.py`.** `hooks/lib/yaml_normalize.py` had imported `yaml` (PyYAML) since the module was introduced — the only third-party Python dependency in the project. `install.sh` and `install.ps1` deliberately never run `pip install`, so on any machine without PyYAML pre-installed (the default on macOS system Python and a fresh Linux install) the SessionStart normalization pass raised `ModuleNotFoundError`. The error was swallowed by `hooks/session-start.py`'s `try/except` so Cortex still ran, but the auto-repair pass never executed. Refactor: removed `import yaml`; replaced both `yaml.safe_load_all()` call sites with a stdlib helper `_has_broken_dq_line(text)` that detects exactly the failure mode the module fixes (invalid backslash escapes inside double-quoted strings on `REGEX_KEYS` fields — `trigger`, `condition`, `matcher`, `action`). Pre-check in `normalize_all()` skips files with no broken DQ line on those keys; post-rewrite safety in `normalize_file()` refuses to persist if the result still has a broken line. Pre-compiled regex `_DQ_LINE_RE` shared between `_convert_line` and `_has_broken_dq_line`. New `tests/test_yaml_normalize.sh` (12/12 PASS): module imports with `sys.modules['yaml'] = None`, detects/ignores escapes correctly, normalize_file end-to-end + idempotent, normalize_all on sandbox CORTEX_DIR with global+project subdirs, skips archive/, missing dir graceful. **Total tests: 158/158 PASS** (was 146 in v3.23.1 + 12 new). Cross-platform verified: `install.sh` (macOS / Linux) and `install.ps1` (Windows) already respect zero-deps, no `pip install` anywhere — fresh installs on any platform with Python 3.6+ stdlib will no longer hit `ModuleNotFoundError`. |
 | v3.28.8 | 2026-05-13 | **Guard — `/cx-analyze` Opus 1M preflight.** Added `Step 0: Preflight — MUST run on Opus 1M` at the top of the Implementation section in `commands/cx-analyze.md`. The command now refuses to proceed unless the active session is `claude-opus-4-7` (or newer Opus) with the `[1m]` context flag. Sonnet/Haiku and Opus without 1M cannot fit the 1.5-3 MB compressed observation payload (≈400-800K tokens) in a single context, which previously caused silent sampling, mid-analysis failures, or workaround sub-Agent fanout that defeats the inline cross-project visibility design. The guard prints a switch-model instruction (`/model claude-opus-4-7[1m]`) and stops before any compression or analysis steps. |
+| v3.35.1 | 2026-06-09 | **#56.2 — storage rotation wired (was dead code; `impact.jsonl` hit 80 MB live).** `impact_log.py rotate` and `cross-day-tracker.js prune()` existed but no hook ever called them. New `hooks/lib/storage-rotation.js::maybeRotateStorage()` called from `session-learner.js` Step 5f (Stop): size-gated (impact ≥ 10 MB, tracker ≥ 1 MB; env `CORTEX_IMPACT_ROTATE_MB`/`CORTEX_TRACKER_PRUNE_MB`), max once per 24 h (marker `.last-storage-rotate`), python3 spawned **detached** so the Stop 15 s budget is never at risk (`CORTEX_ROTATE_SYNC=1` for tests). `rotate()` rewritten rename-first, loss-proof under concurrent lock-less JS writers: pre-scan no-op → atomic rename into `impact.archive/` → recent events re-appended in ≤ 64 KB line-aligned chunks on `O_APPEND` fd → static archive rewritten with only old events; crash at any step leaves every event in ≥ 1 of the 2 files. New files 0600. New `tests/test_storage_rotation.sh` (28). `test_impact.sh` 65/65 green on the rewrite. |
 | v3.35.0 | 2026-06-07 | **#49 — `/cx-backfill --apply` re-enabled with a cross-runtime write lock (closes the P0 data-loss race).** The Node Stop hook appended to `proposals-history.jsonl` (`proposals-storage.js::_appendHistory`) and flushed `instinct-tracking.json` (`session-learner.js::_flushTracking`) with **no lock**, so a backfill `os.replace` could silently drop lines Node had just written; the Python-only `fcntl.flock` from v3.34.3 (#45) could not serialize against Node. **Fix:** shared `O_EXCL` lockfile `~/.claude/cortex/.proposals-history.lock` coordinated by both runtimes — new `hooks/lib/file_lock.py` (`os.open(O_CREAT\|O_EXCL)`) + `hooks/lib/file-lock.js` (`fs.openSync(path,'wx')`), zero deps, cross-platform. Lock features: stale detection (mtime + PID-alive), per-lock nonce verified on `release` (a paused owner never unlinks a stale-stealer's reclaimed lock), atomic rename-to-claim reclaim (two stealers can't both win). `_cmd_backfill` gate removed; backfill writes both files via `_atomic_write` (tmp cleanup) and keeps history/tracking a consistent pair (restore-from-backup if the tracking write fails after history was replaced); tracking gains the same `(size, mtime_ns)` guard as history. AD-surfaced degrade: a Stop-hook writer that can't acquire within 12 s does NOT write without the lock (keeps appends in `proposals.json` / skips the snapshot flush) rather than reintroduce the race. New `tests/test_file_lock.sh` (11, incl. Python↔Node cross-runtime + 8-way rename-to-claim race = exactly 1 winner) and `tests/test_backfill_concurrency.sh` (30: 5 race rounds zero-loss + §B serialization-proof `wait_ms≥600`). 3 AD rounds (Codex GPT-5.5). Design: `docs/ISSUE-49-PLAN.md`. |
 | v3.34.3 | 2026-06-06 | **Security hardening — issues #45/#47/#48.** #47: `log/*.jsonl` (skip-breakdown, security-events, timeline) now created `0o600` operator-only (were `0644`) — `chmod` after each write in Python + JS, new `test_security` case, live logs re-permed. #45: new `_write_locked` decorator serializes `manual_swap_promote` / `demote_law_to_domain` / `manual_promote_detector` under the blocking advisory `LOCK_FILE` (new `test_distill_engine` Test 50); the Stop hook's cross-runtime append stays issue #49. #48: `commands/cx-promote.md` documents the `--auto` trust boundary (no second factor; local operator is the boundary). |
 | v3.34.2 | 2026-06-05 | **Universality opt-in for law promotion (Criteria 8).** `auto_promote_to_law` only auto-promotes instincts with explicit `law_eligible: true`; everything else (however statistically mature) routes to `auto-distill-candidates.md` for human review via `/cx-distill` (already surfaced as a SessionStart "Pending review" reminder). Closes the gap that let contextual project/stack instincts silently inflate the always-injected Core — the bug behind needing to mark 14 instincts by hand. `commands/cx-distill.md` §3a documents the engine enforcement. Tests: `test_distill_engine` +1 (49), promotion fixtures updated to seed `law_eligible: true`. |

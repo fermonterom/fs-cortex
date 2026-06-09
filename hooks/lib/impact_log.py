@@ -783,41 +783,113 @@ def log_nudges_to_knowledge(applied: list[dict]) -> None:
 
 # ── rotation ────────────────────────────────────────────────────────────────
 
+def _parse_event_ts(raw_line: str) -> "_dt.datetime | None":
+    """Parse the `ts` field of one JSONL event; None if unparseable."""
+    try:
+        obj = json.loads(raw_line)
+        return _dt.datetime.strptime(obj.get("ts", ""), "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=_dt.timezone.utc
+        )
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+
 def rotate(days: int = ROTATION_DAYS) -> int:
-    """Archive events older than `days`. Returns archived event count."""
+    """Archive events older than `days`. Returns archived event count.
+
+    v3.35.1 (#56) — rename-first, loss-proof under concurrent writers.
+    The previous read→filter→os.replace cycle could silently drop events
+    appended between the read and the replace (impact_log.js writers from
+    other live sessions hold no cross-runtime lock). New sequence:
+
+      1. Pre-scan: if the first parseable event (oldest — the file is
+         append-ordered) is already newer than the cutoff, return 0.
+      2. Atomically rename impact.jsonl into impact.archive/. From this
+         instant concurrent appends recreate a fresh active file, so no
+         append can be lost.
+      3. Re-append events newer than the cutoff (plus unparseable lines,
+         preserved as before) from the renamed file — now static — back to
+         the active file in line-aligned chunks on an O_APPEND fd, so
+         concurrent appends never interleave mid-line.
+      4. Rewrite the archived file (no writers — safe) keeping only the
+         old events.
+
+    Crash-safety at any step: every event remains on disk in at least one
+    of the two files; nothing is ever deleted.
+    """
     if not IMPACT_FILE.exists():
         return 0
     cutoff = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days)
+
+    # 1. Cheap pre-scan — skip the whole cycle when there is nothing old.
+    try:
+        with open(IMPACT_FILE, "r", encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                raw_strip = raw.strip()
+                if not raw_strip:
+                    continue
+                when = _parse_event_ts(raw_strip)
+                if when is None:
+                    continue  # malformed line — keep scanning for a real event
+                if when >= cutoff:
+                    return 0
+                break
+            else:
+                return 0  # no parseable events at all — nothing to archive
+    except OSError:
+        return 0
+
+    # 2. Atomic rename — concurrent appends recreate a fresh active file.
+    ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    archive_path = ARCHIVE_DIR / f"impact-{stamp}-{os.getpid()}.jsonl"
+    try:
+        IMPACT_FILE.rename(archive_path)
+    except OSError:
+        return 0
+
     kept: list[str] = []
     archived: list[str] = []
-    with open(IMPACT_FILE, "r", encoding="utf-8", errors="replace") as fh:
+    with open(archive_path, "r", encoding="utf-8", errors="replace") as fh:
         for raw in fh:
             raw_strip = raw.strip()
             if not raw_strip:
                 continue
-            try:
-                obj = json.loads(raw_strip)
-                when = _dt.datetime.strptime(obj.get("ts", ""), "%Y-%m-%dT%H:%M:%SZ").replace(
-                    tzinfo=_dt.timezone.utc
-                )
-            except (json.JSONDecodeError, ValueError):
-                kept.append(raw)
-                continue
-            if when < cutoff:
-                archived.append(raw)
+            when = _parse_event_ts(raw_strip)
+            if when is None or when >= cutoff:
+                kept.append(raw_strip + "\n")
             else:
-                kept.append(raw)
+                archived.append(raw_strip + "\n")
 
-    if archived:
-        ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
-        stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        archive_path = ARCHIVE_DIR / f"impact-{stamp}.jsonl"
-        with open(archive_path, "w", encoding="utf-8") as fh:
+    # 3. Re-append recent events — one os.write per ≤64KB line-aligned chunk
+    #    so a concurrent append can never land mid-line.
+    if kept:
+        fd = os.open(IMPACT_FILE, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        try:
+            buf: list[str] = []
+            size = 0
+            for line in kept:
+                buf.append(line)
+                size += len(line)
+                if size >= 65536:
+                    os.write(fd, "".join(buf).encode("utf-8"))
+                    buf, size = [], 0
+            if buf:
+                os.write(fd, "".join(buf).encode("utf-8"))
+        finally:
+            os.close(fd)
+
+    # 4. The archived file is static — rewrite it with only the old events.
+    tmp_fd = os.open(str(archive_path) + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
             fh.writelines(archived)
-        tmp = IMPACT_FILE.with_suffix(".tmp")
-        with open(tmp, "w", encoding="utf-8") as fh:
-            fh.writelines(kept)
-        tmp.replace(IMPACT_FILE)
+        os.replace(str(archive_path) + ".tmp", archive_path)
+    except OSError:
+        try:
+            os.unlink(str(archive_path) + ".tmp")
+        except OSError:
+            pass
     return len(archived)
 
 

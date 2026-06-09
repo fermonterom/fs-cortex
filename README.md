@@ -365,7 +365,7 @@ Key measures:
 ## Tests
 
 ```bash
-bash tests/run_all.sh                  # Run 20 bash suites (~365 tests) + 1 PS1 suite (9 tests)
+bash tests/run_all.sh                  # Run 34 bash suites (569+ tests) + 1 PS1 suite (10 tests)
 bash tests/test_security.sh            # 7 security regression tests
 bash tests/test_dream_cycle.sh         # 38 dream cycle tests (dedup, decay, health, cleanup)
 bash tests/test_observe.sh             # 9 observer tests (scrubbing, is_error, dedup, perf)
@@ -386,6 +386,7 @@ bash tests/test_reflex_matchers.sh     # 28 reflex matcher tests (regex correctn
 bash tests/test_cross_day_tracker.sh   # 10 cross-day boost tests (v3.26.0+)
 bash tests/test_detectors_v327.sh      # 12 v3.27.0 detector tests (subtypes, coupling, ToD)
 bash tests/test_v328_operational.sh    # 4 v3.28.0 tests (daily snapshot, --deep spec)
+bash tests/test_storage_rotation.sh    # 28 storage rotation tests (v3.35.1 #56.2 — no-loss rotate, gates)
 pwsh tests/test_install_ps1.ps1        # 10 PowerShell installer tests (CI windows-latest)
 ```
 
