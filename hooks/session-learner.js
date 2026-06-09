@@ -1790,6 +1790,17 @@ async function main() {
       log(`Outcome nudge failed: ${e.message}`);
     }
 
+    // Step 5f: Storage rotation (issue #56.2, v3.35.1) — impact.jsonl and
+    // cross-day-tracker.jsonl had rotation code that was never called from
+    // anywhere. Size-gated + 24h marker; impact events are archived to
+    // impact.archive/, never deleted.
+    try {
+      const { maybeRotateStorage } = require(path.join(__dirname, 'lib', 'storage-rotation'));
+      maybeRotateStorage(log);
+    } catch (e) {
+      log(`Storage rotation failed: ${e.message}`);
+    }
+
     // Step 6: Combine all proposals with session_date for cross-day tracking
     // (v3.29.0 §4.6: repetitionProposals + workflowProposals lists removed
     // along with their source detectors.)

@@ -4,6 +4,39 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.35.1] — 2026-06-09
+
+### Fixed
+- **#56.2 — storage rotation was dead code; `impact.jsonl` grew unbounded
+  (80 MB live).** `impact_log.py rotate` (30-day archive split) and
+  `cross-day-tracker.js prune()` (365-day + same-day dup compaction) both
+  existed — and FEATURES.md already advertised "auto rotation" — but no hook
+  ever called them. New Step 5f in `hooks/session-learner.js` (Stop) invokes
+  the new `hooks/lib/storage-rotation.js`: size-gated (`impact.jsonl` ≥ 10 MB,
+  tracker ≥ 1 MB, env-overridable via `CORTEX_IMPACT_ROTATE_MB` /
+  `CORTEX_TRACKER_PRUNE_MB`), at most one pass per 24 h (marker
+  `~/.claude/cortex/.last-storage-rotate`), and the impact rotation spawns
+  python3 **detached** so the Stop hook's 15 s budget is never at risk
+  (`CORTEX_ROTATE_SYNC=1` forces sync for tests).
+- **`rotate()` rewritten rename-first — loss-proof under concurrent
+  writers.** The old read→filter→`os.replace` cycle could silently drop
+  events appended by `impact_log.js` writers (other live sessions, no
+  cross-runtime lock) between the read and the replace. Now: pre-scan
+  no-op check → atomic rename into `impact.archive/` (concurrent appends
+  recreate a fresh active file, nothing lost) → recent events re-appended
+  in line-aligned ≤ 64 KB chunks on an `O_APPEND` fd (no mid-line
+  interleaving) → archived file (static, writer-free) rewritten with only
+  the old events. Crash at any step leaves every event in at least one of
+  the two files; nothing is ever deleted. New active/archive files are 0600.
+
+### Added
+- **`hooks/lib/storage-rotation.js`** — `maybeRotateStorage(log)` with the
+  size/marker gates above; auto-installed by the existing `hooks/lib/*.js`
+  installer glob (both installers).
+- **`tests/test_storage_rotation.sh`** (28 cases) — rotate split/no-loss/
+  idempotency/permissions/malformed-line preservation, module size+marker
+  gates, tracker-prune wiring, learner Step 5f wiring, standalone module load.
+
 ## [3.35.0] — 2026-06-07
 
 ### Security
