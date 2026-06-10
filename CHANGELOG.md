@@ -32,8 +32,6 @@ live install had grown to 134 MB, dominated by a 62 MB `impact.jsonl`.
   env-overridable via `CORTEX_IMPACT_ROTATION_DAYS` with a floor of 15 so
   rotation can never eat into the 14-day consumer window. Rotated events
   are still archived to `impact.archive/`, never deleted.
-
-### Fixed
 - `tests/test_storage_rotation.sh` extended 28 → 43 checks: window
   default/override/floor, history+knowledge rename-rotation, daily-dir
   retention, fire-once pruning, small-file no-ops.
