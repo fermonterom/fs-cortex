@@ -31,8 +31,13 @@ const TRACKER_PRUNE_MB = parseFloat(process.env.CORTEX_TRACKER_PRUNE_MB || '1');
 // daily-summaries/ (keep newest N files), .fire-once/ markers (age-pruned).
 const HISTORY_ROTATE_MB = parseFloat(process.env.CORTEX_HISTORY_ROTATE_MB || '3');
 const KNOWLEDGE_ROTATE_MB = parseFloat(process.env.CORTEX_KNOWLEDGE_ROTATE_MB || '2');
-const DAILY_KEEP_FILES = parseInt(process.env.CORTEX_DAILY_KEEP_FILES || '60', 10);
-const FIREONCE_MAX_DAYS = parseInt(process.env.CORTEX_FIREONCE_MAX_DAYS || '30', 10);
+// NaN guard (adversarial review): a non-numeric CORTEX_DAILY_KEEP_FILES
+// would make `entries.length <= NaN` false and `slice(NaN)` ≡ slice(0) —
+// deleting EVERY snapshot. `|| <default>` maps NaN and the falsy "0" to the
+// default; Math.max floors negatives to 1 so the newest file always
+// survives.
+const DAILY_KEEP_FILES = Math.max(1, parseInt(process.env.CORTEX_DAILY_KEEP_FILES || '60', 10) || 60);
+const FIREONCE_MAX_DAYS = Math.max(1, parseInt(process.env.CORTEX_FIREONCE_MAX_DAYS || '30', 10) || 30);
 const MARKER_NAME = '.last-storage-rotate';
 const DAY_MS = 24 * 3600 * 1000;
 

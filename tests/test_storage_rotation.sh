@@ -238,6 +238,21 @@ n_sum=$(ls "$S9/daily-summaries" | wc -l | tr -d ' ')
 [ -f "$S9/.fire-once/fresh-marker" ] && pass "fresh fire-once marker kept" || fail "fresh marker pruned"
 rm -rf "$S9"
 
+# NaN guard (adversarial review): non-numeric CORTEX_DAILY_KEEP_FILES must
+# fall back to the default (60), never delete everything via slice(NaN).
+S9b=$(mktemp -d)
+mkdir -p "$S9b/daily-snapshots"
+for i in 1 2 3; do printf 'x\n' > "$S9b/daily-snapshots/snap-0$i.json"; done
+res=$(CORTEX_DIR="$S9b" CORTEX_ROTATE_SYNC=1 CORTEX_DAILY_KEEP_FILES="abc" \
+  node -e "console.log(JSON.stringify(require('$ROTATION_JS').maybeRotateStorage()))")
+n_after=$(ls "$S9b/daily-snapshots" | wc -l | tr -d ' ')
+[ "$n_after" = "3" ] && pass "non-numeric DAILY_KEEP_FILES falls back to 60 (nothing deleted)" || fail "NaN guard: $n_after files left (want 3)"
+res2=$(CORTEX_DAILY_KEEP_FILES="0" node -e "console.log(require('$ROTATION_JS').DAILY_KEEP_FILES)")
+[ "$res2" = "60" ] && pass "DAILY_KEEP_FILES=0 (falsy) maps to default 60" || fail "zero: $res2"
+res3=$(CORTEX_DAILY_KEEP_FILES="-5" node -e "console.log(require('$ROTATION_JS').DAILY_KEEP_FILES)")
+[ "$res3" = "1" ] && pass "DAILY_KEEP_FILES=-5 floors to 1 (newest always survives)" || fail "floor: $res3"
+rm -rf "$S9b"
+
 # Defaults leave small files alone (no rotation thresholds crossed)
 S10=$(mktemp -d)
 printf '{"id":"p1"}\n' > "$S10/proposals-history.jsonl"
