@@ -481,5 +481,71 @@ echo "$result" | grep -q '\"r3\":\"useful\"' && pass "aligned (follow-up, no rei
 echo "$result" | grep -q '\"r4\":\"ignore\"' && pass "no follow-up → ignore" || fail "scenario 4: $result"
 
 echo ""
+echo "--- v3.36.1: semantic fix summary + proposal quality gate (audit) ---"
+
+S_QG=$(mktemp -d)
+
+# summarizeFixInput: semantic extraction instead of raw JSON blobs
+result=$(CORTEX_DIR="$S_QG" node -e "
+const m = require('$LEARNER');
+const a = m.summarizeFixInput('Bash', JSON.stringify({command: 'uv run pytest -x'}));
+const b = m.summarizeFixInput('Edit', JSON.stringify({file_path: '/Users/x/repo/src/app.ts', old_string: 'foo', new_string: 'bar'}));
+const c = m.summarizeFixInput('Bash', '');
+const d = m.summarizeFixInput('Agent', JSON.stringify({weird: 1}));
+const ok = a === 'uv run pytest -x' && b === 'Edit app.ts' && c === '' && d === '';
+console.log(ok ? 'OK' : 'FAIL:' + JSON.stringify({a, b, c, d}));
+process.exit(0);
+")
+[ "$result" = "OK" ] && pass "summarizeFixInput: command / basename / empty / unknown" || fail "summarize: $result"
+
+# detectErrorResolutions: a fix observation with no teachable input emits NO proposal
+result=$(CORTEX_DIR="$S_QG" node -e "
+const m = require('$LEARNER');
+const obs = [
+  { tool: 'Bash', err: true, input: '{\"command\":\"pytest\"}', output: 'error: boom', ts: '2026-06-10T10:00:00Z' },
+  { tool: 'Bash', input: '', output: 'all good', ts: '2026-06-10T10:00:30Z' },
+];
+const r = m.detectErrorResolutions(obs);
+console.log(r.length === 0 ? 'OK' : 'FAIL:' + JSON.stringify(r));
+process.exit(0);
+")
+[ "$result" = "OK" ] && pass "hollow fix (empty input) → no proposal emitted" || fail "hollow-fix: $result"
+
+# detectErrorResolutions: Edit fix carries basename, never old_string/raw JSON
+result=$(CORTEX_DIR="$S_QG" node -e "
+const m = require('$LEARNER');
+const obs = [
+  { tool: 'Bash', err: true, input: '{\"command\":\"pnpm test\"}', output: 'error: fail', ts: '2026-06-10T10:00:00Z' },
+  { tool: 'Edit', input: '{\"file_path\":\"/Users/x/repo/lib/util.js\",\"old_string\":\"aaa\",\"new_string\":\"bbb\"}', output: '', ts: '2026-06-10T10:00:20Z' },
+];
+const r = m.detectErrorResolutions(obs);
+const ok = r.length === 1
+  && r[0].action.includes('Edit util.js')
+  && !r[0].action.includes('old_string')
+  && !r[0].action.includes('/Users/')
+  && !/try:\s*\$/.test(r[0].action);
+console.log(ok ? 'OK' : 'FAIL:' + JSON.stringify(r));
+process.exit(0);
+")
+[ "$result" = "OK" ] && pass "Edit fix → basename only, no old_string, no abs path" || fail "edit-fix: $result"
+
+# writeProposals: quality gate rejects hollow actions before persisting
+result=$(CORTEX_DIR="$S_QG" node -e "
+const fs = require('fs');
+const m = require('$LEARNER');
+m.writeProposals([
+  { id: 'gotcha-hollow', action: 'When Bash fails with similar pattern, try: ', status: 'pending', detected: '2026-06-10' },
+  { id: 'gotcha-short', action: 'too short', status: 'pending', detected: '2026-06-10' },
+  { id: 'gotcha-valid', action: 'When npm install fails with EACCES, clear the npm cache and retry the install.', status: 'pending', detected: '2026-06-10' },
+]);
+const live = JSON.parse(fs.readFileSync('$S_QG/proposals.json', 'utf8'));
+const ids = live.map(p => p.id).sort();
+console.log(JSON.stringify(ids) === JSON.stringify(['gotcha-valid']) ? 'OK' : 'FAIL:' + JSON.stringify(ids));
+process.exit(0);
+")
+[ "$result" = "OK" ] && pass "writeProposals gate: hollow + short rejected, valid persisted" || fail "gate: $result"
+rm -rf "$S_QG"
+
+echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

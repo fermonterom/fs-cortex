@@ -40,6 +40,12 @@ const yamlUtils = require(path.join(__dirname, 'yaml-utils'));
 function parseInstinctYaml(content) {
   const r = yamlUtils.parseYamlFrontmatter(content);
   if (!r || !r.fields.id || !r.fields.trigger || !r.fields.action) return null;
+  // v3.36.1 (audit TRUNC001): hollow/truncated actions — produced by the
+  // learner's old raw-input slice when the fix observation had no input —
+  // parse fine but inject garbage ("When Bash fails with similar pattern,
+  // try: "). Treat them as unparseable so the instinct is skipped.
+  const actionStr = String(r.fields.action).trim();
+  if (actionStr.length < 30 || /try:\s*$/.test(actionStr)) return null;
   const conf = typeof r.fields.confidence === 'number' ? r.fields.confidence : parseFloat(r.fields.confidence || '0');
   return {
     id: r.fields.id,
@@ -283,11 +289,23 @@ function main() {
   //   • Tech-stack domains (react, node, python, supabase, ...) ONLY pass
   //     when the project actually uses that stack — but only filter when we
   //     actually detected a stack beyond the default "general" sentinel.
+  // v3.36.1 (audit domain-taxonomy-mismatch): the live install carries
+  // category domains added AFTER the v3.24.0 fix that were never appended
+  // here — error-recovery (emitted by the learner's error-fix detector
+  // itself), agent-evolution, correction, coupling, agent-quality (all
+  // emitted by hooks/), plus meta / tool-preference / release-engineering /
+  // claude-code-tooling / claude-behavior found in live YAMLs. They are
+  // knowledge-type labels, not tech stacks — in any project with a detected
+  // stack they were silently filtered out (23 error-recovery instincts
+  // alone).
   const CATEGORY_DOMAINS = new Set([
     "general", "gotcha", "pattern", "workflow", "workflow-general",
-    "tooling", "tool-pref", "testing", "reliability", "release",
-    "security", "saas-development", "development", "claude-code-skills",
-    "documentation", "performance", "observability", "cli-tool",
+    "tooling", "tool-pref", "tool-preference", "testing", "reliability",
+    "release", "release-engineering", "security", "saas-development",
+    "development", "claude-code-skills", "claude-code-tooling",
+    "claude-behavior", "documentation", "performance", "observability",
+    "cli-tool", "error-recovery", "agent-evolution", "agent-quality",
+    "correction", "coupling", "meta", "reflex",
   ]);
 
   for (const file of instinctFiles) {
@@ -334,7 +352,14 @@ function main() {
   const seenDomains = new Set();
   for (const inst of candidates) {
     if (matchedInstincts.length >= MAX_INSTINCTS) break;
-    if (seenDomains.has(inst.domain)) continue;
+    if (seenDomains.has(inst.domain)) {
+      // v3.36.1: make per-domain dedup visible — a high-confidence instinct
+      // dropped here used to disappear without trace.
+      if (process.env.CORTEX_DEBUG) {
+        try { process.stderr.write(`[cortex:injector] skip ${inst.id} — duplicate domain ${inst.domain}\n`); } catch {}
+      }
+      continue;
+    }
     const safeAction = sanitizeInjection(inst.action, 500);
     if (totalChars + safeAction.length > MAX_TOTAL_CHARS) continue;
     seenDomains.add(inst.domain);

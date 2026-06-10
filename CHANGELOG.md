@@ -4,6 +4,45 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.36.1] — 2026-06-10
+
+Signal-quality fixes from the multi-agent Cortex audit (2026-06-10): the
+learning pipeline was generating hollow and non-reusable proposals, and the
+injector silently filtered whole categories of valid instincts.
+
+### Fixed
+- **`injector-engine.js` `CATEGORY_DOMAINS` missing 8+ live category labels**
+  (audit `domain-taxonomy-mismatch`): `error-recovery` (emitted by the
+  learner's own error-fix detector — 23 live instincts silently filtered in
+  any project with a detected tech stack), `agent-evolution` (18),
+  `correction`, `coupling`, `agent-quality` (all emitted by hooks),
+  `meta`, `tool-preference`, `release-engineering`, `claude-code-tooling`,
+  `claude-behavior`, `reflex`. Category labels describe knowledge type, not
+  tech stacks — they now always pass the domain filter.
+- **`session-learner.js` error-fix detector emitted raw tool-input JSON as
+  the gotcha action** (audit `P2-hollow-gotcha-actions`, 28 live cases):
+  `file_path` + `old_string` blobs sliced mid-JSON made single-use patches
+  masquerading as patterns. New `summarizeFixInput()` extracts a semantic
+  summary instead — the command for Bash, the basename for file tools, the
+  description/prompt for Agent — and pairs with no teachable content are
+  skipped entirely (audit `P1-empty-action-field`, 16 live "try: " cases).
+- **`writeProposals()` quality gate**: proposals whose action is under 40
+  chars or ends in a dangling "try:" are rejected before persisting, with a
+  log line naming them.
+- **`parseInstinctYaml()` hollow-action guard** (audit `TRUNC001`): instinct
+  YAMLs whose action is under 30 chars or ends in "try:" are treated as
+  unparseable and never injected — defense in depth against corrupted YAMLs
+  already on disk.
+- **`updateMemoryStats()` now refreshes `total_projects`** (audit counter
+  drift: memory.json said 11 while 31 project dirs existed).
+- Per-domain dedup in the injector logs skipped instincts under
+  `CORTEX_DEBUG` (previously a high-confidence instinct dropped by the
+  one-per-domain rule disappeared without trace).
+- Tests: `test_injector.sh` 18 → 20 (e2e sandbox: category domain injects
+  with detected stack, hollow action never injects), `test_session_learner.sh`
+  32 → 36 (semantic summary, hollow-fix skip, basename-only Edit fix,
+  writeProposals gate).
+
 ## [3.36.0] — 2026-06-10
 
 Storage-hygiene fixes from the multi-agent Cortex audit (2026-06-10): the
