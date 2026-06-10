@@ -38,10 +38,18 @@ injector silently filtered whole categories of valid instincts.
 - Per-domain dedup in the injector logs skipped instincts under
   `CORTEX_DEBUG` (previously a high-confidence instinct dropped by the
   one-per-domain rule disappeared without trace).
-- Tests: `test_injector.sh` 18 → 20 (e2e sandbox: category domain injects
-  with detected stack, hollow action never injects), `test_session_learner.sh`
-  32 → 36 (semantic summary, hollow-fix skip, basename-only Edit fix,
-  writeProposals gate).
+- **`parseYamlFrontmatter()` now resolves block scalars** (adversarial
+  review blocker): `action: |-` / `|` / `>-` returned just the indicator
+  ("|-", 2 chars), so five live multiline-action instincts injected that
+  garbage — and the new hollow-action guard would have silently dropped
+  them instead. Continuation lines are now collected (literal `|` keeps
+  newlines, folded `>` joins with spaces); all five live instincts parse
+  to their full 127–347 char content and inject again.
+- Tests: `test_injector.sh` 18 → 21 (e2e sandbox: category domain injects
+  with detected stack, hollow action never injects, block-scalar action
+  injects full content), `test_session_learner.sh` 32 → 36 (semantic
+  summary, hollow-fix skip, basename-only Edit fix, writeProposals gate),
+  `test_yaml_utils.sh` 13 → 16 (literal/folded/last-field block scalars).
 
 ## [3.36.0] — 2026-06-10
 

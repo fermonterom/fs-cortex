@@ -11,17 +11,42 @@ const path = require('path');
 /**
  * Parse YAML frontmatter between --- markers.
  * Returns { fields, raw, body } or null if no frontmatter found.
- * Handles floats (0.75), integers (5), quoted strings, and bare strings.
+ * Handles floats (0.75), integers (5), quoted strings, bare strings, and
+ * (v3.36.1) block scalars (`key: |`, `|-`, `>`, `>-`): continuation lines
+ * are collected and joined. Pre-v3.36.1 a block-scalar field returned just
+ * the indicator ("|-", 2 chars) — five live multiline-action instincts
+ * injected that garbage, and the v3.36.1 hollow-action guard would have
+ * silently dropped them instead.
  */
 function parseYamlFrontmatter(content) {
   const match = content.match(/^---\s*\n([\s\S]*?)\n---/);
   if (!match) return null;
   const fields = {};
   const body = content.slice(match[0].length).trim();
-  for (const line of match[1].split('\n')) {
-    const m = line.match(/^(\w[\w_-]*)\s*:\s*(.*)/);
+  const lines = match[1].split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^(\w[\w_-]*)\s*:\s*(.*)/);
     if (!m) continue;
     let val = m[2].trim();
+    const block = val.match(/^([|>])[+-]?\s*$/);
+    if (block) {
+      // Collect indented (or blank) continuation lines. A new top-level key
+      // starts at column 0, so the indent test also terminates the block.
+      const chunk = [];
+      let j = i + 1;
+      while (j < lines.length && (/^\s+\S/.test(lines[j]) || lines[j].trim() === '')) {
+        chunk.push(lines[j]);
+        j++;
+      }
+      while (chunk.length && chunk[chunk.length - 1].trim() === '') chunk.pop();
+      const indents = chunk.filter((l) => l.trim()).map((l) => l.match(/^\s*/)[0].length);
+      const minIndent = indents.length ? Math.min.apply(null, indents) : 0;
+      const text = chunk.map((l) => l.slice(minIndent)).join('\n');
+      // Folded scalars (>) join lines with spaces; literal (|) keeps newlines.
+      fields[m[1]] = block[1] === '>' ? text.replace(/\n+/g, ' ').trim() : text;
+      i = j - 1;
+      continue;
+    }
     // Strip surrounding quotes
     if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
       val = val.slice(1, -1);

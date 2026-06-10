@@ -127,6 +127,36 @@ console.log(r.fields.confidence === 0 ? 'OK' : 'FAIL:' + r.fields.confidence);
 ")
 [ "$result" = "OK" ] && pass "zero confidence 0.00 parsed" || fail "zero: $result"
 
+# --- Test 14: v3.36.1 — literal block scalar (|-) collects continuation lines ---
+echo "--- Block Scalars (v3.36.1) ---"
+result=$(node -e "
+const { parseYamlFrontmatter } = require('$YAML_UTILS');
+const r = parseYamlFrontmatter('---\nid: t\ntrigger: Bash\naction: |-\n  First line of the action text.\n  Second line with more detail.\nconfidence: 0.75\n---\n');
+const a = r.fields.action;
+const ok = a === 'First line of the action text.\nSecond line with more detail.'
+  && r.fields.confidence === 0.75 && r.fields.id === 't';
+console.log(ok ? 'OK' : 'FAIL:' + JSON.stringify(r.fields));
+")
+[ "$result" = "OK" ] && pass "literal |- block joined with newlines, next field intact" || fail "literal: $result"
+
+# --- Test 15: v3.36.1 — folded block scalar (>-) joins with spaces ---
+result=$(node -e "
+const { parseYamlFrontmatter } = require('$YAML_UTILS');
+const r = parseYamlFrontmatter('---\naction: >-\n  Folded first part\n  and second part.\nid: t2\n---\n');
+const ok = r.fields.action === 'Folded first part and second part.' && r.fields.id === 't2';
+console.log(ok ? 'OK' : 'FAIL:' + JSON.stringify(r.fields));
+")
+[ "$result" = "OK" ] && pass "folded >- block joined with spaces, next field intact" || fail "folded: $result"
+
+# --- Test 16: v3.36.1 — block scalar at end of frontmatter (no trailing field) ---
+result=$(node -e "
+const { parseYamlFrontmatter } = require('$YAML_UTILS');
+const r = parseYamlFrontmatter('---\nid: t3\naction: |\n  Only line.\n---\nBody');
+const ok = r.fields.action === 'Only line.' && r.body === 'Body';
+console.log(ok ? 'OK' : 'FAIL:' + JSON.stringify({a: r.fields.action, b: r.body}));
+")
+[ "$result" = "OK" ] && pass "block scalar as last field, body preserved" || fail "last-field: $result"
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

@@ -137,11 +137,26 @@ confidence: 0.95
 domain: gotcha
 ---
 YAML
+# Block-scalar action (adversarial review): multiline `action: |-` must
+# parse to its full content and inject — pre-fix the parser returned "|-"
+# (2 chars) and the hollow-action guard silently dropped the instinct.
+cat > "$S12/cortex/instincts/global/multiline-recovery.yaml" <<'YAML'
+---
+id: multiline-recovery
+trigger: "Bash"
+action: |-
+  Multiline instinct line one with enough teachable content.
+  Line two adds the follow-up step to run after the first.
+confidence: 0.85
+domain: workflow
+---
+YAML
 printf '{"tool_name": "Bash", "tool_input": {"command": "npm install"}, "cwd": "%s", "session_id": "t12"}\n' "$S12/project" > "$S12/input.json"
 out=$(CORTEX_DIR="$S12/cortex" _CX_CORTEX_DIR="$S12/cortex" _CX_INPUT_FILE="$S12/input.json" \
   _CX_GLOBAL_INSTINCTS_DIR="$S12/cortex/instincts/global" node "$ENGINE" 2>/dev/null || true)
 echo "$out" | grep -q 'good-recovery' && pass "error-recovery domain injects with detected stack" || fail "error-recovery silenced: $out"
 echo "$out" | grep -q 'hollow-gotcha' && fail "hollow action injected: $out" || pass "hollow 'try: ' action never injects"
+echo "$out" | grep -q 'multiline-recovery.*teachable content' && pass "block-scalar |- action injects full content" || fail "block-scalar dropped: $out"
 rm -rf "$S12"
 
 echo ""
