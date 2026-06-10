@@ -47,7 +47,7 @@ done
 
 # 1e: All 21 commands installed (v3.33.0 added /cx-backfill)
 CMD_COUNT=$(ls "$SANDBOX/.claude/commands/cx-"*.md 2>/dev/null | wc -l | tr -d ' ')
-[ "$CMD_COUNT" -eq 21 ] && pass "21 commands installed" || fail "commands: $CMD_COUNT (expected 21)"
+[ "$CMD_COUNT" -eq 22 ] && pass "22 commands installed" || fail "commands: $CMD_COUNT (expected 22)"
 
 # 1f: SKILL.md installed
 [ -f "$SANDBOX/.claude/skills/cortex/SKILL.md" ] && pass "SKILL.md installed" || fail "SKILL.md MISSING"

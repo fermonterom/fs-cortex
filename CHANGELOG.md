@@ -38,8 +38,9 @@ Fixes surfaced by the 7-subagent runtime audit (issue #56 follow-up).
 - **`commands/cx-stop.md`** — the command existed only in the deployed
   install (`~/.claude/commands/`), never in the repo; a reinstall on a fresh
   machine would silently lose it. Added to `EXPECTED_COMMANDS` in
-  `test_integrity.sh` (21 → 22 command files) and to
-  `core/claudemd-section.md`.
+  `test_integrity.sh` (21 → 22 command files), to
+  `core/claudemd-section.md`, and to the `test_install.sh` installed-count
+  assert (21 → 22 — caught by CI on the first merge attempt).
 
 ## [3.35.1] — 2026-06-09
 
