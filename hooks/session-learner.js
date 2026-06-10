@@ -250,6 +250,36 @@ function sanitizeProposalAction(text) {
 // Step 2: Detect error-resolution pairs
 // -------------------------------------------------------------------
 
+// v3.36.1 (audit P2-hollow-gotcha-actions): the fix summary used to be the
+// raw observed tool_input sliced to 200 chars — a JSON blob with file_path +
+// old_string, cut mid-string. 28 live proposals were single-use patches
+// masquerading as patterns and 16 more were empty ("try: " with nothing
+// after). Extract a semantic summary instead: the command for Bash, the
+// basename for file tools, the description/prompt for Agent. Returns '' when
+// there is nothing teachable — caller must skip the pair.
+function summarizeFixInput(tool, rawInput) {
+  const s = String(rawInput || '');
+  let parsed = null;
+  try { parsed = JSON.parse(s); } catch (_) { /* not JSON — plain text input */ }
+  if (parsed && typeof parsed === 'object') {
+    if (typeof parsed.command === 'string' && parsed.command.trim()) {
+      return parsed.command.trim().slice(0, 160);
+    }
+    if (typeof parsed.file_path === 'string' && parsed.file_path.trim()) {
+      return `${tool} ${path.basename(parsed.file_path.trim())}`;
+    }
+    if (typeof parsed.description === 'string' && parsed.description.trim()) {
+      return parsed.description.trim().slice(0, 160);
+    }
+    if (typeof parsed.prompt === 'string' && parsed.prompt.trim()) {
+      return parsed.prompt.trim().slice(0, 160);
+    }
+    // Object input with none of the known fields — nothing teachable.
+    return '';
+  }
+  return s.trim().slice(0, 160);
+}
+
 function detectErrorResolutions(observations) {
   const proposals = [];
   const WINDOW = 10;
@@ -276,7 +306,12 @@ function detectErrorResolutions(observations) {
         && !isError(candidate);
 
       if (isFix) {
-        const fixSummary = String(candidate.input || '').slice(0, 200);
+        const fixSummary = summarizeFixInput(candidate.tool, candidate.input);
+        // No teachable fix content → keep scanning the window for a better
+        // candidate instead of emitting a hollow "try: " proposal. Threshold
+        // 10 keeps the shortest real summaries ("Edit util.js") while
+        // dropping empty/garbage ones.
+        if (fixSummary.length < 10) continue;
         const hash = shortHash(`${errorTool}-${obs.ts || i}`);
         const fileMatch = extractFilePath(candidate);
         proposals.push({
@@ -1034,6 +1069,17 @@ function updateReflexes(observations) {
 // -------------------------------------------------------------------
 
 function writeProposals(newProposals) {
+  // v3.36.1 (audit P1-empty-action-field): quality gate — a truncated or
+  // hollow action ("... try: " with nothing after, or under 40 chars) is
+  // data corruption, not knowledge; it can never inject anything useful.
+  // Reject before persisting so proposals.json stops accumulating them.
+  const rejected = newProposals.filter(
+    (p) => String(p.action || '').trim().length < 40 || /try:\s*$/.test(String(p.action || '').trim())
+  );
+  if (rejected.length > 0) {
+    log(`Quality gate rejected ${rejected.length} hollow proposal(s): ${rejected.map((p) => p.id).join(', ')}`);
+    newProposals = newProposals.filter((p) => !rejected.includes(p));
+  }
   if (newProposals.length === 0) return;
 
   // v3.29.5 §F5 — one-shot migration: split historical accepted+rejected
@@ -1122,9 +1168,17 @@ function updateMemoryStats() {
       }
     } catch (_) {}
 
+    // v3.36.1 (audit counter-drift): total_projects was never updated here —
+    // memory.json said 11 while registry.json had 31. Count project dirs.
+    let projCount = 0;
+    try {
+      projCount = fs.readdirSync(projDir, { withFileTypes: true }).filter((e) => e.isDirectory()).length;
+    } catch (_) {}
+
     mem.stats.total_observations = obsCount;
     mem.stats.total_instincts = globalInst + projInst;
     mem.stats.total_laws = lawCount;
+    if (projCount > 0) mem.stats.total_projects = projCount;
     mem.stats.last_updated = TODAY;
 
     const tmp = memPath + '.tmp.' + process.pid;
@@ -1886,6 +1940,7 @@ if (require.main === module) {
 } else {
   module.exports = {
     isError, extractFilePath, sanitizeProposalAction,
+    summarizeFixInput, writeProposals, // v3.36.1 — quality-gate testability
     detectErrorResolutions,
     // v3.29.0 §4.6: detectRepetitions and detectWorkflowChains retired.
     detectUserCorrections, detectAgentPatterns,

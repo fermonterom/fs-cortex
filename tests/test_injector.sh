@@ -110,6 +110,40 @@ console.log(r.fields.confidence === 0.75 && r.fields.count === 5 ? 'OK' : 'FAIL'
 echo "--- Last Instinct ---"
 grep -q '\.last-instinct' "$ENGINE" && pass ".last-instinct write in engine" || fail ".last-instinct code missing"
 
+# --- Test 12: v3.36.1 — e2e: category domains pass with a detected stack;
+# hollow/truncated actions never inject (audit TRUNC001 + taxonomy) ---
+echo "--- v3.36.1 Category Domains + Hollow Action Guard (e2e) ---"
+S12=$(mktemp -d)
+mkdir -p "$S12/cortex/instincts/global" "$S12/project"
+# Project with a detected tech stack (react) — pre-v3.36.1 this silenced
+# every category-domain instinct not in CATEGORY_DOMAINS.
+printf '{"dependencies": {"react": "18.0.0"}}\n' > "$S12/project/package.json"
+printf '{"config": {}}\n' > "$S12/cortex/memory.json"
+cat > "$S12/cortex/instincts/global/good-recovery.yaml" <<'YAML'
+---
+id: good-recovery
+trigger: "Bash"
+action: "When npm install fails with EACCES, clear the npm cache and retry with the project-local prefix."
+confidence: 0.9
+domain: error-recovery
+---
+YAML
+cat > "$S12/cortex/instincts/global/hollow-gotcha.yaml" <<'YAML'
+---
+id: hollow-gotcha
+trigger: "Bash"
+action: 'When Bash fails with similar pattern, try: '
+confidence: 0.95
+domain: gotcha
+---
+YAML
+printf '{"tool_name": "Bash", "tool_input": {"command": "npm install"}, "cwd": "%s", "session_id": "t12"}\n' "$S12/project" > "$S12/input.json"
+out=$(CORTEX_DIR="$S12/cortex" _CX_CORTEX_DIR="$S12/cortex" _CX_INPUT_FILE="$S12/input.json" \
+  _CX_GLOBAL_INSTINCTS_DIR="$S12/cortex/instincts/global" node "$ENGINE" 2>/dev/null || true)
+echo "$out" | grep -q 'good-recovery' && pass "error-recovery domain injects with detected stack" || fail "error-recovery silenced: $out"
+echo "$out" | grep -q 'hollow-gotcha' && fail "hollow action injected: $out" || pass "hollow 'try: ' action never injects"
+rm -rf "$S12"
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1
