@@ -37,7 +37,7 @@ echo ""
 # ── TEST 2: All 20 commands exist ─────────────────────────────────
 
 echo "--- Commands existence ---"
-EXPECTED_COMMANDS="cx-analyze cx-audit cx-backfill cx-backup cx-dashboard cx-distill cx-downvote cx-dream cx-eod cx-evolve cx-export cx-feedback cx-gotcha cx-promote cx-restore cx-retro cx-router cx-status cx-timeline cx-validate"
+EXPECTED_COMMANDS="cx-analyze cx-audit cx-backfill cx-backup cx-dashboard cx-distill cx-downvote cx-dream cx-eod cx-evolve cx-export cx-feedback cx-gotcha cx-promote cx-restore cx-retro cx-router cx-status cx-stop cx-timeline cx-validate"
 MISSING=0
 for cmd in $EXPECTED_COMMANDS; do
     if [ ! -f "$PROJECT_ROOT/commands/$cmd.md" ]; then

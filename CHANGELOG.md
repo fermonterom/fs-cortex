@@ -4,6 +4,43 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.35.2] — 2026-06-10
+
+Fixes surfaced by the 7-subagent runtime audit (issue #56 follow-up).
+
+### Fixed
+- **Timeline silently dead since 2026-05-27.** `detectCommandUsage`
+  (`hooks/session-learner.js` Step 3h) only saw the per-project observation
+  streams, but `/cx-*` commands are usually invoked from a cwd with no
+  resolvable project, so observe.py routes them to the GLOBAL stream
+  (`~/.claude/cortex/observations.jsonl`, `pid=global`) — 114 Skill
+  observations there vs 4 per-project. The function now also scans the global
+  stream with a ts cursor (`~/.claude/cortex/.timeline-cursor`, 0600) so each
+  Stop only processes new lines; idempotent across runs. Tests 8 (now
+  sandboxed — it would otherwise read the live install) and new 8b
+  (root-scan, command extraction, cursor idempotency + advance):
+  `test_session_learner.sh` 28 → 32.
+- **`_proposal_to_instinct_yaml` emitted invalid YAML when a proposal had
+  tags.** The first list item was joined inline after the key
+  (`tags:   - 'cross-day-1'`) — the tolerant engine parser accepted it but
+  strict YAML rejects it; 27 live instinct files shipped malformed. First
+  item now starts on its own line; empty list emits `tags: []`. New Test 52.
+- **#56.1 — derived laws truncated mid-sentence.** `_derive_law_line` cap
+  raised 120 → 200 chars and the cut now lands on a word boundary
+  (`LAW_MAX_CHARS`, `hooks/lib/distill_engine.py`). Three live laws had
+  shipped with dangling half-instructions (repaired by hand on 2026-06-09;
+  this closes the generator). New Test 51: `test_distill_engine.sh` 50 → 52.
+- **`session-learner.log` created world-readable.** `log()` now appends with
+  `mode: 0o600` + a healing `chmodSync` (#47 follow-up — the deployed log was
+  0644).
+
+### Added
+- **`commands/cx-stop.md`** — the command existed only in the deployed
+  install (`~/.claude/commands/`), never in the repo; a reinstall on a fresh
+  machine would silently lose it. Added to `EXPECTED_COMMANDS` in
+  `test_integrity.sh` (21 → 22 command files) and to
+  `core/claudemd-section.md`.
+
 ## [3.35.1] — 2026-06-09
 
 ### Fixed

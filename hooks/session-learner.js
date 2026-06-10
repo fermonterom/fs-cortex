@@ -71,7 +71,10 @@ function log(msg) {
       }
     } catch (_) {}
     const line = `[${now()}] ${msg}\n`;
-    fs.appendFileSync(LOG_PATH, line);
+    // v3.35.2 (#47 follow-up): mode applies on create; chmod heals files
+    // created 0644 by older versions. Operator-only, like timeline.jsonl.
+    fs.appendFileSync(LOG_PATH, line, { mode: 0o600 });
+    try { fs.chmodSync(LOG_PATH, 0o600); } catch {}
   } catch (_) {
     // Never crash on log failure
   }
@@ -746,8 +749,8 @@ function detectCommandUsage(observations) {
   const cxPattern = /\bcx-\w+/;
   const commands = [];
 
-  for (const obs of observations) {
-    if (obs.tool !== 'Skill') continue;
+  const collect = (obs) => {
+    if (obs.tool !== 'Skill') return;
     const input = typeof obs.input === 'string' ? obs.input : JSON.stringify(obs.input || '');
     const match = input.match(cxPattern);
     if (match) {
@@ -757,7 +760,36 @@ function detectCommandUsage(observations) {
         pid: obs.pid || 'global',
       });
     }
-  }
+  };
+
+  for (const obs of observations) collect(obs);
+
+  // v3.35.2 (#56 audit): cx-* commands are usually invoked from a cwd with no
+  // resolvable project, so observe.py routes them to the GLOBAL stream
+  // (~/.claude/cortex/observations.jsonl, pid=global) — which the learner
+  // never loads (it only reads projects/*/observations.jsonl). The timeline
+  // silently stopped growing once usage shifted to project-less sessions.
+  // Scan the global stream here with a ts cursor so each Stop only processes
+  // new lines (idempotent; a concurrent-Stop race can at worst duplicate one
+  // informational timeline line).
+  const cursorPath = path.join(CORTEX_DIR, '.timeline-cursor');
+  let cursor = '';
+  try { cursor = fs.readFileSync(cursorPath, 'utf8').trim(); } catch (_) {}
+  let maxTs = cursor;
+  try {
+    const rootObsPath = path.join(CORTEX_DIR, 'observations.jsonl');
+    if (fs.existsSync(rootObsPath)) {
+      for (const obs of readJsonlFile(rootObsPath)) {
+        const ts = obs.ts || '';
+        if (!ts || ts <= cursor) continue;
+        if (ts > maxTs) maxTs = ts;
+        collect(obs);
+      }
+      if (maxTs !== cursor) {
+        try { fs.writeFileSync(cursorPath, maxTs + '\n', { mode: 0o600 }); } catch (_) {}
+      }
+    }
+  } catch (_) { /* global stream scan is best-effort */ }
 
   if (commands.length === 0) return;
 

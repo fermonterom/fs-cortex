@@ -185,7 +185,7 @@ You work → Cortex observes → /cx-analyze detects patterns → /cx-validate y
 → unused knowledge decays (-0.05/month) → /cx-dream cleans up stale instincts
 ```
 
-## Commands (21)
+## Commands (22)
 
 | Command | What it does |
 |---------|-------------|
@@ -210,6 +210,7 @@ You work → Cortex observes → /cx-analyze detects patterns → /cx-validate y
 | `/cx-feedback` | Cierra el loop humano del funnel de impacto — marca la última inyección como útil o ruido |
 | `/cx-feedback-auto` | Agent self-rating on tool-choice reflexes — emits feedback with source=agent |
 | `/cx-backfill` | Recover legacy `session_id` data for the promotion gate (dry-run only in v3.33.0; `--apply` deferred to v3.34, issue #49) |
+| `/cx-stop` | Flush current session through the Stop hook now (run the learner without waiting for inactivity) |
 
 ### Interactive Shorthand
 

@@ -1972,6 +1972,49 @@ PYEOF
                          || fail "#45: $result"
 rm -rf "$T50"
 
+# ── Test 51: #56.1 _derive_law_line — cap 200 + word-boundary cut ────────────
+echo "--- Test 51: #56.1 law line cap 200 + word boundary ---"
+T51="$(mktemp -d -t distill-t51-XXXXXX)"
+export CORTEX_DIR="$T51"
+result=$(python3 - <<PYEOF
+$(_py_patch "$T51")
+cap_ok = de.LAW_MAX_CHARS == 200
+short = de._derive_law_line({'action': 'Use X for Y always', 'trigger': 't'})
+short_ok = short == 'Use X for Y always'
+long_line = de._derive_law_line({'action': 'Always ' + 'word ' * 60, 'trigger': 't'})
+len_ok = len(long_line) <= de.LAW_MAX_CHARS
+ends_ok = long_line.endswith('word…')
+print(cap_ok, short_ok, len_ok, ends_ok)
+PYEOF
+)
+[ "$result" = "True True True True" ] && pass "#56.1: cap=200, short intact, long cut at word boundary" \
+                                      || fail "#56.1: got '$result'"
+rm -rf "$T51"
+
+# ── Test 52: tags list starts on its own line (#56 audit, v3.35.2) ──────────
+echo "--- Test 52: _proposal_to_instinct_yaml tags block format ---"
+T52="$(mktemp -d -t distill-t52-XXXXXX)"
+export CORTEX_DIR="$T52"
+result=$(python3 - <<PYEOF
+$(_py_patch "$T52")
+y = de._proposal_to_instinct_yaml(
+    {'id': 't52', 'trigger': 'Bash', 'action': 'do x', 'confidence': 0.6,
+     'domain': 'gotcha', 'scope': 'global', 'tags': ['cross-day-1']},
+    '2026-06-10')
+inline_bug = 'tags:   -' in y or 'tags: -' in y
+block_ok = '\ntags:\n  - ' in y
+empty = de._proposal_to_instinct_yaml(
+    {'id': 't52b', 'trigger': 'Bash', 'action': 'do x', 'confidence': 0.6,
+     'domain': 'gotcha', 'scope': 'global', 'tags': []},
+    '2026-06-10')
+empty_ok = '\ntags: []\n' in empty
+print(not inline_bug, block_ok, empty_ok)
+PYEOF
+)
+[ "$result" = "True True True" ] && pass "#56: tags emit as block list (no inline first item)" \
+                                || fail "#56 tags writer: got '$result'"
+rm -rf "$T52"
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1
