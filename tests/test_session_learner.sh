@@ -170,8 +170,11 @@ console.log(hasAll ? 'OK' : 'FAIL:' + JSON.stringify(p));
 [ "$result" = "OK" ] && pass "proposal has required fields" || fail "structure: $result"
 
 # --- Test 8: Command usage timeline detection (v3.8.0) ---
+# v3.35.2: sandbox CORTEX_DIR — detectCommandUsage now also scans the global
+# stream, so the test must not read (or write a cursor into) the live install.
 echo "--- Command Timeline ---"
-result=$(node -e "
+T8="$(mktemp -d -t learner-t8-XXXXXX)"
+result=$(CORTEX_DIR="$T8" node -e "
 // Load detectCommandUsage from the real module
 const { detectCommandUsage } = require('$PROJECT_ROOT/hooks/session-learner.js');
 // Mock fs.appendFileSync to capture timeline writes only (not log writes)
@@ -202,6 +205,30 @@ const cmds = lines.map(l => JSON.parse(l).cmd);
 console.log(cmds.length === 2 && cmds.includes('cx-dream') && cmds.includes('cx-status') ? 'OK' : 'FAIL:' + JSON.stringify(cmds));
 ")
 [ "$result" = "OK" ] && pass "timeline detects cx-* commands only" || fail "timeline: $result"
+rm -rf "$T8"
+
+# --- Test 8b: timeline scans global stream with cursor (v3.35.2, #56 audit) ---
+# cx-* commands run from project-less cwds land in CORTEX_DIR/observations.jsonl
+# (pid=global), which the learner never loads — the timeline silently died.
+T8B="$(mktemp -d -t learner-t8b-XXXXXX)"
+printf '{"ts":"2026-06-10T09:00:00Z","ev":"ts","tool":"Skill","sid":"x1","pid":"global","input":"{\\"skill\\": \\"cx-promote\\"}"}\n{"ts":"2026-06-10T09:05:00Z","ev":"ts","tool":"Bash","sid":"x1","pid":"global","input":"ls"}\n' > "$T8B/observations.jsonl"
+result=$(CORTEX_DIR="$T8B" node -e "
+const { detectCommandUsage } = require('$PROJECT_ROOT/hooks/session-learner.js');
+const fs = require('fs');
+detectCommandUsage([]);   // no session obs — must pick up the global stream
+const tl = process.env.CORTEX_DIR + '/log/timeline.jsonl';
+const first = fs.readFileSync(tl, 'utf8').trim().split('\n');
+const cursor = fs.readFileSync(process.env.CORTEX_DIR + '/.timeline-cursor', 'utf8').trim();
+detectCommandUsage([]);   // cursor must prevent reprocessing
+const second = fs.readFileSync(tl, 'utf8').trim().split('\n');
+const cmd = JSON.parse(first[0]).cmd;
+console.log(JSON.stringify({n1: first.length, n2: second.length, cmd, cursorAdvanced: cursor === '2026-06-10T09:05:00Z'}));
+")
+echo "$result" | grep -q '"n1":1' && pass "root-scan detects global cx- command" || fail "8b detect: $result"
+echo "$result" | grep -q '"cmd":"cx-promote"' && pass "root-scan extracts command name" || fail "8b cmd: $result"
+echo "$result" | grep -q '"n2":1' && pass "cursor prevents duplicate on second run" || fail "8b idempotent: $result"
+echo "$result" | grep -q '"cursorAdvanced":true' && pass "cursor advances to max ts seen" || fail "8b cursor: $result"
+rm -rf "$T8B"
 
 echo ""
 echo "--- regex-utils (v3.29.0 §4.2) ---"

@@ -112,7 +112,7 @@ LAW_DEPRECATE_MIN_AGE_DAYS = 7  # v3.32.0 §4.5 (AD P1-3): laws younger than
                                 # and be marked for immediate deprecation
                                 # before getting a chance to be exercised.
 LAW_JACCARD_THRESHOLD = 0.50
-LAW_MAX_CHARS = 120
+LAW_MAX_CHARS = 200  # v3.35.2 (#56.1): was 120 — mid-sentence cuts shipped laws with incomplete instructions
 # v3.29.0 §4.16: minimum distinct sessions (UUIDs) where an instinct must
 # have fired before it can be promoted to a law. Single-session bursts —
 # e.g. one very long debugging session producing 25 file-coupling
@@ -940,7 +940,11 @@ def _law_content_for_jaccard(law_path: Path) -> str:
 
 
 def _derive_law_line(fields: dict) -> str:
-    """Derive a ≤120-char one-liner for the law file from the instinct."""
+    """Derive a ≤200-char one-liner for the law file from the instinct.
+
+    v3.35.2 (#56.1): cap raised 120 → 200 and truncation now cuts at a word
+    boundary, so a derived law never ends mid-word with a dangling clause.
+    """
     action = str(fields.get("action", "")).strip()
     trigger = str(fields.get("trigger", "")).strip()
 
@@ -957,7 +961,10 @@ def _derive_law_line(fields: dict) -> str:
             line = action
 
     if len(line) > LAW_MAX_CHARS:
-        line = line[: LAW_MAX_CHARS - 1] + "…"
+        cut = line.rfind(" ", 0, LAW_MAX_CHARS)
+        if cut < LAW_MAX_CHARS // 2:
+            cut = LAW_MAX_CHARS - 1  # no usable word boundary — hard cut
+        line = line[:cut].rstrip(" ,;:") + "…"
     return line
 
 
@@ -1265,9 +1272,15 @@ def _proposal_to_instinct_yaml(proposal: dict, today: str) -> str:
     }
     inst_type = domain_type_map.get(domain, "pattern")
 
-    tags_yaml = "\n".join(f"  - {_yaml_single_quote(t)}" for t in tags) if tags else "  []"
-    if not tags:
-        tags_yaml = "[]"
+    # v3.35.2 (#56 audit): the first list item must start on its OWN line.
+    # The old join put it inline after the key (`tags:   - 'x'`), which the
+    # tolerant engine parser accepted but strict YAML rejects — 27 live
+    # instinct files shipped malformed before this fix.
+    tags_yaml = (
+        "\n" + "\n".join(f"  - {_yaml_single_quote(t)}" for t in tags)
+        if tags
+        else " []"
+    )
 
     evidence_line = f"  - '{_yaml_single_quote(today)}: Auto-validated from proposal at conf {conf:.2f}'"
 
@@ -1283,7 +1296,7 @@ def _proposal_to_instinct_yaml(proposal: dict, today: str) -> str:
         f"scope: {scope}",
         f"project_id: '{_yaml_single_quote(project_id)}'",
         f"project_name: '{_yaml_single_quote(project_name)}'",
-        f"tags: {tags_yaml}",
+        f"tags:{tags_yaml}",
         f"created: '{_yaml_single_quote(today)}'",
         f"first_seen: '{_yaml_single_quote(today)}'",
         f"last_seen: '{_yaml_single_quote(today)}'",
