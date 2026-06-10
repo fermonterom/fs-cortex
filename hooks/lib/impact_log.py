@@ -42,7 +42,17 @@ CORTEX_DIR = Path(os.environ.get("CORTEX_DIR", str(Path.home() / ".claude" / "co
 IMPACT_FILE = CORTEX_DIR / "impact.jsonl"
 FEEDBACK_FILE = CORTEX_DIR / "feedback.jsonl"
 ARCHIVE_DIR = CORTEX_DIR / "impact.archive"
-ROTATION_DAYS = 30
+# v3.36.0 (audit 2026-06-10): live window shrunk 30 → 15 days and made
+# env-overridable (CORTEX_IMPACT_ROTATION_DAYS). Every consumer (stats,
+# outcome-nudge, compute_metrics, /cx-status, /cx-retro) reads at most 14
+# days, but high-volume operators accumulated 60+ MB of live JSONL under
+# the old 30-day window. Events beyond the window are ARCHIVED to
+# impact.archive/, never deleted. Floor of 15 keeps rotation outside the
+# 14-day consumer window.
+try:
+    ROTATION_DAYS = max(15, int(os.environ.get("CORTEX_IMPACT_ROTATION_DAYS", "") or 15))
+except ValueError:
+    ROTATION_DAYS = 15
 
 # Events with `follow` are emitted by session-learner after reconstructing
 # the "did the next tool call respect the instinct?" signal.

@@ -155,6 +155,99 @@ tracker_lines=$(count_lines "$S6/cross-day-tracker.jsonl")
 rm -rf "$S6"
 
 echo ""
+echo "--- v3.36.0: rotation window env override ---"
+
+# Default window is now 15d: a 20d-old event must be archived.
+S7=$(mktemp -d)
+python3 - "$S7" <<'PYEOF'
+import datetime as dt, json, os, sys
+cortex = sys.argv[1]
+os.makedirs(cortex, exist_ok=True)
+now = dt.datetime.now(dt.timezone.utc)
+fmt = "%Y-%m-%dT%H:%M:%SZ"
+with open(os.path.join(cortex, "impact.jsonl"), "w") as fh:
+    fh.write(json.dumps({"v": 1, "ts": (now - dt.timedelta(days=20)).strftime(fmt), "ev": "inject", "iid": "mid-20d"}) + "\n")
+    fh.write(json.dumps({"v": 1, "ts": (now - dt.timedelta(days=1)).strftime(fmt), "ev": "inject", "iid": "new-1d"}) + "\n")
+PYEOF
+out=$(CORTEX_DIR="$S7" python3 "$IMPACT_PY" rotate)
+echo "$out" | grep -q "archived 1 events" && pass "default 15d window archives 20d-old event" || fail "15d default: $out"
+rm -rf "$S7"
+
+# Env override widens the window: 20d-old event stays live with 25d window.
+S8=$(mktemp -d)
+python3 - "$S8" <<'PYEOF'
+import datetime as dt, json, os, sys
+cortex = sys.argv[1]
+os.makedirs(cortex, exist_ok=True)
+now = dt.datetime.now(dt.timezone.utc)
+fmt = "%Y-%m-%dT%H:%M:%SZ"
+with open(os.path.join(cortex, "impact.jsonl"), "w") as fh:
+    fh.write(json.dumps({"v": 1, "ts": (now - dt.timedelta(days=20)).strftime(fmt), "ev": "inject", "iid": "mid-20d"}) + "\n")
+PYEOF
+out=$(CORTEX_DIR="$S8" CORTEX_IMPACT_ROTATION_DAYS=25 python3 "$IMPACT_PY" rotate)
+echo "$out" | grep -q "archived 0 events" && pass "CORTEX_IMPACT_ROTATION_DAYS=25 keeps 20d event" || fail "override: $out"
+# Floor: values under 15 clamp to 15 — a 10d-old event must never rotate.
+python3 - "$S8" <<'PYEOF'
+import datetime as dt, json, os, sys
+cortex = sys.argv[1]
+now = dt.datetime.now(dt.timezone.utc)
+with open(os.path.join(cortex, "impact.jsonl"), "w") as fh:
+    fh.write(json.dumps({"v": 1, "ts": (now - dt.timedelta(days=10)).strftime("%Y-%m-%dT%H:%M:%SZ"), "ev": "inject", "iid": "new-10d"}) + "\n")
+PYEOF
+out=$(CORTEX_DIR="$S8" CORTEX_IMPACT_ROTATION_DAYS=5 python3 "$IMPACT_PY" rotate)
+echo "$out" | grep -q "archived 0 events" && pass "window floor clamps 5 → 15 (10d event kept)" || fail "floor: $out"
+rm -rf "$S8"
+
+echo ""
+echo "--- v3.36.0: proposals-history / knowledge-log / daily / fire-once ---"
+
+S9=$(mktemp -d)
+mkdir -p "$S9/daily-snapshots" "$S9/daily-summaries" "$S9/.fire-once"
+# proposals-history: 2 lines but threshold forced to ~0 → rotates
+printf '{"id":"p1"}\n{"id":"p2"}\n' > "$S9/proposals-history.jsonl"
+# knowledge-log: small file, threshold forced to ~0 → rotates
+printf '2026-06-10 | test | entry\n' > "$S9/knowledge-log.md"
+# daily dirs: 5 files each, keep=3 → prune 2 (mtimes staggered via touch -t)
+for i in 1 2 3 4 5; do
+  printf 'x\n' > "$S9/daily-snapshots/snap-0$i.json"
+  printf 'x\n' > "$S9/daily-summaries/sum-0$i.md"
+  touch -t "2026010${i}0000" "$S9/daily-snapshots/snap-0$i.json" "$S9/daily-summaries/sum-0$i.md"
+done
+# fire-once: one ancient marker (2020) + one fresh
+printf '' > "$S9/.fire-once/old-marker"
+touch -t "202001010000" "$S9/.fire-once/old-marker"
+printf '' > "$S9/.fire-once/fresh-marker"
+
+res=$(CORTEX_DIR="$S9" CORTEX_ROTATE_SYNC=1 CORTEX_IMPACT_ROTATE_MB=999999 CORTEX_TRACKER_PRUNE_MB=999999 \
+  CORTEX_HISTORY_ROTATE_MB=0.0000001 CORTEX_KNOWLEDGE_ROTATE_MB=0.0000001 CORTEX_DAILY_KEEP_FILES=3 \
+  node -e "console.log(JSON.stringify(require('$ROTATION_JS').maybeRotateStorage()))")
+
+[ ! -f "$S9/proposals-history.jsonl" ] && pass "proposals-history.jsonl rename-rotated" || fail "history still live"
+n_hist=$(ls "$S9"/proposals.archive/proposals-history.jsonl.* 2>/dev/null | wc -l | tr -d ' ')
+[ "$n_hist" = "1" ] && pass "history archived to proposals.archive/" || fail "$n_hist history archives"
+[ ! -f "$S9/knowledge-log.md" ] && pass "knowledge-log.md rename-rotated" || fail "knowledge-log still live"
+n_kl=$(ls "$S9"/knowledge-log.archive/knowledge-log.md.* 2>/dev/null | wc -l | tr -d ' ')
+[ "$n_kl" = "1" ] && pass "knowledge-log archived" || fail "$n_kl knowledge-log archives"
+n_snap=$(ls "$S9/daily-snapshots" | wc -l | tr -d ' ')
+[ "$n_snap" = "3" ] && pass "daily-snapshots pruned to keep=3" || fail "snapshots: $n_snap (want 3)"
+[ -f "$S9/daily-snapshots/snap-05.json" ] && pass "newest snapshot survives" || fail "newest snapshot deleted"
+[ ! -f "$S9/daily-snapshots/snap-01.json" ] && pass "oldest snapshot pruned" || fail "oldest snapshot kept"
+n_sum=$(ls "$S9/daily-summaries" | wc -l | tr -d ' ')
+[ "$n_sum" = "3" ] && pass "daily-summaries pruned to keep=3" || fail "summaries: $n_sum (want 3)"
+[ ! -f "$S9/.fire-once/old-marker" ] && pass "stale fire-once marker pruned" || fail "stale marker kept"
+[ -f "$S9/.fire-once/fresh-marker" ] && pass "fresh fire-once marker kept" || fail "fresh marker pruned"
+rm -rf "$S9"
+
+# Defaults leave small files alone (no rotation thresholds crossed)
+S10=$(mktemp -d)
+printf '{"id":"p1"}\n' > "$S10/proposals-history.jsonl"
+printf 'entry\n' > "$S10/knowledge-log.md"
+res=$(CORTEX_DIR="$S10" CORTEX_ROTATE_SYNC=1 node -e "console.log(JSON.stringify(require('$ROTATION_JS').maybeRotateStorage()))")
+[ -f "$S10/proposals-history.jsonl" ] && pass "small history untouched at default 3MB gate" || fail "small history rotated"
+[ -f "$S10/knowledge-log.md" ] && pass "small knowledge-log untouched at default 2MB gate" || fail "small knowledge-log rotated"
+rm -rf "$S10"
+
+echo ""
 echo "--- learner wiring ---"
 
 grep -q "storage-rotation" "$PROJECT_ROOT/hooks/session-learner.js" \
