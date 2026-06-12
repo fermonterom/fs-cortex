@@ -225,6 +225,30 @@ grep -q '"iid":"bbb-dropped"' "$S14/cortex/impact.jsonl" 2>/dev/null \
   && pass "budget drop logged as suppress" || fail "budget drop not in impact funnel"
 rm -rf "$S14"
 
+# --- Test 15: v3.37.0 — cooldown counts survive concurrent injectors (AD race fix) ---
+echo "--- v3.37.0 Cooldown Concurrency (e2e) ---"
+S15=$(mktemp -d)
+mkdir -p "$S15/cortex/instincts/global" "$S15/project"
+printf '{"config": {"max_repeat_injections_per_session": 99}}\n' > "$S15/cortex/memory.json"
+cat > "$S15/cortex/instincts/global/conc-instinct.yaml" <<'YAML'
+---
+id: conc-instinct
+trigger: "Bash"
+action: "When npm install fails with EACCES, clear the npm cache and retry with the project-local prefix."
+confidence: 0.9
+domain: error-recovery
+---
+YAML
+printf '{"tool_name": "Bash", "tool_input": {"command": "npm install"}, "cwd": "%s", "session_id": "t15"}\n' "$S15/project" > "$S15/input.json"
+for i in 1 2 3 4 5 6; do
+  CORTEX_DIR="$S15/cortex" _CX_CORTEX_DIR="$S15/cortex" _CX_INPUT_FILE="$S15/input.json" \
+    _CX_GLOBAL_INSTINCTS_DIR="$S15/cortex/instincts/global" node "$ENGINE" >/dev/null 2>&1 &
+done
+wait
+count15=$(node -e "console.log(JSON.parse(require('fs').readFileSync('$S15/cortex/.session-injected.json','utf8'))['conc-instinct'])" 2>/dev/null)
+[ "$count15" = "6" ] && pass "6 concurrent injectors → count 6, no lost increments" || fail "concurrent count=$count15 (expected 6)"
+rm -rf "$S15"
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

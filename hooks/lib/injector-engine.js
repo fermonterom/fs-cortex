@@ -535,19 +535,46 @@ function main() {
   }
 
   // ── 4c. Persist per-session repeat counts (v3.37.0 cooldown) ────────
-  try {
+  // AD-final fix (P1): concurrent PreToolUse injectors raced on a plain
+  // read-modify-write — the last rename clobbered the other's increment, so
+  // the cooldown could never fire under parallel tool calls. Now: re-read
+  // the file under .session-injected.lock and merge only THIS call's
+  // increments on top of the freshest counts. The match-time check stays
+  // lock-free (worst case one extra injection in a concurrent pair; the
+  // merged counter catches up immediately), but increments are never lost.
+  if (matchedInstincts.length > 0 || matchedReflexes.length > 0) {
+    const increments = {};
     for (const inst of matchedInstincts) {
-      injectedCounts[inst.id] = (injectedCounts[inst.id] || 0) + 1;
+      increments[inst.id] = (increments[inst.id] || 0) + 1;
     }
     for (const r of matchedReflexes) {
-      injectedCounts["reflex:" + r.id] = (injectedCounts["reflex:" + r.id] || 0) + 1;
+      increments["reflex:" + r.id] = (increments["reflex:" + r.id] || 0) + 1;
     }
-    if (matchedInstincts.length > 0 || matchedReflexes.length > 0) {
+    let fileLock = null;
+    let lockToken = null;
+    try {
+      fileLock = require('./file-lock');
+      try {
+        lockToken = fileLock.acquire(INJECTED_COUNTS_FILE + ".lock", { timeoutMs: 500, staleMs: 5000 });
+      } catch {
+        lockToken = null; // lock contention — proceed best-effort
+      }
+      let fresh = {};
+      try { fresh = JSON.parse(fs.readFileSync(INJECTED_COUNTS_FILE, "utf8")) || {}; } catch {}
+      for (const id of Object.keys(increments)) {
+        fresh[id] = (fresh[id] || 0) + increments[id];
+      }
       const tmpI = INJECTED_COUNTS_FILE + ".tmp." + process.pid;
-      fs.writeFileSync(tmpI, JSON.stringify(injectedCounts), { mode: 0o600 });
+      fs.writeFileSync(tmpI, JSON.stringify(fresh), { mode: 0o600 });
       fs.renameSync(tmpI, INJECTED_COUNTS_FILE);
+    } catch (e) {
+      if (process.env.CORTEX_DEBUG) process.stderr.write("[cortex:injector] cooldown persist: " + e.message + "\n");
+    } finally {
+      if (fileLock && lockToken) {
+        try { fileLock.release(lockToken); } catch {}
+      }
     }
-  } catch {}
+  }
 
   // ── 5. Build output ──────────────────────────────────────────────────
 
