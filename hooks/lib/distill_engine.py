@@ -147,7 +147,11 @@ REJECTION_CATEGORY_ENUM = frozenset({
 
 # Sprint 7 — auto-validate
 VALIDATE_MIN_CONF = 0.50
-VALIDATE_AUTO_DOMAINS = {"gotcha", "pattern", "error-recovery", "agent-evolution"}
+# v3.37.0: 'agent-evolution' moved AUTO → HUMAN. Those proposals are operator
+# TODOs ("consider /cx-evolve") — auto-validating them minted 19 instincts
+# with bare 'Agent' triggers that injected the same recommendation on every
+# Agent call (2026-06 corpus audit, SPAM_TRIGGER bucket).
+VALIDATE_AUTO_DOMAINS = {"gotcha", "pattern", "error-recovery"}
 # v3.29.0 (Sprint 8 §4.1): added 'coupling' + 'agent-quality'. Pre-v3.29.0 these
 # were orphan domains — emitted by detectFileCoupling + detectAgentSubtypes but
 # absent from every whitelist, so every proposal fell through to
@@ -155,7 +159,7 @@ VALIDATE_AUTO_DOMAINS = {"gotcha", "pattern", "error-recovery", "agent-evolution
 # here lets the operator review them via `/cx-validate` and decide manually
 # (human-gated, exactly as the Sprint 8 detector overhaul intends).
 VALIDATE_HUMAN_DOMAINS = {"correction", "user-preference", "decision", "workflow",
-                          "coupling", "agent-quality"}
+                          "coupling", "agent-quality", "agent-evolution"}
 
 # v3.29.5 §F1 — Union of every domain that auto_validate_proposals knows how to
 # handle. Any proposal whose domain falls outside this set is HELD (not pending,

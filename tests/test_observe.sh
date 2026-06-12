@@ -63,6 +63,22 @@ assert detect_is_error(None) == False
 print('OK')
 " | grep -q "OK" && pass "is_error detection (9 patterns)" || fail "is_error detection"
 
+# --- Test 2b: binary/base64 output detection (v3.37.0) ---
+python3 -c "
+from observe import _looks_binary
+
+# data URI and API image blocks are binary
+assert _looks_binary('data:image/png;base64,iVBORw0KGgo') == True
+assert _looks_binary('{\"type\": \"image\", \"source\": {...}}') == True
+# a long unbroken base64 run is binary
+assert _looks_binary('iVBORw0KGgoAAAANSUhEUg' * 100) == True
+# normal tool output is not, even when long
+assert _looks_binary('PASS test_foo\n' * 200) == False
+assert _looks_binary('short text') == False
+assert _looks_binary('error: ENOENT no such file or directory while reading package.json ' * 20) == False
+print('OK')
+" | grep -q "OK" && pass "binary output detection (v3.37.0)" || fail "binary output detection"
+
 # --- Test 3: session_id truncation (64 chars to fit 36-char UUIDs) ---
 # v3.19.3: Pre-release this was [:24], which truncated 36-char UUIDs and broke
 # correlation with impact.jsonl (where sids are stored full-length). The full

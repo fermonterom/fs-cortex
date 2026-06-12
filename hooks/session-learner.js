@@ -280,19 +280,93 @@ function summarizeFixInput(tool, rawInput) {
   return s.trim().slice(0, 160);
 }
 
+// v3.37.0 — trigger derivation. Instinct triggers are matched by the
+// injector against `toolName + " " + JSON.stringify(tool_input)` at
+// PreToolUse time (injector-engine.js matchTarget). A bare tool name fires
+// on EVERY use of that tool (46 spam-trigger instincts in the 2026-06
+// corpus audit), and error-message tokens never appear in the next call's
+// input. The only trigger that is both specific AND matchable is one built
+// from distinctive tokens of the INPUT THAT FAILED.
+const TRIGGER_STOPWORDS = new Set([
+  'this', 'that', 'with', 'from', 'into', 'file', 'files', 'test', 'tests',
+  'true', 'false', 'null', 'command', 'description', 'prompt', 'path',
+  'content', 'input', 'output', 'string', 'value', 'data', 'json', 'type',
+]);
+
+function deriveTriggerFromInput(tool, failingInputStr) {
+  const summary = summarizeFixInput(tool, failingInputStr);
+  if (!summary) return null;
+  const tokens = summary
+    .split(/[^A-Za-z0-9_.-]+/)
+    .map((t) => t.replace(/^[.-]+|[.-]+$/g, ''))
+    .filter((t) => t.length >= 4 && t.length <= 40)
+    .filter((t) => !/^\d+$/.test(t))
+    .filter((t) => !TRIGGER_STOPWORDS.has(t.toLowerCase()));
+  if (tokens.length === 0) return null;
+  // Longest tokens are the most distinctive (binary names, flags, slugs).
+  tokens.sort((a, b) => b.length - a.length);
+  const escaped = [...new Set(tokens.slice(0, 2))].map((t) =>
+    t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  );
+  const trigger = `${tool}\\b.*(?:${escaped.join('|')})`;
+  // Defense in depth (AD final 2026-06-12): run the same ReDoS/length guard
+  // the injector applies at runtime, so an unsafe trigger never even reaches
+  // proposals.json.
+  if (unsafeReason(trigger)) return null;
+  // Validate: must compile, must match the failing call exactly as the
+  // injector will see it, and must NOT match a bare invocation of the tool
+  // (i.e. it has to be strictly more specific than the tool name alone).
+  try {
+    const re = new RegExp(trigger, 'i');
+    if (!re.test(`${tool} ${String(failingInputStr || '')}`)) return null;
+    if (re.test(`${tool} {}`)) return null;
+  } catch (_) {
+    return null;
+  }
+  return trigger;
+}
+
+// Project-specific payloads (absolute paths, one-off URLs) must never become
+// global instincts — 23 of them were misfiring across projects in the
+// 2026-06 corpus audit.
+function isProjectSpecificText(text) {
+  return /\/Users\/|\/home\/|https?:\/\//i.test(String(text || ''));
+}
+
 function detectErrorResolutions(observations) {
   const proposals = [];
   const WINDOW = 10;
   const MAX_WINDOW_SECONDS = 300; // v3.15.0 · 1.7 — also break if >5 min elapsed
+  const LOOKBACK = 4; // ts event carrying the failing input sits just before its tc
 
   for (let i = 0; i < observations.length; i++) {
     const obs = observations[i];
     // Use is_error flag from observe.py OR fallback to output pattern matching
     if (!isError(obs)) continue;
 
+    // v3.37.0 — require real error evidence. err_msg has been captured
+    // reliably since v3.29.5; a "failure" without it is heuristic noise and
+    // produced the hollow/replayed-payload gotchas the corpus audit flagged.
+    if (!obs.err_msg) continue;
+
     const errorTool = obs.tool;
-    const errorSummary = String(obs.err_msg || obs.output || obs.input || '').slice(0, 200);
     const errorTimeMs = obs.ts ? Date.parse(obs.ts) : NaN;
+
+    // The failing input lives on the preceding ts event of the same tool
+    // (tc observations carry output only).
+    let failingInput = '';
+    for (let k = i - 1; k >= Math.max(0, i - LOOKBACK); k--) {
+      if (observations[k].tool === errorTool && observations[k].ev === 'ts' && observations[k].input) {
+        failingInput = String(observations[k].input);
+        break;
+      }
+    }
+
+    const trigger = deriveTriggerFromInput(errorTool, failingInput);
+    // No distinctive, injector-matchable trigger → nothing teachable.
+    if (!trigger) continue;
+
+    const errSig = String(obs.err_msg).split('\n')[0].trim().slice(0, 80);
 
     // Look ahead for the fix: Edit/Write after error, or same tool succeeding.
     // Break on either index-window OR time-window — whichever triggers first.
@@ -308,32 +382,33 @@ function detectErrorResolutions(observations) {
       if (isFix) {
         const fixSummary = summarizeFixInput(candidate.tool, candidate.input);
         // No teachable fix content → keep scanning the window for a better
-        // candidate instead of emitting a hollow "try: " proposal. Threshold
-        // 10 keeps the shortest real summaries ("Edit util.js") while
-        // dropping empty/garbage ones.
-        if (fixSummary.length < 10) continue;
+        // candidate. Floor 5 keeps short-but-real fixes ("uv sync",
+        // "git add .") that the previous floor of 10 dropped.
+        if (fixSummary.length < 5) continue;
         const hash = shortHash(`${errorTool}-${obs.ts || i}`);
         const fileMatch = extractFilePath(candidate);
+        // One-off paths/URLs teach nothing outside their project: scope the
+        // instinct to the project it came from, never globally.
+        const projectSpecific = isProjectSpecificText(fixSummary) || isProjectSpecificText(errSig);
         proposals.push({
           id: `gotcha-${errorTool}-${hash}`,
-          trigger: errorTool,
-          action: `When ${sanitizeProposalAction(errorTool)} fails with similar pattern, try: ${sanitizeProposalAction(fixSummary)}`,
-          // v3.25.0 — raised 0.40 -> 0.50. The error-fix detector is the
-          // highest-signal heuristic in the pipeline (an explicit error
-          // followed by an explicit fix is very specific evidence). The
-          // previous 0.40 value sat just under VALIDATE_MIN_CONF=0.50, so
-          // every gotcha sat in proposals.json forever waiting for manual
-          // /cx-validate. Domain `error-recovery` is already in
-          // VALIDATE_AUTO_DOMAINS, so 0.50 unblocks the autonomous path:
-          // observation -> error-fix detector -> auto-validate -> instinct
-          // -> distill -> law. Decay (-0.05/cycle) and noise tracking still
-          // self-correct false positives.
+          trigger,
+          action: `When ${sanitizeProposalAction(errorTool)} fails with "${sanitizeProposalAction(errSig)}" → fix: ${sanitizeProposalAction(fixSummary)}`,
+          // 0.50 keeps the autonomous path open (VALIDATE_AUTO_DOMAINS),
+          // now backed by real evidence: err_msg present + validated
+          // input-derived trigger, instead of the old bare-tool-name match.
           confidence: 0.50,
           domain: 'error-recovery',
           source: 'session-learner:error-fix',
           status: 'pending',
           detected: TODAY,
           session_id: obs._resolvedSession || obs.sid || '',
+          scope: projectSpecific ? 'project' : 'global',
+          project_id: projectSpecific ? (obs.pid || null) : null,
+          // Sinapsis-style evidence samples so /cx-validate shows context.
+          sample_input: failingInput.slice(0, 200),
+          sample_output: String(obs.output || '').slice(0, 200),
+          err_msg: String(obs.err_msg).slice(0, 200),
           _incident: {
             sid: obs._resolvedSession || obs.sid || null,
             ts: obs.ts || null,
@@ -492,9 +567,17 @@ function detectAgentPatterns(observations) {
     .filter(([_, items]) => items.length >= 4)
     .map(([desc, items]) => {
       const hash = shortHash('agent-' + desc);
+      // v3.37.0 — a bare 'Agent' trigger fires on every Agent call (all 19
+      // agent-pattern instincts in the corpus audit were spam for this
+      // reason). Scope the trigger to the recurring description; if no
+      // distinctive token exists, use a never-matching sentinel — these
+      // proposals are operator TODOs ("run /cx-evolve"), not advice that
+      // needs injecting mid-session.
+      const trigger = deriveTriggerFromInput('Agent', JSON.stringify({ description: desc }))
+        || 'Agent\\b(?!)';
       return {
         id: `agent-pattern-${hash}`,
-        trigger: 'Agent',
+        trigger,
         action: sanitizeProposalAction(`Recurring agent pattern: "${desc}" (${items.length} uses). Consider evolving into a dedicated agent with /cx-evolve.`),
         confidence: Math.min(0.70, 0.40 + items.length * 0.05),
         domain: 'agent-evolution',
