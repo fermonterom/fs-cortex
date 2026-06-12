@@ -84,8 +84,10 @@ cat > "$T2/projects/registry.json" <<JSON
 { "$PROJ_ID": { "name": "killsw-proj", "root": "/tmp/killsw" } }
 JSON
 cat > "$T2/projects/$PROJ_ID/observations.jsonl" <<'OBS'
-{"ts":"2026-05-15T10:00:00Z","ev":"PostToolUse","tool":"Bash","input":"{\"command\":\"npm test\"}","output":"Error: 1 test failed","err":true,"sid":"sess-killsw","pid":"killsw-proj"}
-{"ts":"2026-05-15T10:00:30Z","ev":"PostToolUse","tool":"Edit","input":"{\"file_path\":\"/tmp/killsw/src/app.ts\"}","output":"ok","err":false,"sid":"sess-killsw","pid":"killsw-proj"}
+{"ts":"2026-05-15T09:59:58Z","ev":"ts","tool":"Bash","err":false,"input":"{\"command\":\"pytest --workspace api\"}","sid":"sess-killsw","pid":"killsw-proj","pname":"killsw-proj"}
+{"ts":"2026-05-15T10:00:00Z","ev":"tc","tool":"Bash","err":true,"err_msg":"pytest --workspace api failed with exit code 1","sid":"sess-killsw","pid":"killsw-proj","pname":"killsw-proj","output":"FAILED tests/test_api.py::test_auth"}
+{"ts":"2026-05-15T10:00:30Z","ev":"ts","tool":"Edit","err":false,"sid":"sess-killsw","pid":"killsw-proj","pname":"killsw-proj","input":"{\"file_path\":\"/tmp/killsw/auth.py\",\"old_string\":\"return None\",\"new_string\":\"return token\"}"}
+{"ts":"2026-05-15T10:00:31Z","ev":"tc","tool":"Edit","err":false,"sid":"sess-killsw","pid":"killsw-proj","pname":"killsw-proj","output":"ok"}
 OBS
 
 # Drive with stdin = harness session payload.

@@ -41,11 +41,15 @@ JSON
 # emit an error-fix gotcha.
 append_error_fix() {
   local file="$1" sid="$2" ts_base="$3"
+  # v3.37.0 contract:
+  # 1. ts event carries the failing input (distinctive tokens for trigger derivation).
+  # 2. tc event carries err_msg (required; without it the detector skips the observation).
+  # 3. fix observation follows as a non-error tc event within the WINDOW.
   cat >> "$file" <<JSON
-{"ts":"${ts_base}T10:00:00Z","ev":"PreToolUse","tool":"Bash","input":"{\"command\":\"npm test\"}","sid":"$sid","pid":"proj-e2e"}
-{"ts":"${ts_base}T10:00:01Z","ev":"PostToolUse","tool":"Bash","input":"{\"command\":\"npm test\"}","output":"Error: 1 test failed","err":true,"sid":"$sid","pid":"proj-e2e"}
-{"ts":"${ts_base}T10:01:00Z","ev":"PreToolUse","tool":"Edit","input":"{\"file_path\":\"/tmp/e2e/src/app.ts\"}","sid":"$sid","pid":"proj-e2e"}
-{"ts":"${ts_base}T10:01:01Z","ev":"PostToolUse","tool":"Edit","input":"{\"file_path\":\"/tmp/e2e/src/app.ts\"}","output":"ok","err":false,"sid":"$sid","pid":"proj-e2e"}
+{"ts":"${ts_base}T10:00:00Z","ev":"ts","tool":"Bash","input":"{\"command\":\"pnpm run build --workspace api\"}","sid":"$sid","pid":"proj-e2e"}
+{"ts":"${ts_base}T10:00:01Z","ev":"tc","tool":"Bash","err":true,"err_msg":"pnpm run build failed","output":"Error: 1 test failed","sid":"$sid","pid":"proj-e2e"}
+{"ts":"${ts_base}T10:01:00Z","ev":"ts","tool":"Edit","input":"{\"file_path\":\"/tmp/e2e/src/app.ts\"}","sid":"$sid","pid":"proj-e2e"}
+{"ts":"${ts_base}T10:01:01Z","ev":"tc","tool":"Edit","output":"ok","err":false,"sid":"$sid","pid":"proj-e2e"}
 JSON
 }
 

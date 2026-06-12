@@ -82,7 +82,7 @@ import json
 proposals = []
 # 5 AUTO-domain proposals
 for i in range(5):
-    domain = ['gotcha', 'pattern', 'error-recovery', 'agent-evolution', 'gotcha'][i]
+    domain = ['gotcha', 'pattern', 'error-recovery', 'error-recovery', 'gotcha'][i]
     proposals.append({
         'id': f't2-auto-{i}', 'trigger': 'Bash', 'action': 'a', 'confidence': 0.60,
         'domain': domain, 'status': 'pending',
