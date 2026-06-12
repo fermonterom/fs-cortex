@@ -499,11 +499,14 @@ process.exit(0);
 [ "$result" = "OK" ] && pass "summarizeFixInput: command / basename / empty / unknown" || fail "summarize: $result"
 
 # detectErrorResolutions: a fix observation with no teachable input emits NO proposal
+# (v3.37.0 fixtures: error tc carries err_msg, failing input lives on the prior ts)
 result=$(CORTEX_DIR="$S_QG" node -e "
 const m = require('$LEARNER');
 const obs = [
-  { tool: 'Bash', err: true, input: '{\"command\":\"pytest\"}', output: 'error: boom', ts: '2026-06-10T10:00:00Z' },
-  { tool: 'Bash', input: '', output: 'all good', ts: '2026-06-10T10:00:30Z' },
+  { tool: 'Bash', ev: 'ts', input: '{\"command\":\"pytest -x suites/\"}', ts: '2026-06-10T09:59:58Z' },
+  { tool: 'Bash', ev: 'tc', err: true, err_msg: 'error: boom', output: 'error: boom', ts: '2026-06-10T10:00:00Z' },
+  { tool: 'Bash', ev: 'ts', input: '', ts: '2026-06-10T10:00:30Z' },
+  { tool: 'Bash', ev: 'tc', output: 'all good', ts: '2026-06-10T10:00:31Z' },
 ];
 const r = m.detectErrorResolutions(obs);
 console.log(r.length === 0 ? 'OK' : 'FAIL:' + JSON.stringify(r));
@@ -511,23 +514,76 @@ process.exit(0);
 ")
 [ "$result" = "OK" ] && pass "hollow fix (empty input) → no proposal emitted" || fail "hollow-fix: $result"
 
-# detectErrorResolutions: Edit fix carries basename, never old_string/raw JSON
+# detectErrorResolutions: Edit fix carries basename, never old_string/raw JSON;
+# v3.37.0: trigger derived from the failing input, err signature in action,
+# evidence samples attached.
 result=$(CORTEX_DIR="$S_QG" node -e "
 const m = require('$LEARNER');
 const obs = [
-  { tool: 'Bash', err: true, input: '{\"command\":\"pnpm test\"}', output: 'error: fail', ts: '2026-06-10T10:00:00Z' },
-  { tool: 'Edit', input: '{\"file_path\":\"/Users/x/repo/lib/util.js\",\"old_string\":\"aaa\",\"new_string\":\"bbb\"}', output: '', ts: '2026-06-10T10:00:20Z' },
+  { tool: 'Bash', ev: 'ts', input: '{\"command\":\"pnpm vitest run --filter web\"}', ts: '2026-06-10T09:59:59Z' },
+  { tool: 'Bash', ev: 'tc', err: true, err_msg: 'error: fail in suite web', output: 'error: fail', ts: '2026-06-10T10:00:00Z' },
+  { tool: 'Edit', ev: 'ts', input: '{\"file_path\":\"/Users/x/repo/lib/util.js\",\"old_string\":\"aaa\",\"new_string\":\"bbb\"}', ts: '2026-06-10T10:00:20Z' },
 ];
 const r = m.detectErrorResolutions(obs);
 const ok = r.length === 1
   && r[0].action.includes('Edit util.js')
+  && r[0].action.includes('fails with \"error: fail in suite web\"')
   && !r[0].action.includes('old_string')
   && !r[0].action.includes('/Users/')
-  && !/try:\s*\$/.test(r[0].action);
+  && r[0].trigger !== 'Bash'
+  && new RegExp(r[0].trigger, 'i').test('Bash {\"command\":\"pnpm vitest run --filter web\"}')
+  && !new RegExp(r[0].trigger, 'i').test('Bash {}')
+  && r[0].scope === 'global'
+  && r[0].sample_input.includes('vitest')
+  && r[0].err_msg === 'error: fail in suite web';
 console.log(ok ? 'OK' : 'FAIL:' + JSON.stringify(r));
 process.exit(0);
 ")
-[ "$result" = "OK" ] && pass "Edit fix → basename only, no old_string, no abs path" || fail "edit-fix: $result"
+[ "$result" = "OK" ] && pass "Edit fix → basename, specific trigger, err sig, samples" || fail "edit-fix: $result"
+
+# v3.37.0: error without err_msg → no proposal (evidence required)
+result=$(CORTEX_DIR="$S_QG" node -e "
+const m = require('$LEARNER');
+const obs = [
+  { tool: 'Bash', ev: 'ts', input: '{\"command\":\"pnpm vitest run\"}', ts: '2026-06-10T09:59:59Z' },
+  { tool: 'Bash', ev: 'tc', err: true, output: 'error: fail', ts: '2026-06-10T10:00:00Z' },
+  { tool: 'Edit', ev: 'ts', input: '{\"file_path\":\"/x/util.js\",\"old_string\":\"a\",\"new_string\":\"b\"}', ts: '2026-06-10T10:00:20Z' },
+];
+console.log(m.detectErrorResolutions(obs).length === 0 ? 'OK' : 'FAIL');
+process.exit(0);
+")
+[ "$result" = "OK" ] && pass "error without err_msg → no proposal (v3.37.0)" || fail "no-errmsg: $result"
+
+# v3.37.0: project-specific evidence (URL in err sig) → scope project, never global
+result=$(CORTEX_DIR="$S_QG" node -e "
+const m = require('$LEARNER');
+const obs = [
+  { tool: 'WebFetch', ev: 'ts', input: '{\"url\":\"https://ptah.sh/docs\",\"prompt\":\"extract pricing tiers\"}', ts: '2026-06-10T09:59:59Z', pid: 'abc123def456' },
+  { tool: 'WebFetch', ev: 'tc', err: true, err_msg: '404 Not Found: https://ptah.sh/docs', output: '404', ts: '2026-06-10T10:00:00Z', pid: 'abc123def456' },
+  { tool: 'WebFetch', ev: 'ts', input: '{\"url\":\"https://ptah.sh/\",\"prompt\":\"extract pricing tiers\"}', ts: '2026-06-10T10:00:10Z', pid: 'abc123def456' },
+  { tool: 'WebFetch', ev: 'tc', output: 'Pricing: free tier...', ts: '2026-06-10T10:00:12Z', pid: 'abc123def456' },
+];
+const r = m.detectErrorResolutions(obs);
+const ok = r.length === 1 && r[0].scope === 'project' && r[0].project_id === 'abc123def456';
+console.log(ok ? 'OK' : 'FAIL:' + JSON.stringify(r));
+process.exit(0);
+")
+[ "$result" = "OK" ] && pass "URL evidence → scope project + project_id (v3.37.0)" || fail "scope-project: $result"
+
+# v3.37.0: agent-pattern trigger is never bare 'Agent'
+result=$(CORTEX_DIR="$S_QG" node -e "
+const m = require('$LEARNER');
+const obs = Array.from({length: 4}, (_, i) => ({
+  tool: 'Agent', ev: 'ts',
+  input: JSON.stringify({ description: 'analyze playbook observations', prompt: 'x' }),
+  ts: '2026-06-10T10:0' + i + ':00Z',
+}));
+const r = m.detectAgentPatterns(obs);
+const ok = r.length === 1 && r[0].trigger !== 'Agent' && /Agent/.test(r[0].trigger);
+console.log(ok ? 'OK' : 'FAIL:' + JSON.stringify(r));
+process.exit(0);
+")
+[ "$result" = "OK" ] && pass "agent-pattern trigger scoped, not bare 'Agent' (v3.37.0)" || fail "agent-trigger: $result"
 
 # writeProposals: quality gate rejects hollow actions before persisting
 result=$(CORTEX_DIR="$S_QG" node -e "

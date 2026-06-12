@@ -139,6 +139,24 @@ def detect_is_error(output_text):
     return False
 
 
+# v3.37.0 — binary/base64 payload detection for tc outputs. Screenshots and
+# other media arrive as data URIs or long unbroken base64 runs; storing them
+# verbatim buries the text outputs the learner's detectors read.
+_BASE64_RUN = re.compile(r"^[A-Za-z0-9+/=\s]+$")
+
+
+def _looks_binary(text):
+    s = str(text)
+    if s.startswith("data:image") or '"type": "image"' in s[:200] or '"type":"image"' in s[:200]:
+        return True
+    if len(s) < 500:
+        return False
+    probe = s[:1000]
+    # A 1000-char window with no spaces and only base64 alphabet is a blob.
+    compact = probe.replace("\n", "").replace(" ", "")
+    return len(compact) > 900 and bool(_BASE64_RUN.match(compact))
+
+
 # ── File Locking ─────────────────────────────────────────────────────
 
 def write_with_lock(filepath, content, pre_write_fn=None):
@@ -587,18 +605,28 @@ def main():
         elif isinstance(tool_output, dict):
             error_msg = str(tool_output.get("error", tool_output.get("message", "")))[:500]
 
+    # v3.37.0 — caps raised 2000/1000 → 5000/8000. The learner's detectors
+    # need enough of the failing input to derive a specific trigger and
+    # enough of the output to show real evidence in /cx-validate. Disk cost
+    # is bounded by the existing 10MB rotation (archive_if_needed).
     if isinstance(tool_input_raw, dict):
-        input_truncated = json.dumps(tool_input_raw)[:2000]
+        input_truncated = json.dumps(tool_input_raw)[:5000]
     else:
-        input_truncated = str(tool_input_raw)[:2000]
+        input_truncated = str(tool_input_raw)[:5000]
 
     # For output logging on tc events, prefer flat_text (readable) over raw dict JSON.
     if flat_text and event == "tc":
-        output_truncated = flat_text[:1000]
+        output_truncated = flat_text[:8000]
     elif isinstance(tool_output, dict):
-        output_truncated = json.dumps(tool_output)[:1000]
+        output_truncated = json.dumps(tool_output)[:8000]
     else:
-        output_truncated = str(tool_output)[:1000]
+        output_truncated = str(tool_output)[:8000]
+
+    # v3.37.0 — base64/screenshot blobs are disk noise, not signal: recent
+    # fersora tc records were mostly image payloads, drowning the few
+    # text outputs the detectors actually read.
+    if output_truncated and _looks_binary(output_truncated):
+        output_truncated = "[binary output omitted]"
 
     # 9. Build observation with scrubbing
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
