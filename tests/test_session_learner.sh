@@ -600,6 +600,27 @@ console.log(JSON.stringify(ids) === JSON.stringify(['gotcha-valid']) ? 'OK' : 'F
 process.exit(0);
 ")
 [ "$result" = "OK" ] && pass "writeProposals gate: hollow + short rejected, valid persisted" || fail "gate: $result"
+
+# v3.37.1: rejection tombstones — an id rejected in proposals-history.jsonl
+# never resurrects as pending, regardless of re-detection (the 6-week noise
+# loop: same gotcha id was re-rejected 9 times in the live corpus).
+result=$(CORTEX_DIR="$S_QG" node -e "
+const fs = require('fs');
+fs.rmSync('$S_QG/proposals.json', { force: true });
+fs.writeFileSync('$S_QG/proposals-history.jsonl', JSON.stringify(
+  { id: 'gotcha-zombie', status: 'rejected', rejected_by: 'cx-cleanup', action: 'old garbage' }
+) + '\n');
+const m = require('$LEARNER');
+m.writeProposals([
+  { id: 'gotcha-zombie', action: 'When Bash fails with EACCES on install, retry with the project-local prefix.', status: 'pending', detected: '2026-06-12' },
+  { id: 'gotcha-fresh', action: 'When pnpm vitest fails with missing snapshot, run with --update to regenerate.', status: 'pending', detected: '2026-06-12' },
+]);
+const live = JSON.parse(fs.readFileSync('$S_QG/proposals.json', 'utf8'));
+const ids = live.map(p => p.id).sort();
+console.log(JSON.stringify(ids) === JSON.stringify(['gotcha-fresh']) ? 'OK' : 'FAIL:' + JSON.stringify(ids));
+process.exit(0);
+")
+[ "$result" = "OK" ] && pass "tombstone gate: rejected id never resurrects (v3.37.1)" || fail "tombstone: $result"
 rm -rf "$S_QG"
 
 echo ""
