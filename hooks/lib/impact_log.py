@@ -56,7 +56,8 @@ except ValueError:
 
 # Events with `follow` are emitted by session-learner after reconstructing
 # the "did the next tool call respect the instinct?" signal.
-VALID_EVENTS = {"inject", "follow", "reject", "feedback", "outcome"}
+# v3.37.0: "suppress" — matched but withheld (cooldown / budget degrade).
+VALID_EVENTS = {"inject", "follow", "reject", "feedback", "outcome", "suppress"}
 VALID_RATINGS = {"useful", "noise", "ignore"}
 VALID_SOURCES = {"user", "agent"}
 DEFAULT_SOURCE = "user"

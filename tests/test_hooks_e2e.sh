@@ -200,9 +200,12 @@ echo ""
 echo "--- session-learner.js ---"
 # Create mock observations with error-fix pattern
 mkdir -p "$SANDBOX/.claude/cortex/projects/testproj"
+# v3.37.0 contract: failing input lives on the ts event preceding the error
+# tc; the detector derives the trigger from it and requires err_msg.
 cat > "$SANDBOX/.claude/cortex/projects/testproj/observations.jsonl" << 'JSONL'
+{"ts":"2026-04-09T09:59:58Z","ev":"ts","tool":"Bash","err":false,"input":"{\"command\":\"npm test --workspace api\"}","sid":"learner-test","pid":"testproj","pname":"testproj"}
 {"ts":"2026-04-09T10:00:00Z","ev":"tc","tool":"Bash","err":true,"err_msg":"npm test failed","sid":"learner-test","pid":"testproj","pname":"testproj","output":"Error: test failed"}
-{"ts":"2026-04-09T10:01:00Z","ev":"tc","tool":"Edit","err":false,"sid":"learner-test","pid":"testproj","pname":"testproj","input":"{\"file_path\":\"/src/fix.ts\"}"}
+{"ts":"2026-04-09T10:01:00Z","ev":"ts","tool":"Edit","err":false,"sid":"learner-test","pid":"testproj","pname":"testproj","input":"{\"file_path\":\"/src/fix.ts\"}"}
 {"ts":"2026-04-09T10:02:00Z","ev":"tc","tool":"Bash","err":false,"sid":"learner-test","pid":"testproj","pname":"testproj","output":"All tests passed"}
 JSONL
 

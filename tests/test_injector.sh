@@ -159,6 +159,96 @@ echo "$out" | grep -q 'hollow-gotcha' && fail "hollow action injected: $out" || 
 echo "$out" | grep -q 'multiline-recovery.*teachable content' && pass "block-scalar |- action injects full content" || fail "block-scalar dropped: $out"
 rm -rf "$S12"
 
+# --- Test 13: v3.37.0 — per-session repeat cooldown (e2e) ---
+echo "--- v3.37.0 Per-session Repeat Cooldown (e2e) ---"
+S13=$(mktemp -d)
+mkdir -p "$S13/cortex/instincts/global" "$S13/project"
+printf '{"config": {}}\n' > "$S13/cortex/memory.json"
+cat > "$S13/cortex/instincts/global/good-cool.yaml" <<'YAML'
+---
+id: good-cool
+trigger: "Bash"
+action: "When npm install fails with EACCES, clear the npm cache and retry with the project-local prefix."
+confidence: 0.9
+domain: error-recovery
+---
+YAML
+printf '{"tool_name": "Bash", "tool_input": {"command": "npm install"}, "cwd": "%s", "session_id": "t13"}\n' "$S13/project" > "$S13/input.json"
+run13() {
+  CORTEX_DIR="$S13/cortex" _CX_CORTEX_DIR="$S13/cortex" _CX_INPUT_FILE="$S13/input.json" \
+    _CX_GLOBAL_INSTINCTS_DIR="$S13/cortex/instincts/global" node "$ENGINE" 2>/dev/null || true
+}
+out1=$(run13); out2=$(run13); out3=$(run13)
+echo "$out1" | grep -q 'good-cool' && echo "$out2" | grep -q 'good-cool' \
+  && pass "first 2 injections pass" || fail "cooldown blocked too early"
+echo "$out3" | grep -q 'good-cool' && fail "3rd injection not suppressed: $out3" || pass "3rd injection suppressed (max 2/session)"
+grep -q '"ev":"suppress"' "$S13/cortex/impact.jsonl" 2>/dev/null \
+  && pass "suppress event logged to impact funnel" || fail "no suppress event in impact.jsonl"
+count13=$(node -e "console.log(JSON.parse(require('fs').readFileSync('$S13/cortex/.session-injected.json','utf8'))['good-cool'])" 2>/dev/null)
+[ "$count13" = "2" ] && pass ".session-injected.json count capped at 2" || fail "injected count=$count13 (expected 2)"
+rm -rf "$S13"
+
+# --- Test 14: v3.37.0 — token budget degrades one-by-one, never flushes batch ---
+echo "--- v3.37.0 Token Budget Degrade (e2e) ---"
+S14=$(mktemp -d)
+mkdir -p "$S14/cortex/instincts/global" "$S14/project"
+printf '{"config": {}}\n' > "$S14/cortex/memory.json"
+ACTION14=$(printf 'a%.0s' $(seq 1 100))
+cat > "$S14/cortex/instincts/global/aaa-keeper.yaml" <<YAML
+---
+id: aaa-keeper
+trigger: "Bash"
+action: "high confidence guidance: $ACTION14"
+confidence: 0.9
+domain: error-recovery
+---
+YAML
+cat > "$S14/cortex/instincts/global/bbb-dropped.yaml" <<YAML
+---
+id: bbb-dropped
+trigger: "Bash"
+action: "lower confidence guidance: $ACTION14"
+confidence: 0.8
+domain: workflow
+---
+YAML
+# Pre-fill the session budget so only ONE instinct fits. Pre-v3.37.0 the
+# killswitch zeroed the whole batch here.
+printf '7920' > "$S14/cortex/.session-token-budget"
+printf '{"tool_name": "Bash", "tool_input": {"command": "npm install"}, "cwd": "%s", "session_id": "t14"}\n' "$S14/project" > "$S14/input.json"
+out14=$(CORTEX_DIR="$S14/cortex" _CX_CORTEX_DIR="$S14/cortex" _CX_INPUT_FILE="$S14/input.json" \
+  _CX_GLOBAL_INSTINCTS_DIR="$S14/cortex/instincts/global" node "$ENGINE" 2>/dev/null || true)
+echo "$out14" | grep -q 'aaa-keeper' && pass "budget degrade keeps highest-confidence instinct" || fail "degrade flushed everything: $out14"
+echo "$out14" | grep -q 'bbb-dropped' && fail "over-budget instinct injected" || pass "over-budget instinct dropped"
+grep -q '"iid":"bbb-dropped"' "$S14/cortex/impact.jsonl" 2>/dev/null \
+  && grep -q '"ev":"suppress"' "$S14/cortex/impact.jsonl" \
+  && pass "budget drop logged as suppress" || fail "budget drop not in impact funnel"
+rm -rf "$S14"
+
+# --- Test 15: v3.37.0 — cooldown counts survive concurrent injectors (AD race fix) ---
+echo "--- v3.37.0 Cooldown Concurrency (e2e) ---"
+S15=$(mktemp -d)
+mkdir -p "$S15/cortex/instincts/global" "$S15/project"
+printf '{"config": {"max_repeat_injections_per_session": 99}}\n' > "$S15/cortex/memory.json"
+cat > "$S15/cortex/instincts/global/conc-instinct.yaml" <<'YAML'
+---
+id: conc-instinct
+trigger: "Bash"
+action: "When npm install fails with EACCES, clear the npm cache and retry with the project-local prefix."
+confidence: 0.9
+domain: error-recovery
+---
+YAML
+printf '{"tool_name": "Bash", "tool_input": {"command": "npm install"}, "cwd": "%s", "session_id": "t15"}\n' "$S15/project" > "$S15/input.json"
+for i in 1 2 3 4 5 6; do
+  CORTEX_DIR="$S15/cortex" _CX_CORTEX_DIR="$S15/cortex" _CX_INPUT_FILE="$S15/input.json" \
+    _CX_GLOBAL_INSTINCTS_DIR="$S15/cortex/instincts/global" node "$ENGINE" >/dev/null 2>&1 &
+done
+wait
+count15=$(node -e "console.log(JSON.parse(require('fs').readFileSync('$S15/cortex/.session-injected.json','utf8'))['conc-instinct'])" 2>/dev/null)
+[ "$count15" = "6" ] && pass "6 concurrent injectors → count 6, no lost increments" || fail "concurrent count=$count15 (expected 6)"
+rm -rf "$S15"
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1
