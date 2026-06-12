@@ -26,6 +26,7 @@ const {
   migrateAcceptedRejectedToHistory,
   splitForPersist,
   HISTORY_LOCK_PATH,
+  HISTORY_PATH,
 } = require(path.join(__dirname, 'lib', 'proposals-storage'));
 const fileLock = require(path.join(__dirname, 'lib', 'file-lock'));
 
@@ -1151,6 +1152,33 @@ function updateReflexes(observations) {
 // Step 6: Write proposals.json
 // -------------------------------------------------------------------
 
+// v3.37.1 — rejection tombstones. Since the v3.29.5 §F5 split, terminal
+// proposals live in proposals-history.jsonl while the dedup in
+// writeProposals only consulted proposals.json. Net effect: any re-detection
+// of an already-rejected pattern resurrected it as a fresh pending proposal
+// (live corpus showed the same gotcha id rejected 9 times across weeks —
+// the core of the 6-week noise loop). A proposal id rejected by an
+// authorized rejecter is now a permanent tombstone.
+const TOMBSTONE_REJECTERS = new Set(['cx-validate', 'cx-auto-validate', 'cx-cleanup', 'v3.28.9-cleanup']);
+
+function loadRejectedTombstones() {
+  const ids = new Set();
+  try {
+    const lines = fs.readFileSync(HISTORY_PATH, 'utf8').split('\n');
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const p = JSON.parse(line);
+        if (p && p.status === 'rejected' && p.id &&
+            TOMBSTONE_REJECTERS.has(p.rejected_by === undefined ? 'cx-validate' : p.rejected_by)) {
+          ids.add(p.id);
+        }
+      } catch (_) { /* malformed line — skip */ }
+    }
+  } catch (_) { /* no history yet */ }
+  return ids;
+}
+
 function writeProposals(newProposals) {
   // v3.36.1 (audit P1-empty-action-field): quality gate — a truncated or
   // hollow action ("... try: " with nothing after, or under 40 chars) is
@@ -1162,6 +1190,16 @@ function writeProposals(newProposals) {
   if (rejected.length > 0) {
     log(`Quality gate rejected ${rejected.length} hollow proposal(s): ${rejected.map((p) => p.id).join(', ')}`);
     newProposals = newProposals.filter((p) => !rejected.includes(p));
+  }
+
+  // v3.37.1 — drop proposals whose id was already rejected (tombstone).
+  const tombstones = loadRejectedTombstones();
+  if (tombstones.size > 0) {
+    const resurrected = newProposals.filter((p) => tombstones.has(p.id));
+    if (resurrected.length > 0) {
+      log(`Tombstone gate dropped ${resurrected.length} previously-rejected proposal(s): ${resurrected.map((p) => p.id).slice(0, 10).join(', ')}`);
+      newProposals = newProposals.filter((p) => !tombstones.has(p.id));
+    }
   }
   if (newProposals.length === 0) return;
 

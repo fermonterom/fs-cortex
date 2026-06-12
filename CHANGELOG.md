@@ -4,6 +4,22 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.37.1] — 2026-06-12
+
+### Fixed
+- `hooks/session-learner.js` `writeProposals()`: **rejection tombstones**.
+  Since the v3.29.5 §F5 split, terminal proposals migrate to
+  `proposals-history.jsonl` while the resurrect-protection dedup only
+  consulted `proposals.json` — so every re-detection of an already-rejected
+  pattern came back as a fresh pending proposal. Live corpus proof: the same
+  gotcha id rejected 9 times across weeks (cx-validate + cx-cleanup); a
+  v3.36.1 learner run from a parallel session resurrected 90 just-rejected
+  proposals within hours. Ids rejected in history by an authorized rejecter
+  (`cx-validate`, `cx-auto-validate`, `cx-cleanup`, `v3.28.9-cleanup`,
+  legacy no-field) are now permanent tombstones, dropped before persisting
+  with a `Tombstone gate dropped N` log line. This was the engine of the
+  6-week noise loop: reject → re-detect → resurrect → auto-validate.
+
 ## [3.37.0] — 2026-06-12
 
 Noise-regression release (overnight audit 2026-06-12, AD Codex GPT-5.5).
