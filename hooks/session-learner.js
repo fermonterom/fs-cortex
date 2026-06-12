@@ -309,6 +309,10 @@ function deriveTriggerFromInput(tool, failingInputStr) {
     t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   );
   const trigger = `${tool}\\b.*(?:${escaped.join('|')})`;
+  // Defense in depth (AD final 2026-06-12): run the same ReDoS/length guard
+  // the injector applies at runtime, so an unsafe trigger never even reaches
+  // proposals.json.
+  if (unsafeReason(trigger)) return null;
   // Validate: must compile, must match the failing call exactly as the
   // injector will see it, and must NOT match a bare invocation of the tool
   // (i.e. it has to be strictly more specific than the tool name alone).
