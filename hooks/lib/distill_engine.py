@@ -183,6 +183,9 @@ VALIDATE_AUTHORIZED_REJECTERS = {
     None,                  # legacy: pre-Sprint-7 acceptances
 }
 
+# v3.37.0 — once-per-run guard for the law-cap stall knowledge entry.
+_LAW_CAP_STALL_LOGGED = {"done": False}
+
 # Sprint 7 — auto-evolve
 EVOLVE_MIN_CONF = 0.70
 EVOLVE_CLUSTER_MIN = 3
@@ -1158,6 +1161,18 @@ def auto_promote_to_law(
                     f"no deprecation candidate (all productive OR < "
                     f"{LAW_DEPRECATE_MIN_AGE_DAYS}d age)"
                 )
+                # v3.37.0 — surface the stall in the knowledge timeline (once
+                # per run). Saturated cap + nothing deprecable means the
+                # promotion pipeline is deadlocked until laws age past
+                # LAW_DEPRECATE_MIN_AGE_DAYS; before this entry the operator
+                # had no persistent signal that promotions were being dropped.
+                if not _LAW_CAP_STALL_LOGGED.get("done"):
+                    _log_knowledge(
+                        "law-cap-stall", iid,
+                        f"laws {active_laws}/{LAW_MAX_ACTIVE} saturated, no deprecation candidate",
+                        source="cx-auto-distill",
+                    )
+                    _LAW_CAP_STALL_LOGGED["done"] = True
 
         # ── Criteria 8 (v3.34.2): universality opt-in ────────────────────
         # A law injects at EVERY SessionStart, so promotion is high-impact and

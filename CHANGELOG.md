@@ -4,6 +4,62 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.37.0] — 2026-06-12
+
+Noise-regression release (overnight audit 2026-06-12, AD Codex GPT-5.5).
+Corpus audit found 132/203 live instincts (65%) were noise minted by the
+error-fix and agent-pattern detectors; this release kills the factory and
+unblocks legitimate signal. Shipped as 3 stacked PRs (#69, #70, #71) with a
+single version bump.
+
+### Fixed
+- `hooks/session-learner.js` `detectErrorResolutions()`: proposals carried a
+  bare tool-name trigger (fires on EVERY use of the tool) and an action that
+  replayed the next call's raw input. Now requires `err_msg` evidence,
+  derives the trigger from distinctive tokens of the FAILING input and
+  validates it against the injector's matchTarget (rejecting triggers that
+  match a bare invocation), quotes the error signature in the action, and
+  scopes proposals with project-specific evidence (`/Users/`, URLs) to
+  `scope: project` — never global. fixSummary floor 10 → 5 keeps short real
+  fixes (`uv sync`, `git add .`).
+- `hooks/session-learner.js` `detectAgentPatterns()`: trigger was hardcoded
+  `'Agent'` — every agent-pattern instinct injected its "consider /cx-evolve"
+  TODO on every Agent call. Trigger now scoped to the recurring description
+  (never-matching sentinel as fallback).
+- `hooks/lib/injector-engine.js`: impact `inject` events were logged BEFORE
+  the token-budget killswitch and char cap acted, inflating funnel metrics
+  with instincts that never reached the context (AD finding).
+- `hooks/lib/injector-engine.js`: the 8000-token session killswitch zeroed
+  the whole instinct batch silently; it now degrades one-by-one (drops the
+  lowest-confidence first), so late-session matches still inject.
+
+### Added
+- Per-session repeat cooldown: the same instinct/reflex id injects at most
+  2x per session (`max_repeat_injections_per_session`, default 2); counts in
+  `~/.claude/cortex/.session-injected.json`, reset at SessionStart.
+  Suppressed repeats emit a `suppress` impact event (new in `VALID_EVENTS`,
+  js + py) so inject→follow/reject correlation keeps honest sample counts.
+  Measured pre-fix: one reflex injected 8x in a single session, ~24k impact
+  entries/day.
+- Proposals from the error-fix detector now carry `sample_input`,
+  `sample_output` and `err_msg` (200 chars each, Sinapsis port) so
+  `/cx-validate` shows real evidence.
+- `knowledge-log.md` gains a `law-cap-stall` entry (once per distill run)
+  when the law cap is saturated and nothing is deprecable — the promotion
+  pipeline used to deadlock with no persistent signal.
+
+### Changed
+- `hooks/observe.py`: capture caps input 2000 → 5000, output 1000 → 8000;
+  base64/screenshot blobs stored as `[binary output omitted]` (they were
+  burying the text outputs detectors read).
+- `hooks/lib/distill_engine.py`: domain `agent-evolution` moved
+  VALIDATE_AUTO_DOMAINS → VALIDATE_HUMAN_DOMAINS (operator TODOs, not
+  injectable advice).
+- `hooks/lib/impact_log.py`: rotation floor 15 → 18 days (widest reader
+  window is 14 d; the 1-day margin was eatable by clock drift).
+- `hooks/lib/injector-engine.js`: candidate sort gains an id tiebreaker for
+  byte-stable injection ordering (prompt-cache friendliness, Sinapsis port).
+
 ## [3.36.1] — 2026-06-10
 
 Signal-quality fixes from the multi-agent Cortex audit (2026-06-10): the
