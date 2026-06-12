@@ -621,6 +621,38 @@ console.log(JSON.stringify(ids) === JSON.stringify(['gotcha-fresh']) ? 'OK' : 'F
 process.exit(0);
 ")
 [ "$result" = "OK" ] && pass "tombstone gate: rejected id never resurrects (v3.37.1)" || fail "tombstone: $result"
+
+# v3.37.2: isError heuristic guards — WebFetch 200-OK bodies and test-runner
+# output are not errors (real false positives gotcha-WebFetch-c8b45df1 and
+# gotcha-Bash-560c85ee). Explicit err flag always wins.
+result=$(CORTEX_DIR="$S_QG" node -e "
+const m = require('$LEARNER');
+const webfetch200 = { tool: 'WebFetch', ev: 'tc', output: '{\"bytes\": 100775, \"code\": 200, \"codeText\": \"OK\", \"result\": \"mentions error handling and failed connections\"}' };
+const structured2xx = { tool: 'Bash', ev: 'tc', output: '{\"bytes\": 73114, \"code\": 200, \"codeText\": \"OK\", \"result\": \"error: word in body\"}' };
+const testlog = { tool: 'Bash', ev: 'tc', output: '  PASS: custom law preserved\n  FAIL: reflexes mismatch\n=== Results: 7 passed, 1 failed ===' };
+const realErr = { tool: 'Bash', ev: 'tc', output: 'error: ENOENT no such file' };
+const explicitErr = { tool: 'WebFetch', ev: 'tc', err: true, output: '404 Not Found' };
+const ok = !m.isError(webfetch200) && !m.isError(structured2xx) && !m.isError(testlog)
+  && m.isError(realErr) && m.isError(explicitErr);
+console.log(ok ? 'OK' : 'FAIL');
+process.exit(0);
+")
+[ "$result" = "OK" ] && pass "isError guards: 200-OK body + test log skipped, real/explicit kept (v3.37.2)" || fail "iserror-guards: $result"
+
+# v3.37.2: end-to-end — a WebFetch 200-OK body followed by a successful call
+# emits NO error-fix proposal (the c8b45df1 false-positive shape)
+result=$(CORTEX_DIR="$S_QG" node -e "
+const m = require('$LEARNER');
+const obs = [
+  { tool: 'WebFetch', ev: 'ts', input: '{\"url\":\"https://example.com/monitoring\",\"prompt\":\"extract RAM numbers\"}', ts: '2026-06-12T10:00:00Z' },
+  { tool: 'WebFetch', ev: 'tc', err_msg: '{\"code\": 200, \"result\": \"error handling failed\"}', output: '{\"bytes\": 100775, \"code\": 200, \"codeText\": \"OK\", \"result\": \"error handling failed\"}', ts: '2026-06-12T10:00:02Z' },
+  { tool: 'WebFetch', ev: 'ts', input: '{\"url\":\"https://example.com/other\",\"prompt\":\"extract CPU numbers\"}', ts: '2026-06-12T10:00:10Z' },
+  { tool: 'WebFetch', ev: 'tc', output: 'Pricing: free tier', ts: '2026-06-12T10:00:12Z' },
+];
+console.log(m.detectErrorResolutions(obs).length === 0 ? 'OK' : 'FAIL:' + JSON.stringify(m.detectErrorResolutions(obs)));
+process.exit(0);
+")
+[ "$result" = "OK" ] && pass "WebFetch 200-OK body → no error-fix proposal (v3.37.2)" || fail "webfetch-200: $result"
 rm -rf "$S_QG"
 
 echo ""

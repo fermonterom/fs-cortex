@@ -425,12 +425,27 @@ function detectErrorResolutions(observations) {
   return proposals;
 }
 
+// v3.37.2 — heuristic guards, keep aligned with observe.py: network tools
+// return page/search content where "error"/"failed" are just words (3 real
+// WebFetch 200-OK false positives on 2026-06-12), and test-runner output
+// ("PASS:", "=== Results:", "3 passed") reports outcomes, not failures
+// (gotcha-Bash-560c85ee minted from a PASSING suite).
+const HEURISTIC_EXEMPT_TOOLS = new Set(['WebFetch', 'WebSearch']);
+const TEST_RUNNER_RE = /(?:^|\n)\s*(?:={2,}\s*Results|PASS[: ]|FAIL[: ])|\b\d+ pass(?:ed|ing)\b|\bTests?:\s+\d+\b/;
+// observe.py logs structured responses as JSON — a leading {"...,"code": 2xx
+// head is a successful HTTP response by contract (e.g. WebFetch).
+const HTTP_2XX_HEAD_RE = /^\s*\{[^{]{0,160}"code":\s*2\d{2}\b/;
+
 function isError(obs) {
   // Check explicit err field (set by observe.py)
   if (obs.err === true) return true;
+  // Heuristic fallback — never for network tools (explicit flag only)
+  if (HEURISTIC_EXEMPT_TOOLS.has(obs.tool)) return false;
   // Check output — patterns aligned with observe.py ERROR_PATTERNS
   const output = String(obs.output || '');
   if (!output) return false;
+  if (HTTP_2XX_HEAD_RE.test(output)) return false;
+  if (TEST_RUNNER_RE.test(output)) return false;
   return /(?:^|\s)error[:\s]|(?:^|\s)failed(?!\s*:\s*0)|\bexception\b|\btraceback\b|\bfatal\b|(?:^|\s)panic[:(]|\bsegfault\b|\bOOM\b|\bcommand not found\b|\bENOENT\b|\bEACCES\b|\bEPERM\b/im.test(output);
 }
 

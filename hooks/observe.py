@@ -129,12 +129,47 @@ ERROR_PATTERNS = [
 ]
 
 
-def detect_is_error(output_text):
-    """Returns True if output contains error patterns."""
+# v3.37.2 — heuristic guards. The keyword scan ran on OUTPUT BODIES where
+# "error"/"failed" are legitimate content, not failures. Three real false
+# positives distilled into bogus gotchas on 2026-06-12: WebFetch 200-OK pages
+# whose text mentions errors (gotcha-WebFetch-c8b45df1/c4cf99f4/30323cf4) and
+# a PASSING test suite whose "FAIL:" label lines tripped the scan
+# (gotcha-Bash-560c85ee, err_msg "PASS: custom law preserved").
+#
+# Network tools return page/search content — only the explicit is_error flag
+# (handled by the caller) can mark them as failures, never this heuristic.
+HEURISTIC_EXEMPT_TOOLS = frozenset({"WebFetch", "WebSearch"})
+
+# Test-runner output reports test outcomes, not a tool failure. Matches the
+# suite summary/label shapes seen in the live corpus: "=== Results:",
+# "PASS:"/"FAIL:" label lines, pytest/jest/vitest "N passed" / "Tests: N".
+TEST_RUNNER_RE = re.compile(
+    r"(?:^|\n)\s*(?:={2,}\s*Results|PASS[: ]|FAIL[: ])"
+    r"|\b\d+ pass(?:ed|ing)\b"
+    r"|\bTests?:\s+\d+\b"
+)
+
+
+def detect_is_error(output_text, tool_name=None, response=None):
+    """Returns True if output contains error patterns.
+
+    Heuristic fallback only — callers must prefer explicit is_error flags.
+    Guards (v3.37.2): network tools and structured 2xx responses never match;
+    test-runner output never matches.
+    """
     if not output_text:
         return False
+    if tool_name in HEURISTIC_EXEMPT_TOOLS:
+        return False
+    if isinstance(response, dict):
+        code = response.get("code", response.get("status_code"))
+        if isinstance(code, int) and not isinstance(code, bool) and 200 <= code < 300:
+            return False
+    text = str(output_text)
+    if TEST_RUNNER_RE.search(text):
+        return False
     for pat in ERROR_PATTERNS:
-        if pat.search(str(output_text)):
+        if pat.search(text):
             return True
     return False
 
@@ -595,7 +630,9 @@ def main():
 
     is_error = bool(data.get("is_error", False)) or bool(is_error_flag)
     if not is_error and event == "tc":
-        is_error = detect_is_error(flat_text[:2000])
+        # v3.37.2 — pass tool_name + raw response so the heuristic can skip
+        # network tools and structured 2xx responses (false-positive guards).
+        is_error = detect_is_error(flat_text[:2000], tool_name=tool_name, response=tool_output)
 
     error_msg = None
     if is_error:
