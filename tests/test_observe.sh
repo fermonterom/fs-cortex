@@ -79,6 +79,31 @@ assert _looks_binary('error: ENOENT no such file or directory while reading pack
 print('OK')
 " | grep -q "OK" && pass "binary output detection (v3.37.0)" || fail "binary output detection"
 
+# --- Test 2c: is_error heuristic guards (v3.37.2) ---
+# Real false positives 2026-06-12: WebFetch 200-OK bodies mentioning "error"
+# (gotcha-WebFetch-c8b45df1/c4cf99f4/30323cf4) and a passing test suite
+# (gotcha-Bash-560c85ee, err_msg "PASS: custom law preserved").
+python3 -c "
+from observe import detect_is_error
+
+# network tools: body content is never fed to the heuristic
+body = '{\"bytes\": 100775, \"code\": 200, \"codeText\": \"OK\", \"result\": \"The article mentions error handling and failed connections\"}'
+assert detect_is_error(body, tool_name='WebFetch') == False
+assert detect_is_error('results: how to fix error: in nginx', tool_name='WebSearch') == False
+# structured 2xx response → success by contract, regardless of body
+assert detect_is_error('error: mentioned in body', tool_name='SomeFetch', response={'code': 200}) == False
+# non-2xx structured response still falls through to the heuristic
+assert detect_is_error('error: connection refused', tool_name='SomeFetch', response={'code': 500}) == True
+# test-runner output is an outcome report, not a tool failure
+assert detect_is_error('  PASS: custom law preserved\n  FAIL: reflexes mismatch\n=== Results: 7 passed, 1 failed ===') == False
+assert detect_is_error('Tests: 3 passed, 3 total') == False
+assert detect_is_error('12 passed in 0.42s') == False
+# genuine errors still detected when no guard applies
+assert detect_is_error('error: ENOENT no such file', tool_name='Bash') == True
+assert detect_is_error('fatal: not a git repository', tool_name='Bash', response={'exit_code': 128}) == True
+print('OK')
+" | grep -q "OK" && pass "heuristic guards: network tools, 2xx, test-runner (v3.37.2)" || fail "heuristic guards (v3.37.2)"
+
 # --- Test 3: session_id truncation (64 chars to fit 36-char UUIDs) ---
 # v3.19.3: Pre-release this was [:24], which truncated 36-char UUIDs and broke
 # correlation with impact.jsonl (where sids are stored full-length). The full

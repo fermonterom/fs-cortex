@@ -4,6 +4,24 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.37.2] — 2026-06-12
+
+### Fixed
+- `hooks/observe.py` `detect_is_error()` + `hooks/session-learner.js`
+  `isError()`: **false-positive guards on the keyword heuristic**. The scan
+  ran on output BODIES where "error"/"failed" are legitimate content: three
+  WebFetch 200-OK pages whose text mentions errors and one PASSING test
+  suite whose "FAIL:" label lines tripped the scan were distilled into bogus
+  gotchas on 2026-06-12 (gotcha-WebFetch-c8b45df1/c4cf99f4/30323cf4,
+  gotcha-Bash-560c85ee with err_msg "PASS: custom law preserved"). Guards,
+  mirrored in both implementations: (a) network tools (`WebFetch`,
+  `WebSearch`) are exempt from the heuristic — only the explicit `is_error`
+  flag marks them as failures; (b) structured responses with an HTTP 2xx
+  `code` are success by contract (the JS side detects the JSON-logged
+  `{"...,"code": 2xx` head); (c) test-runner output (`=== Results:`,
+  `PASS:`/`FAIL:` label lines, `N passed`, `Tests: N`) is an outcome report,
+  never a tool failure. `test_observe` 10→11, `test_session_learner` 40→42.
+
 ## [3.37.1] — 2026-06-12
 
 ### Fixed
