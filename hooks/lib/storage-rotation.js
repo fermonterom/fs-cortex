@@ -25,11 +25,95 @@ const CORTEX_DIR = process.env.CORTEX_DIR || path.join(HOME, '.claude', 'cortex'
 // Env-overridable for tests and operator tuning.
 const IMPACT_ROTATE_MB = parseFloat(process.env.CORTEX_IMPACT_ROTATE_MB || '10');
 const TRACKER_PRUNE_MB = parseFloat(process.env.CORTEX_TRACKER_PRUNE_MB || '1');
+// v3.36.0 (audit 2026-06-10) — four more unbounded artifacts gained caps:
+// proposals-history.jsonl (append-only, rename-rotated under its writer
+// lock), knowledge-log.md (rename-rotated), daily-snapshots/ +
+// daily-summaries/ (keep newest N files), .fire-once/ markers (age-pruned).
+const HISTORY_ROTATE_MB = parseFloat(process.env.CORTEX_HISTORY_ROTATE_MB || '3');
+const KNOWLEDGE_ROTATE_MB = parseFloat(process.env.CORTEX_KNOWLEDGE_ROTATE_MB || '2');
+// NaN guard (adversarial review): a non-numeric CORTEX_DAILY_KEEP_FILES
+// would make `entries.length <= NaN` false and `slice(NaN)` ≡ slice(0) —
+// deleting EVERY snapshot. `|| <default>` maps NaN and the falsy "0" to the
+// default; Math.max floors negatives to 1 so the newest file always
+// survives.
+const DAILY_KEEP_FILES = Math.max(1, parseInt(process.env.CORTEX_DAILY_KEEP_FILES || '60', 10) || 60);
+const FIREONCE_MAX_DAYS = Math.max(1, parseInt(process.env.CORTEX_FIREONCE_MAX_DAYS || '30', 10) || 30);
 const MARKER_NAME = '.last-storage-rotate';
 const DAY_MS = 24 * 3600 * 1000;
 
 function fileMb(p) {
   try { return fs.statSync(p).size / 1048576; } catch (_) { return 0; }
+}
+
+function _stamp() {
+  return new Date().toISOString().slice(0, 19).replace(/[:T]/g, '').replace(/-/g, '');
+}
+
+// Rename-rotate an append-only file into `archiveDir` once it crosses
+// `maxMb`. Appenders recreate the live file on next write; readers that
+// want history can opt-in to scanning the archive dir.
+function _renameRotate(file, archiveDir, maxMb) {
+  const mb = fileMb(file);
+  if (mb < maxMb) return null;
+  fs.mkdirSync(archiveDir, { recursive: true, mode: 0o700 });
+  const base = path.basename(file);
+  const dest = path.join(archiveDir, `${base}.${_stamp()}-${process.pid}`);
+  fs.renameSync(file, dest);
+  return { rotated: base, sizeMb: +mb.toFixed(1), dest };
+}
+
+// proposals-history.jsonl is appended under .proposals-history.lock by both
+// runtimes (proposals-storage.js, distill_engine.py). Take the SAME lock for
+// the rename so no appender writes into a half-moved file.
+function _rotateProposalsHistory(log) {
+  const file = path.join(CORTEX_DIR, 'proposals-history.jsonl');
+  if (fileMb(file) < HISTORY_ROTATE_MB) return;
+  let fileLock;
+  try { fileLock = require(path.join(__dirname, 'file-lock')); } catch (_) { return; }
+  const token = fileLock.acquire(path.join(CORTEX_DIR, '.proposals-history.lock'), { timeoutMs: 2000 });
+  if (!token) { log('Storage rotation: proposals-history lock busy — skipped'); return; }
+  try {
+    const r = _renameRotate(file, path.join(CORTEX_DIR, 'proposals.archive'), HISTORY_ROTATE_MB);
+    if (r) log(`Storage rotation: proposals-history.jsonl ${r.sizeMb}MB → proposals.archive/`);
+  } finally {
+    fileLock.release(token);
+  }
+}
+
+// Keep the newest `keep` files in a directory, delete the rest (derived,
+// regenerable artifacts only — snapshots and summaries).
+function _pruneDirByCount(dir, keep, log, label) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true })
+      .filter((e) => e.isFile() && !e.name.startsWith('.'))
+      .map((e) => {
+        const full = path.join(dir, e.name);
+        return { full, mtime: fs.statSync(full).mtimeMs };
+      });
+  } catch (_) { return; }
+  if (entries.length <= keep) return;
+  entries.sort((a, b) => b.mtime - a.mtime);
+  const doomed = entries.slice(keep);
+  for (const d of doomed) {
+    try { fs.unlinkSync(d.full); } catch (_) {}
+  }
+  log(`Storage rotation: ${label} pruned ${doomed.length} file(s) (keep newest ${keep})`);
+}
+
+function _pruneFireOnceMarkers(log) {
+  const dir = path.join(CORTEX_DIR, '.fire-once');
+  let removed = 0;
+  let entries;
+  try { entries = fs.readdirSync(dir); } catch (_) { return; }
+  const cutoff = Date.now() - FIREONCE_MAX_DAYS * DAY_MS;
+  for (const name of entries) {
+    const full = path.join(dir, name);
+    try {
+      if (fs.statSync(full).mtimeMs < cutoff) { fs.unlinkSync(full); removed++; }
+    } catch (_) {}
+  }
+  if (removed > 0) log(`Storage rotation: .fire-once pruned ${removed} marker(s) older than ${FIREONCE_MAX_DAYS}d`);
 }
 
 function maybeRotateStorage(log) {
@@ -80,8 +164,36 @@ function maybeRotateStorage(log) {
     log(`Storage rotation: tracker prune error: ${e.message}`);
   }
 
+  // v3.36.0 — remaining unbounded artifacts (audit 2026-06-10). Each block
+  // is independent: a failure in one never blocks the others.
+  try { _rotateProposalsHistory(log); } catch (e) {
+    log(`Storage rotation: proposals-history error: ${e.message}`);
+  }
+  try {
+    const r = _renameRotate(
+      path.join(CORTEX_DIR, 'knowledge-log.md'),
+      path.join(CORTEX_DIR, 'knowledge-log.archive'),
+      KNOWLEDGE_ROTATE_MB
+    );
+    if (r) log(`Storage rotation: knowledge-log.md ${r.sizeMb}MB → knowledge-log.archive/`);
+  } catch (e) {
+    log(`Storage rotation: knowledge-log error: ${e.message}`);
+  }
+  try {
+    _pruneDirByCount(path.join(CORTEX_DIR, 'daily-snapshots'), DAILY_KEEP_FILES, log, 'daily-snapshots');
+    _pruneDirByCount(path.join(CORTEX_DIR, 'daily-summaries'), DAILY_KEEP_FILES, log, 'daily-summaries');
+  } catch (e) {
+    log(`Storage rotation: daily prune error: ${e.message}`);
+  }
+  try { _pruneFireOnceMarkers(log); } catch (e) {
+    log(`Storage rotation: fire-once prune error: ${e.message}`);
+  }
+
   try { fs.writeFileSync(marker, new Date().toISOString() + '\n', { mode: 0o600 }); } catch (_) {}
   return result;
 }
 
-module.exports = { maybeRotateStorage, IMPACT_ROTATE_MB, TRACKER_PRUNE_MB, MARKER_NAME };
+module.exports = {
+  maybeRotateStorage, IMPACT_ROTATE_MB, TRACKER_PRUNE_MB, MARKER_NAME,
+  HISTORY_ROTATE_MB, KNOWLEDGE_ROTATE_MB, DAILY_KEEP_FILES, FIREONCE_MAX_DAYS,
+};

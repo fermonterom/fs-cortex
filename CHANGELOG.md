@@ -4,6 +4,38 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.36.0] — 2026-06-10
+
+Storage-hygiene fixes from the multi-agent Cortex audit (2026-06-10): the
+live install had grown to 134 MB, dominated by a 62 MB `impact.jsonl`.
+
+### Added
+- **`storage-rotation.js` now caps four more unbounded artifacts** (audit
+  P1/P2 `OBS-BLOAT-002/003/004`, `FIRE-ONCE-CLEANUP-001`), all inside the
+  existing 24h marker gate and each in its own try/catch:
+  - `proposals-history.jsonl` ≥ 3 MB (`CORTEX_HISTORY_ROTATE_MB`) →
+    rename-rotated to `proposals.archive/`, taken under the shared
+    `.proposals-history.lock` so concurrent appenders never write into a
+    half-moved file.
+  - `knowledge-log.md` ≥ 2 MB (`CORTEX_KNOWLEDGE_ROTATE_MB`) →
+    rename-rotated to `knowledge-log.archive/`.
+  - `daily-snapshots/` and `daily-summaries/` keep the newest 60 files
+    (`CORTEX_DAILY_KEEP_FILES`); older derived artifacts are deleted.
+  - `.fire-once/` markers older than 30 days (`CORTEX_FIREONCE_MAX_DAYS`)
+    are deleted.
+
+### Changed
+- **`impact_log.py` live rotation window 30 → 15 days** (audit P1
+  `impact-jsonl-bloat-62mb`). Every consumer (stats, outcome-nudge,
+  `/cx-status`, `/cx-retro`) reads at most 14 days, but the 30-day live
+  window let high-volume operators accumulate 60+ MB of JSONL. Now
+  env-overridable via `CORTEX_IMPACT_ROTATION_DAYS` with a floor of 15 so
+  rotation can never eat into the 14-day consumer window. Rotated events
+  are still archived to `impact.archive/`, never deleted.
+- `tests/test_storage_rotation.sh` extended 28 → 46 checks: window
+  default/override/floor, history+knowledge rename-rotation, daily-dir
+  retention, fire-once pruning, small-file no-ops.
+
 ## [3.35.2] — 2026-06-10
 
 Fixes surfaced by the 7-subagent runtime audit (issue #56 follow-up).
