@@ -108,6 +108,19 @@ function main() {
     memoryConfig = mem.config || {};
   } catch {}
 
+  // v3.37.0 — per-session repeat cooldown. The same instinct/reflex used to
+  // inject on every matching tool call (8x in one session was measured),
+  // drowning the context and writing an impact event each time. Cap at 2
+  // injections per id per session; suppressed repeats emit a 'suppress'
+  // impact event so the funnel keeps its samples (AD finding: silently
+  // skipping them would break inject→follow/reject correlation rates).
+  // File reset at SessionStart alongside .session-token-budget.
+  const INJECTED_COUNTS_FILE = path.join(CORTEX_DIR, ".session-injected.json");
+  const MAX_REPEAT_INJECTIONS = memoryConfig.max_repeat_injections_per_session || 2;
+  let injectedCounts = {};
+  try { injectedCounts = JSON.parse(fs.readFileSync(INJECTED_COUNTS_FILE, "utf8")) || {}; } catch {}
+  const suppressed = []; // {id} — repeats + budget drops, logged as suppress events
+
   // ── 1. Load and match reflexes ───────────────────────────────────────
 
   const reflexesFile = process.env._CX_REFLEXES_FILE;
@@ -120,6 +133,10 @@ function main() {
         if (!r.enabled) continue;
         if (!r.matcher || !safeRegexTest(r.matcher, toolName, { tag: `reflex:${r.id}:matcher` })) continue;
         if (r.condition && !safeRegexTest(r.condition, toolInputStr, { tag: `reflex:${r.id}:condition` })) continue;
+        if ((injectedCounts["reflex:" + r.id] || 0) >= MAX_REPEAT_INJECTIONS) {
+          suppressed.push({ id: "reflex:" + r.id });
+          continue;
+        }
         matchedReflexes.push({ id: r.id, action: r.action, severity: r.severity || "medium" });
         if (matchedReflexes.length >= MAX_REFLEXES) break;
       }
@@ -344,7 +361,10 @@ function main() {
     }
   }
 
-  candidates.sort((a, b) => b.confidence - a.confidence);
+  // v3.37.0 — id tiebreaker keeps equal-confidence ordering byte-stable
+  // across calls (prompt-cache friendliness, ported from Sinapsis v4.5).
+  candidates.sort((a, b) => b.confidence - a.confidence
+    || String(a.id).localeCompare(String(b.id)));
 
   const MAX_INSTINCTS = memoryConfig.max_instincts_per_injection || 3;
   const MAX_TOTAL_CHARS = 1500;
@@ -352,6 +372,10 @@ function main() {
   const seenDomains = new Set();
   for (const inst of candidates) {
     if (matchedInstincts.length >= MAX_INSTINCTS) break;
+    if ((injectedCounts[inst.id] || 0) >= MAX_REPEAT_INJECTIONS) {
+      suppressed.push({ id: inst.id });
+      continue;
+    }
     if (seenDomains.has(inst.domain)) {
       // v3.36.1: make per-domain dedup visible — a high-confidence instinct
       // dropped here used to disappear without trace.
@@ -428,9 +452,44 @@ function main() {
     } catch {}
   }
 
-  // ── 3d. Impact funnel — emit inject events (Sprint 0, v3.14.0) ──────
-  // Writes one "inject" event per matched instinct. session-learner.js
-  // later correlates against next tool call to emit follow/reject events.
+  // ── 4. Token budget cap ──────────────────────────────────────────────
+
+  const SESSION_BUDGET_FILE = path.join(CORTEX_DIR, ".session-token-budget");
+  const MAX_SESSION_TOKENS = 8000;
+  let sessionTokens = 0;
+  try { sessionTokens = parseInt(fs.readFileSync(SESSION_BUDGET_FILE, "utf8").trim(), 10) || 0; } catch {}
+
+  let instinctTokens = matchedInstincts.reduce((sum, i) => sum + Math.ceil(i.action.length / 4) + 20, 0);
+  const reflexTokens = matchedReflexes.reduce((sum, r) => sum + Math.ceil(r.action.length / 4) + 15, 0);
+
+  // v3.37.0 — degrade instead of flush. The old killswitch zeroed the whole
+  // instinct batch silently once the session crossed 8000 tokens, which is
+  // one of the reasons "Cortex stopped learning": late-session matches never
+  // reached the context. matchedInstincts is confidence-desc, so pop()
+  // drops the weakest first.
+  while (matchedInstincts.length > 0 &&
+         sessionTokens + reflexTokens + instinctTokens > MAX_SESSION_TOKENS) {
+    const droppedInst = matchedInstincts.pop();
+    suppressed.push({ id: droppedInst.id });
+    instinctTokens -= Math.ceil(droppedInst.action.length / 4) + 20;
+    if (process.env.CORTEX_DEBUG) {
+      process.stderr.write("[cortex:injector] token budget (" + sessionTokens + "/" + MAX_SESSION_TOKENS + "): dropped " + droppedInst.id + "\n");
+    }
+  }
+
+  const budgetNew = sessionTokens + reflexTokens + instinctTokens;
+  try {
+    const tmp3 = SESSION_BUDGET_FILE + ".tmp." + process.pid;
+    fs.writeFileSync(tmp3, String(budgetNew), { mode: 0o600 });
+    fs.renameSync(tmp3, SESSION_BUDGET_FILE);
+  } catch {}
+
+  // ── 4b. Impact funnel — emit inject/suppress events ─────────────────
+  // v3.37.0: moved BELOW the budget cap. Inject events used to be logged
+  // before the killswitch/char cap acted, inflating funnel metrics with
+  // instincts that never reached the context (AD finding 2026-06-12).
+  // session-learner.js correlates inject→follow/reject; suppress events are
+  // ignored by the correlator but keep the funnel sample count honest.
   if (impactLog && matchedInstincts.length > 0) {
     try {
       impactLog.logInjectBatch(matchedInstincts, {
@@ -442,11 +501,6 @@ function main() {
       if (process.env.CORTEX_DEBUG) process.stderr.write("[cortex:injector] impact: " + e.message + "\n");
     }
   }
-
-  // ── 3e. Impact funnel — emit reflex inject events (v3.18.0) ─────────
-  // Writes one "inject" event per matched reflex with iid prefix
-  // "reflex:". session-learner.js evaluates these at Stop and emits
-  // feedback events with source: agent. See docs/AUTO-EVALUATION.md.
   if (impactLog && matchedReflexes.length > 0) {
     try {
       impactLog.logInjectBatch(
@@ -465,28 +519,34 @@ function main() {
       if (process.env.CORTEX_DEBUG) process.stderr.write("[cortex:injector] reflex impact: " + e.message + "\n");
     }
   }
-
-  // ── 4. Token budget cap ──────────────────────────────────────────────
-
-  const SESSION_BUDGET_FILE = path.join(CORTEX_DIR, ".session-token-budget");
-  const MAX_SESSION_TOKENS = 8000;
-  let sessionTokens = 0;
-  try { sessionTokens = parseInt(fs.readFileSync(SESSION_BUDGET_FILE, "utf8").trim(), 10) || 0; } catch {}
-
-  const instinctTokens = matchedInstincts.reduce((sum, i) => sum + Math.ceil(i.action.length / 4) + 20, 0);
-  const reflexTokens = matchedReflexes.reduce((sum, r) => sum + Math.ceil(r.action.length / 4) + 15, 0);
-  const totalNewTokens = instinctTokens + reflexTokens;
-
-  if (sessionTokens + totalNewTokens > MAX_SESSION_TOKENS && matchedInstincts.length > 0) {
-    matchedInstincts.length = 0;
-    if (process.env.CORTEX_DEBUG) process.stderr.write("[cortex:injector] token budget exceeded (" + sessionTokens + "/" + MAX_SESSION_TOKENS + "), skipping instincts\n");
+  if (impactLog && suppressed.length > 0) {
+    try {
+      for (const s of suppressed) {
+        impactLog.logEvent("suppress", {
+          iid: s.id,
+          tool: hookData.tool_name,
+          pid: projectId,
+          sid: hookData.session_id,
+        });
+      }
+    } catch (e) {
+      if (process.env.CORTEX_DEBUG) process.stderr.write("[cortex:injector] suppress impact: " + e.message + "\n");
+    }
   }
 
-  const budgetNew = sessionTokens + reflexTokens + (matchedInstincts.length > 0 ? instinctTokens : 0);
+  // ── 4c. Persist per-session repeat counts (v3.37.0 cooldown) ────────
   try {
-    const tmp3 = SESSION_BUDGET_FILE + ".tmp." + process.pid;
-    fs.writeFileSync(tmp3, String(budgetNew), { mode: 0o600 });
-    fs.renameSync(tmp3, SESSION_BUDGET_FILE);
+    for (const inst of matchedInstincts) {
+      injectedCounts[inst.id] = (injectedCounts[inst.id] || 0) + 1;
+    }
+    for (const r of matchedReflexes) {
+      injectedCounts["reflex:" + r.id] = (injectedCounts["reflex:" + r.id] || 0) + 1;
+    }
+    if (matchedInstincts.length > 0 || matchedReflexes.length > 0) {
+      const tmpI = INJECTED_COUNTS_FILE + ".tmp." + process.pid;
+      fs.writeFileSync(tmpI, JSON.stringify(injectedCounts), { mode: 0o600 });
+      fs.renameSync(tmpI, INJECTED_COUNTS_FILE);
+    }
   } catch {}
 
   // ── 5. Build output ──────────────────────────────────────────────────

@@ -17,7 +17,10 @@ const SCHEMA_VERSION = 1;
 const CORTEX_DIR = process.env.CORTEX_DIR || path.join(os.homedir(), ".claude", "cortex");
 const IMPACT_FILE = path.join(CORTEX_DIR, "impact.jsonl");
 
-const VALID_EVENTS = new Set(["inject", "follow", "reject", "feedback", "outcome"]);
+// v3.37.0: "suppress" — instinct/reflex matched but withheld (per-session
+// repeat cooldown or token-budget degrade). Correlators ignore it; it keeps
+// the funnel honest about matches that never reached the context.
+const VALID_EVENTS = new Set(["inject", "follow", "reject", "feedback", "outcome", "suppress"]);
 
 function nowIso() {
   return new Date().toISOString().replace(/\.\d{3}/, "");

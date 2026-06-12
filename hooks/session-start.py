@@ -405,12 +405,12 @@ def check_deploy_drift():
 
 
 def main():
-    # Reset per-session token budget
-    budget_file = CORTEX_DIR / '.session-token-budget'
-    try:
-        budget_file.unlink(missing_ok=True)
-    except Exception:
-        pass
+    # Reset per-session token budget + repeat-injection counts (v3.37.0)
+    for fname in ('.session-token-budget', '.session-injected.json'):
+        try:
+            (CORTEX_DIR / fname).unlink(missing_ok=True)
+        except Exception:
+            pass
 
     # Silent YAML normalization pass — repairs instinct files whose regex triggers
     # were written with invalid double-quote escapes (\., \s, \(). Idempotent.
