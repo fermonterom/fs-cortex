@@ -35,7 +35,7 @@ Parallel systems: **Reflexes** (11 deterministic rules, always fire) and **Agent
 ### Dual Injection
 
 1. **SessionStart**: Laws (max 15) + EOD resume + project context bridge (~850 tokens)
-2. **PreToolUse**: Matched instincts (max 3, domain-filtered) + reflexes (max 2) per tool use (~200 tokens max)
+2. **PreToolUse**: Matched instincts (max 3, domain-filtered) + reflexes (max 2) per tool use (~200 tokens max). Same id injects at most 2x per session (v3.37.0 repeat cooldown)
 
 ### Confidence Lifecycle
 
@@ -125,7 +125,7 @@ Open Claude Code and work normally. Cortex works automatically.
 |------|-------------|-------------|
 | `observe.py` | Every tool use | Records observations silently (async, 0 tokens, ~70ms) |
 | `session-start.py` | Session open / `/compact` | Injects your laws + context bridge + EOD resume |
-| `injector.sh` / `injector.js` | Every tool use | Injects matching instincts (max 3) + reflexes (max 2). `.sh` on Unix, `.js` on Windows. |
+| `injector.sh` / `injector.js` | Every tool use | Injects matching instincts (max 3) + reflexes (max 2), same id max 2x/session. `.sh` on Unix, `.js` on Windows. |
 | `session-learner.js` | Session close | Detects error→fix pairs, corrections, workflows → proposals |
 
 You don't configure or run anything. Just work — Cortex learns in the background.
@@ -338,8 +338,8 @@ Backups include: laws, instincts, memory, reflexes, evolved content, proposals, 
 | Laws (max 15) | ~600 | SessionStart (1x) |
 | EOD resume | ~150 | SessionStart (1x per EOD, not repeated) |
 | Context bridge | ~100 | SessionStart (1x) |
-| Instincts (max 3) | ~120 | PreToolUse (if match) |
-| Reflexes (max 2) | ~40 | PreToolUse (if match) |
+| Instincts (max 3) | ~120 | PreToolUse (if match; same id max 2x/session) |
+| Reflexes (max 2) | ~40 | PreToolUse (if match; same id max 2x/session) |
 | Impact funnel (v3.14.0+) | 0 | async writes to `impact.jsonl` |
 | **Session total** | **~2,400** | **Estimated** |
 

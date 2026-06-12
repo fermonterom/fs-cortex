@@ -50,9 +50,12 @@ ARCHIVE_DIR = CORTEX_DIR / "impact.archive"
 # impact.archive/, never deleted. Floor of 15 keeps rotation outside the
 # 14-day consumer window.
 try:
-    ROTATION_DAYS = max(15, int(os.environ.get("CORTEX_IMPACT_ROTATION_DAYS", "") or 15))
+    # v3.37.0: floor raised 15 → 18. The widest reader window is 14 days; a
+    # 15-day live window left a 1-day margin that clock drift or an early
+    # rotation could eat, archiving events the correlator still needed.
+    ROTATION_DAYS = max(18, int(os.environ.get("CORTEX_IMPACT_ROTATION_DAYS", "") or 18))
 except ValueError:
-    ROTATION_DAYS = 15
+    ROTATION_DAYS = 18
 
 # Events with `follow` are emitted by session-learner after reconstructing
 # the "did the next tool call respect the instinct?" signal.
