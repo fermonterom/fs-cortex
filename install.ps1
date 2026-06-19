@@ -20,7 +20,7 @@ $CommandsDir = Join-Path $ClaudeDir "commands"
 $HooksDir = Join-Path (Join-Path $ClaudeDir "hooks") "cortex"
 $SettingsFile = Join-Path $ClaudeDir "settings.json"
 $ClaudeMd = Join-Path $ClaudeDir "CLAUDE.md"
-$NewVersion = "3.37.2"
+$NewVersion = "3.38.0"
 
 # v3.25.1 — explicit downgrade flag (parity with install.sh).
 # A behind-remote repo would silently rewind hooks otherwise.
@@ -294,6 +294,16 @@ foreach ($cmd in $cmdFiles) {
 }
 $cmdNames = ($cmdFiles | ForEach-Object { $_.BaseName }) -join ", "
 Print-Ok "Commands installed: $cmdNames"
+
+# Step 7a: Install executable core scripts (deterministic gather for /cx-eod, etc.)
+# Code, not user data — always overwrite so the live copy tracks the repo.
+Print-Step "Installing core scripts..."
+$coreDest = Join-Path $CortexDir "core"
+New-Item -ItemType Directory -Path $coreDest -Force | Out-Null
+Get-ChildItem ([IO.Path]::Combine($ScriptDir, "core", "*.sh")) -ErrorAction SilentlyContinue | ForEach-Object {
+    Copy-Item $_.FullName $coreDest -Force
+}
+Print-Ok "Core scripts installed to ~/.claude/cortex/core/"
 
 # Step 8: Install hooks
 Print-Step "Installing hooks..."

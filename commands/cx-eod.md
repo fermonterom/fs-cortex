@@ -8,139 +8,216 @@ command: true
 
 ## What it does
 
-Generates an end-of-day summary and saves context for the next session.
+Generates an end-of-day summary and saves context for the next session. Runs a
+deterministic multi-project gather (no LLM) over the last 24 hours, then composes
+a summary. Safe to run multiple times a day (e.g. by cron): each run **regenerates**
+the day's file from fresh data and records a trace of when it ran.
 
 ## Usage
 
 ```
-/cx-eod              # Full end-of-day summary
+/cx-eod              # Full end-of-day summary (interactive)
+/cx-eod --auto       # Non-interactive: regenerate without prompting (for cron)
 /cx-eod --yesterday  # Show the most recent saved summary
 ```
 
 ## Implementation
 
-### Step 1: Gather Context
+### Step 1: Gather Context (deterministic, no LLM)
 
-**CRITICAL**: Scan ALL projects in the registry, not just the current one.
+Run the gather script and parse its JSON. It scans ALL registered projects, not
+just the current one:
 
-Read `~/.claude/cortex/projects/registry.json` to get ALL project roots.
-
-For EACH project root in the registry:
 ```bash
-# Commits in the last 24 hours
-git -C "$PROJECT_ROOT" log --oneline --since="24 hours ago" 2>/dev/null
-# Current branch
-git -C "$PROJECT_ROOT" branch --show-current 2>/dev/null
-# Uncommitted changes
-git -C "$PROJECT_ROOT" status -s 2>/dev/null
-# Open PRs (if gh available)
-gh pr list --repo "$REMOTE" --state open --author @me 2>/dev/null
+bash ~/.claude/cortex/core/_cx-eod-gather.sh
 ```
 
-**IMPORTANT**: Use `--since="24 hours ago"` instead of `--since="00:00"` or date-based filters.
-This captures all activity regardless of when the user runs EOD (23:00, midnight, 2:00 AM).
-Git resolves "24 hours ago" relative to local time, avoiding UTC mismatch issues.
+The script reads `~/.claude/cortex/projects/registry.json` plus each
+`projects/<hash>/observations.jsonl` and the root `observations.jsonl`
+(non-git "global" projects), filters to the **last 24 hours**, runs git per
+project root, and outputs:
 
-Include a project if it has ANY of: commits in last 24h, uncommitted changes, open PRs, or observations in last 24h.
+```json
+{
+  "date": "YYYY-MM-DD",
+  "project_count": 3,
+  "total_observations": 142,
+  "projects": [
+    {
+      "name": "fs-cortex",
+      "root": "/Users/fmm/github/fs-cortex",
+      "observations_today": 25,
+      "tools_used": ["Edit", "Bash", "Read"],
+      "files_touched": ["install.sh", "cx-eod.md"],
+      "errors_today": 0,
+      "git": {
+        "branch": "main",
+        "commits_today": 2,
+        "commits_log": "abc123 fix: ...\ndef456 feat: ...",
+        "uncommitted_files": 1,
+        "status": " M install.sh"
+      }
+    }
+  ]
+}
+```
 
-Also gather from Cortex (last 24 hours):
-- Count recent observations per project: grep timestamps from the last 24h in each `observations.jsonl`
-- Read instincts created/updated recently (check file modification timestamps)
+`git` is `null` for projects whose root is not present on this machine (foreign
+roots from a shared observations file). Compose the summary from this JSON.
+
+**Why a 24h rolling window** (not `--since="00:00"`): captures the full work
+session regardless of when EOD runs (15:00, 22:00, or 02:00 after midnight),
+avoiding UTC/local mismatch. The `date` field is the LOCAL day, matching how
+`hooks/session-start.py` looks up the file to reinject next session.
+
+**Fallback (legacy mode)**: if the script is missing, errors, or returns
+`project_count: 0`, scan the current project directory only:
+
+```bash
+AUTHOR=$(git config user.email 2>/dev/null)
+if [ -n "$AUTHOR" ]; then
+  git log --oneline --since="24 hours ago" --author="$AUTHOR"
+else
+  git log --oneline --since="24 hours ago"
+fi
+git branch --show-current 2>/dev/null
+git status -s 2>/dev/null
+```
+
+Also gather Cortex learning state (file mtimes in the last 24h):
+- New/updated instincts under `~/.claude/cortex/instincts/`
+- Promotions pending (check `/cx-distill` candidates if cheap)
 
 ### Step 2: Generate Summary
 
-Format:
+Compose in this format. `{HH:MM}` is the current local time from `date +%H:%M`.
 
 ```markdown
-# EOD — YYYY-MM-DD
+# EOD — {YYYY-MM-DD}
 
-## Project: [name]
-Branch: [current branch]
+## Ejecuciones hoy
+- {HH:MM} — {project_count} proyectos, {total_observations} observaciones
 
-### What was done
-- [Summary of commits/changes today]
+## Projects Worked Today: {project_count}
 
-### Pending
-- [Uncommitted files]
-- [Open PRs]
-- [TODOs found in modified files]
+### {project-name}
+Branch: {git.branch}
+Observations: {observations_today} | Errors: {errors_today}
 
-### For tomorrow
-- [Next steps, priority items]
+**What was done**
+- {Summary of commits (git.commits_log), grouped by theme}
+- {Files touched: files_touched}
+
+**Pending**
+- {git.uncommitted_files uncommitted files}
 
 ---
 
-## Cortex Learning
-- New instincts: [count]
-- Updated instincts: [count]
-- Observations today: [count]
-- Promotions pending: [yes/no]
+(repeat per project)
 
-## Notes
-- [Any important context to carry over]
+---
+
+## Cross-Project Summary
+
+### For tomorrow
+- {Priority 1 — from uncommitted files, open PRs, recent patterns}
+- {Priority 2}
+
+### Cortex Learning
+- New instincts: {count}
+- Updated instincts: {count}
+- Observations today: {total_observations}
+- Promotions pending: {yes/no}
+
+### Notes
+- {Any important context to carry over}
 
 ## Quick Resume
-> "Yesterday I worked on [projects]. In [project1] I was on branch [branch]
-> doing [what]. Priority for today: [what to do first]."
+> "Yesterday I worked on {projects}. In {project1} I was on branch {branch}
+> doing {what}. Priority for today: {what to do first}."
 ```
 
-### Step 3: Save to Disk
+### Step 3: Save to Disk — idempotent intraday regeneration
 
-Write to `~/.claude/cortex/daily-summaries/YYYY-MM-DD.md`.
-Create directory if it does not exist.
+Write to `~/.claude/cortex/daily-summaries/{date}.md` (create the dir if needed).
+
+**Intraday rule — REGENERATE, do not append.** Because the gather looks back 24h,
+each run already includes everything from earlier today. So:
+
+1. If `{date}.md` already exists, read its `## Ejecuciones hoy` block and keep
+   every prior `- {HH:MM} — …` line.
+2. Append one new line for THIS run (`date +%H:%M` + current counts).
+3. Rewrite the WHOLE file with the merged `## Ejecuciones hoy` block at top and
+   freshly composed sections below. This avoids duplicating project content while
+   leaving a visible trace that EOD ran at 15:02 / 19:01 / 22:03.
+
+Example trace after three cron runs:
+
+```markdown
+## Ejecuciones hoy
+- 15:02 — 4 proyectos, 88 observaciones
+- 19:01 — 5 proyectos, 201 observaciones
+- 22:03 — 5 proyectos, 269 observaciones
+```
+
+### Step 3b: Overwrite behavior
+
+- `--auto` flag OR non-TTY (cron): regenerate silently, never prompt.
+- Interactive with an existing file: regeneration is the default and expected
+  behavior, so do NOT ask "overwrite?" — just regenerate and report that the
+  trace now has N entries.
 
 ### Step 4: Display Summary
 
-Show compact visual format:
+Show a compact visual format:
 
 ```
 ================================================================
-  EOD — YYYY-MM-DD
+  EOD — {YYYY-MM-DD}   (run #{N} today at {HH:MM})
 ================================================================
 
-  PROJECTS ACTIVE: N
+  PROJECTS ACTIVE: {project_count}
   ----------------------------------------
 
-  [project-name] (branch: feature/xyz)
-    Commits: 5 | Files changed: 12
-    Pending: 3 uncommitted files
-    PR: #15 "Add auth flow" — checks passing
-    Tomorrow: finish API tests, deploy to staging
-
-  [project-name-2] (branch: main)
-    Commits: 0 | No pending changes
-    Tomorrow: no action needed
+  {project-name} (branch: {branch})
+    Commits: {commits_today} | Files: {files_touched count}
+    Pending: {uncommitted_files} uncommitted
+    Tomorrow: {next step}
 
   ----------------------------------------
-  CORTEX: +3 observations | +1 instinct today
+  CORTEX: +{total_observations} observations | +{N} instincts today
   ----------------------------------------
 
-  Saved: ~/.claude/cortex/daily-summaries/YYYY-MM-DD.md
+  Saved: ~/.claude/cortex/daily-summaries/{date}.md
 
 ================================================================
 ```
+
+In `--auto` mode keep output terse (one or two lines): file path + run count.
 
 ## Edge cases
 
-- **No activity today**: display "No activity detected in any project today."
-- **Single project**: skip multi-project layout, show only that project
-- **No git in directory**: skip silently
-- **No gh CLI**: show warning but continue without PR/issue data
-- **--yesterday**: read the most recent file in `~/.claude/cortex/daily-summaries/` and display it
+- **No activity today**: display "No activity detected in any project today." and
+  still write the file with the execution trace (so cron leaves a record).
+- **Single project**: skip multi-project layout, show only that project.
+- **No git in directory / foreign root**: `git` is `null` — show observation data
+  only, skip git fields.
+- **No gh CLI**: skip PR data silently.
+- **--yesterday**: read the most recent file in `~/.claude/cortex/daily-summaries/`
+  (`ls -t …/*.md | head -1`) and display it.
 
 ## Resuming next day
 
-At the start of a new session, the user can say:
-
-```
-Read ~/.claude/cortex/daily-summaries/YYYY-MM-DD.md and resume where I left off
-```
-
-Or: `/cx-eod --yesterday`
+`hooks/session-start.py` reads today's (or yesterday's) summary at session start
+and injects the Quick Resume + "For tomorrow" priorities automatically. Or run
+`/cx-eod --yesterday`.
 
 ## What NOT to do
 
-- Do not invent activity that did not happen — use git data only
-- Do not delete or modify any project files
-- Do not limit EOD to the current project — scan ALL registered projects
-- Do not use `--since="00:00"` or date-based filters — always use `--since="24 hours ago"` for timezone safety
+- Do not invent activity that did not happen — use gather/git data only.
+- Do not delete or modify any project files.
+- Do not limit EOD to the current project — the gather scans ALL registered projects.
+- Do not use `--since="00:00"` or date-based filters — always 24h rolling.
+- Do not append duplicate project sections on re-runs — REGENERATE; only the
+  `## Ejecuciones hoy` trace accumulates.
+- Do not include secrets (env vars, tokens, passwords) in the summary.

@@ -4,6 +4,40 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.38.0] — 2026-06-19
+
+### Added
+- **`core/_cx-eod-gather.sh`** — deterministic multi-project gather for
+  `/cx-eod` (pure Node.js, no LLM). Reads `~/.claude/cortex/projects/registry.json`,
+  every `projects/<hash>/observations.jsonl` and the root `observations.jsonl`
+  (non-git "global" projects), filters to the last 24h, runs git per project
+  root, and emits JSON `{date, project_count, total_observations, projects:[{name,
+  root, observations_today, tools_used, files_touched, errors_today, git:{branch,
+  commits_today, commits_log, uncommitted_files, status}}]}`. Adapted to the
+  Cortex observation schema (`ts/ev/tool/err/pid/pname/input`, distinct from
+  Sinapsis). Cross-OS safe: `baseName()` splits on both `/` and `\`, foreign
+  roots are skipped, projects merge by name across machines. Test override via
+  `CORTEX_DIR`. Previously `/cx-eod` made Claude scan projects by hand (token cost).
+- **Intraday idempotent `/cx-eod`**: each run regenerates the day's summary from
+  the 24h window (no duplicate content) and records a `## Ejecuciones hoy` trace
+  block (`HH:MM — N proyectos, M observaciones`) so multiple daily runs are visible.
+- **`/cx-eod --auto` flag**: non-interactive mode for cron/launchd — regenerates
+  without the overwrite prompt (also auto-detected on non-TTY).
+- **`examples/launchd/`**: example macOS launchd agent (`com.cortex.cx-eod.plist`)
+  + `install-cx-eod-agent.sh` helper + README to run `/cx-eod --auto` on a
+  schedule (template defaults 15:00 / 19:00 / 22:00; Linux cron snippet included).
+- **`tests/test_cx_eod_gather.sh`** — 9 hermetic tests for the gather (root/non-git
+  detection, name-merge across subdir+root, cross-OS basename, 24h window,
+  registry resolution, error counting, JSON shape).
+
+### Changed
+- `commands/cx-eod.md` Step 1 now invokes the gather script and composes from its
+  JSON, with a legacy fallback (current-project git scan) when the script is
+  missing, errors, or returns 0 projects.
+- `install.sh` / `install.ps1`: new "Install core scripts" step deploys
+  `core/*.sh` to `~/.claude/cortex/core/` (executable, always overwritten —
+  code, not user data).
+
 ## [3.37.2] — 2026-06-12
 
 ### Fixed
