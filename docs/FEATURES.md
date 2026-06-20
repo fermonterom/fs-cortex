@@ -378,11 +378,11 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 
 ---
 
-## Tests (35 bash suites, 578+ tests, + 1 PowerShell suite)
+## Tests (35 bash suites, 580+ tests, + 1 PowerShell suite)
 
 > Totals verified with `run_all.sh` on 2026-06-09 (34/34 suites green; 569 tests
 > across the 31 suites that print the standard `Results:` counter); v3.38.0 adds
-> `test_cx_eod_gather.sh` (9 tests). The table
+> `test_cx_eod_gather.sh` (11 tests). The table
 > below describes the core suites — `run_all.sh` and CI execute every
 > `tests/test_*.sh` regardless of whether it is listed here.
 
@@ -390,7 +390,7 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 |---|---|---|
 | `test_security.sh` | 7 | Injection, command injection, scrubbing, validation |
 | `test_dream_cycle.sh` | 35 | Jaccard, contradictions (incl. topic-overlap gate), staleness, regex, health, decay formula, **cleanup module 6** |
-| `test_cx_eod_gather.sh` | 9 | **(v3.38.0)** `core/_cx-eod-gather.sh`: root/non-git detection, name-merge across subdir+root, cross-OS basename, 24h rolling window, registry hash→name, error counting, JSON shape |
+| `test_cx_eod_gather.sh` | 11 | **(v3.38.0)** `core/_cx-eod-gather.sh`: root/non-git detection, name-merge across subdir+root, cross-OS basename, 24h rolling window, registry hash→name, error counting, JSON shape, `_archive` skip, MultiEdit capture |
 | `test_observe.sh` | 11 | Scrubbing, is_error, dedup, atomic write, e2e, perf, subagent capture; **v3.37.0**: binary/base64 output detection; **v3.37.2**: heuristic guards (network tools, 2xx, test-runner) |
 | `test_session_learner.sh` | 42 | Error-fix pairs, corrections, chains, proposals, command timeline; **v3.36.1**: semantic fix summary, hollow-fix skip, writeProposals quality gate; **v3.37.0**: err_msg required, input-derived trigger validation, project scope, evidence samples, agent-pattern scoped trigger; **v3.37.1**: rejection tombstones; **v3.37.2**: isError guards + WebFetch 200-OK no-proposal e2e |
 | `test_injector.sh` | 29 | Sanitization, ReDoS, limits, markers, yaml-utils, .last-instinct, engine; **v3.36.1 e2e**: category domain injects with detected stack, hollow action never injects; **v3.37.0 e2e**: per-session repeat cooldown (max 2 + suppress events), token-budget degrade keeps highest-confidence, concurrent-injector count integrity |

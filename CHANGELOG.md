@@ -26,9 +26,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`examples/launchd/`**: example macOS launchd agent (`com.cortex.cx-eod.plist`)
   + `install-cx-eod-agent.sh` helper + README to run `/cx-eod --auto` on a
   schedule (template defaults 15:00 / 19:00 / 22:00; Linux cron snippet included).
-- **`tests/test_cx_eod_gather.sh`** — 9 hermetic tests for the gather (root/non-git
+- **`tests/test_cx_eod_gather.sh`** — 11 hermetic tests for the gather (root/non-git
   detection, name-merge across subdir+root, cross-OS basename, 24h window,
-  registry resolution, error counting, JSON shape).
+  registry resolution, error counting, JSON shape, `_archive` skip, MultiEdit).
 
 ### Changed
 - `commands/cx-eod.md` Step 1 now invokes the gather script and composes from its
@@ -37,6 +37,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `install.sh` / `install.ps1`: new "Install core scripts" step deploys
   `core/*.sh` to `~/.claude/cortex/core/` (executable, always overwritten —
   code, not user data).
+
+### Fixed
+- Pre-release hardening (adversarial review): `_cx-eod-gather.sh` explicitly
+  skips the `_archive/` subdir (was relying on the absent-obs-file path);
+  `MultiEdit` now counts toward `files_touched`; the wrapper emits a valid
+  zero-projects JSON (and exits 0) when Node is missing or errors, instead of
+  empty output, so the `/cx-eod` fallback path triggers cleanly. The launchd
+  install helper escapes paths for both XML and sed before templating the plist.
 
 ## [3.37.2] — 2026-06-12
 

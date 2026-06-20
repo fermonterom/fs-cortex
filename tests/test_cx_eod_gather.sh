@@ -118,6 +118,23 @@ node -e 'console.log(JSON.stringify({ts:new Date(Date.now()-3600000).toISOString
 E=$(run_gather "$C" | field "(r.projects.find(p=>p.name==='ErrProj')||{}).errors_today")
 [ "$E" = "1" ] && pass "errors_today counts err:true (1)" || fail "Expected 1, got '$E'"
 
+# ── TEST 10: _archive subdir is ignored (archived ≠ live activity) ──
+echo "--- Test 10: _archive subdir ignored ---"
+C=$(newcortex); mkdir -p "$C/projects/_archive"
+gen_obs 1 "Edit" "ArchivedProj" > "$C/projects/_archive/observations.jsonl"
+gen_obs 1 "Edit" "LiveProj"     > "$C/observations.jsonl"
+OUT=$(run_gather "$C")
+AR=$(echo "$OUT" | field "r.projects.some(p=>p.name==='ArchivedProj')")
+LV=$(echo "$OUT" | field "r.projects.some(p=>p.name==='LiveProj')")
+{ [ "$AR" = "false" ] && [ "$LV" = "true" ]; } && pass "_archive skipped, live kept" || fail "archived=$AR live=$LV"
+
+# ── TEST 11: MultiEdit observations contribute to files_touched ──
+echo "--- Test 11: MultiEdit counted in files_touched ---"
+C=$(newcortex)
+gen_obs 1 "MultiEdit" "MEProj" "/repo/src/handler.ts" > "$C/observations.jsonl"
+F=$(run_gather "$C" | field "(r.projects.find(p=>p.name==='MEProj')||{}).files_touched.join(',')")
+[ "$F" = "handler.ts" ] && pass "MultiEdit file_path captured" || fail "Expected 'handler.ts', got '$F'"
+
 # ── Summary ──
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed (of $((PASS + FAIL))) ==="

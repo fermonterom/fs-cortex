@@ -44,9 +44,18 @@ fi
 
 mkdir -p "$DEST_DIR" "$HOME/.claude/cortex/log"
 
-# Materialize the template with real paths.
-sed -e "s|__CLAUDE_BIN__|$CLAUDE_BIN|g" \
-    -e "s|__HOME__|$HOME|g" \
+# Materialize the template with real paths. Escape for BOTH XML (the plist is
+# XML — &, <, > must be entities) and sed replacement syntax (&, |, \), so paths
+# containing those characters produce a valid plist instead of breaking sed.
+xml_sed_esc() {
+  printf '%s' "$1" \
+    | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' \
+    | sed -e 's/[\\&|]/\\&/g'
+}
+CLAUDE_BIN_ESC="$(xml_sed_esc "$CLAUDE_BIN")"
+HOME_ESC="$(xml_sed_esc "$HOME")"
+sed -e "s|__CLAUDE_BIN__|$CLAUDE_BIN_ESC|g" \
+    -e "s|__HOME__|$HOME_ESC|g" \
     "$SRC_PLIST" > "$DEST_PLIST"
 
 # Reload (idempotent).

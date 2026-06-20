@@ -297,6 +297,8 @@ Print-Ok "Commands installed: $cmdNames"
 
 # Step 7a: Install executable core scripts (deterministic gather for /cx-eod, etc.)
 # Code, not user data — always overwrite so the live copy tracks the repo.
+# Note: no chmod on Windows-native PS. If these .sh scripts are run via Git Bash
+# or WSL, ensure they are executable there (the bash installer sets +x).
 Print-Step "Installing core scripts..."
 $coreDest = Join-Path $CortexDir "core"
 New-Item -ItemType Directory -Path $coreDest -Force | Out-Null

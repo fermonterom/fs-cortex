@@ -37,7 +37,7 @@ if [ ! -d "$CORTEX_DIR/projects" ] && [ ! -f "$CORTEX_DIR/observations.jsonl" ];
   exit 0
 fi
 
-CORTEX_DIR="$CORTEX_DIR" node -e '
+GATHER_OUT=$(CORTEX_DIR="$CORTEX_DIR" node -e '
 const fs = require("fs");
 const path = require("path");
 const { execFileSync } = require("child_process");
@@ -151,7 +151,7 @@ function summarize(recentLines, name, root, hash) {
   const errorCount = recentLines.filter(l => l.err === true).length;
   const filesTouched = [...new Set(
     recentLines
-      .filter(l => l.tool === "Edit" || l.tool === "Write" || l.tool === "NotebookEdit")
+      .filter(l => l.tool === "Edit" || l.tool === "Write" || l.tool === "MultiEdit" || l.tool === "NotebookEdit")
       .map(l => {
         try {
           const inp = typeof l.input === "string" ? JSON.parse(l.input || "{}") : (l.input || {});
@@ -192,6 +192,7 @@ function add(rec) {
 let entries = [];
 try { entries = fs.readdirSync(projectsDir); } catch (e) {}
 for (const hash of entries) {
+  if (hash === "_archive") continue;            // archived projects are not live activity
   const obsFile = path.join(projectsDir, hash, "observations.jsonl");
   if (!fs.existsSync(obsFile)) continue;
   const recentLines = parseRecent(obsFile);
@@ -225,6 +226,16 @@ const result = {
   projects
 };
 console.log(JSON.stringify(result, null, 2));
-' 2>/dev/null
+' 2>/dev/null)
+NODE_RC=$?
 
+# If Node is missing or errored (non-zero rc or empty output), emit a valid
+# zero-projects JSON so the caller's fallback path triggers cleanly instead of
+# choking on empty/invalid output. Never mask a real crash as silent success.
+if [ "$NODE_RC" -ne 0 ] || [ -z "$GATHER_OUT" ]; then
+  echo '{"date":"'"$(date +%Y-%m-%d)"'","project_count":0,"total_observations":0,"projects":[]}'
+  exit 0
+fi
+
+printf '%s\n' "$GATHER_OUT"
 exit 0
