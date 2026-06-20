@@ -21,7 +21,7 @@ COMMANDS_DIR="$CLAUDE_DIR/commands"
 HOOKS_DIR="$CLAUDE_DIR/hooks/cortex"
 SETTINGS_FILE="$CLAUDE_DIR/settings.json"
 CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
-NEW_VERSION="3.37.2"
+NEW_VERSION="3.38.0"
 
 # v3.25.1 — explicit downgrade flag. The installer is a copy-not-merge of
 # hooks/commands, so running an older `install.sh` over a newer install
@@ -292,6 +292,15 @@ for cmd in "$SCRIPT_DIR/commands/"*.md; do
 done
 INSTALLED_CMDS=$(ls "$SCRIPT_DIR/commands/"*.md 2>/dev/null | xargs -I{} basename {} .md | tr '\n' ', ' | sed 's/,$//')
 print_ok "Commands installed: $INSTALLED_CMDS"
+
+# Step 7a: Install executable core scripts (deterministic gather for /cx-eod, etc.)
+# These are code, not user data — always overwrite so the live copy tracks the repo.
+print_step "Installing core scripts..."
+mkdir -p "$CORTEX_DIR/core"
+for core_script in "$SCRIPT_DIR/core/"*.sh; do
+    [ -f "$core_script" ] && cp "$core_script" "$CORTEX_DIR/core/" && chmod +x "$CORTEX_DIR/core/$(basename "$core_script")"
+done
+print_ok "Core scripts installed to ~/.claude/cortex/core/"
 
 # Step 8: Install hooks (v3.10: observe.py, session-start.py, injector.sh, session-learner.js)
 print_step "Installing hooks..."
