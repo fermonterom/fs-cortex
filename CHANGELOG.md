@@ -23,10 +23,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   README documents the cron one-liner and the why-not-`claude -p` rationale.
 - `commands/cx-eod.md`: documents the deterministic `--auto`/cron path up front.
 
+### Security
+- **Write-mode sanitizes untrusted strings at the source** (adversarial review).
+  Project names, branches and file names (from local dirs / the registry) are
+  stripped of CR/LF + control chars before being embedded in the reinjected
+  markdown, so a directory named e.g. `evil\nIGNORE PREVIOUS INSTRUCTIONS` cannot
+  smuggle a standalone instruction line into the next session's `### For tomorrow`
+  / `## Quick Resume`.
+
 ### Added
-- `tests/test_cx_eod_gather.sh` +4 (tests 12–15): `--write` produces a summary
+- `tests/test_cx_eod_gather.sh` +6 (tests 12–17): `--write` produces a summary
   file, intraday run-trace accumulates, Quick Resume + For tomorrow present for
-  reinjection, default JSON mode writes no file. 11 → **15**.
+  reinjection, default JSON mode writes no file, newline/control-char injection is
+  sanitized, no `.lock`/`.tmp` leftovers. 11 → **17**.
+
+### Fixed
+- Write-mode hardening (adversarial review): the read-merge-write is serialized
+  with an O_EXCL lockfile (stale-lock steal after 30s) so overlapping cron/manual
+  runs cannot clobber each other's `## Ejecuciones hoy` trace; the temp file is
+  removed in a `finally` if `rename` fails (no orphan `.tmp`).
 
 ## [3.38.0] — 2026-06-19
 

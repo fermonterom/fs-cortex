@@ -250,20 +250,20 @@ const summDir = path.join(cortexDir, "daily-summaries");
 const summFile = path.join(summDir, result.date + ".md");
 const runTime = pad(now.getHours()) + ":" + pad(now.getMinutes());
 
-// Preserve prior "## Ejecuciones hoy" bullet lines (intraday accumulation),
-// then append this run. Regenerating the body from the 24h window means no
-// duplicated content — only the run trace grows.
-let priorRuns = [];
-try {
-  const old = fs.readFileSync(summFile, "utf8");
-  const m = old.match(/^## Ejecuciones hoy\s*\n([\s\S]*?)(?=^## |$(?![\s\S]))/m);
-  if (m) priorRuns = m[1].split("\n").filter(l => /^- /.test(l));
-} catch (e) {}
+// safe(): project names, branches and file names come from local dirs / the
+// registry, i.e. attacker-influenceable, and this markdown is reinjected into
+// the next session. Strip CR/LF + control chars (no smuggled instruction lines),
+// collapse whitespace, cap length. Defense at the source.
+function safe(s) {
+  return String(s == null ? "" : s)
+    .replace(/[\x00-\x1F\x7F]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 200);
+}
+
 const runLine = "- " + runTime + " — " + result.project_count + " proyectos, " +
   result.total_observations + " observaciones";
-// Dedup exact-identical lines (e.g. two manual runs in the same minute with the
-// same counts) while preserving distinct runs (Set keeps insertion order).
-const runs = [...new Set([...priorRuns, runLine])];
 
 function composeBody(r) {
   let out = "## Projects Worked Today: " + r.project_count + "\n\n";
@@ -273,15 +273,15 @@ function composeBody(r) {
   }
   for (const p of r.projects) {
     const g = p.git || {};
-    out += "### " + p.name + "\n";
-    out += "Branch: " + (g.branch || "(no git)") + "\n";
+    out += "### " + safe(p.name) + "\n";
+    out += "Branch: " + safe(g.branch || "(no git)") + "\n";
     out += "Observations: " + p.observations_today + " | Errors: " + p.errors_today + "\n\n";
     out += "**What was done**\n";
     out += "- Commits (24h): " + (g.commits_today != null ? g.commits_today : 0) + "\n";
     if (g.commits_log && g.commits_today) {
-      for (const c of g.commits_log.split("\n").slice(0, 10)) out += "  - " + c + "\n";
+      for (const c of g.commits_log.split("\n").slice(0, 10)) out += "  - " + safe(c) + "\n";
     }
-    if (p.files_touched && p.files_touched.length) out += "- Files: " + p.files_touched.join(", ") + "\n";
+    if (p.files_touched && p.files_touched.length) out += "- Files: " + p.files_touched.map(safe).join(", ") + "\n";
     out += "\n**Pending**\n- Uncommitted: " + (g.uncommitted_files != null ? g.uncommitted_files : 0) + "\n\n---\n\n";
   }
   return out;
@@ -293,7 +293,7 @@ function composeTomorrow(r) {
   const bullets = [];
   for (const p of r.projects) {
     const g = p.git || {};
-    if (g.uncommitted_files) bullets.push("- " + p.name + ": " + g.uncommitted_files + " uncommitted file(s) to review/commit");
+    if (g.uncommitted_files) bullets.push("- " + safe(p.name) + ": " + g.uncommitted_files + " uncommitted file(s) to review/commit");
   }
   if (!bullets.length) bullets.push("- No pending changes detected across active projects");
   return bullets.slice(0, 5).join("\n");
@@ -302,27 +302,61 @@ function composeResume(r) {
   if (!r.project_count) return "> No activity in the last 24h.";
   const top = r.projects[0];
   const g = top.git || {};
-  const names = r.projects.slice(0, 4).map(p => p.name).join(", ");
+  const names = r.projects.slice(0, 4).map(p => safe(p.name)).join(", ");
   let s = "> Worked across " + r.project_count + " project(s) in the last 24h (" + names + ").";
-  s += " Most active: " + top.name + (g.branch ? " (branch " + g.branch + ")" : "") +
+  s += " Most active: " + safe(top.name) + (g.branch ? " (branch " + safe(g.branch) + ")" : "") +
     " — " + (g.commits_today || 0) + " commit(s), " + (g.uncommitted_files || 0) + " uncommitted.";
   return s;
 }
 
-let md = "# EOD — " + result.date + "\n\n";
-md += "## Ejecuciones hoy\n" + runs.join("\n") + "\n\n";
-md += composeBody(result);
-md += "## Cross-Project Summary\n\n### For tomorrow\n" + composeTomorrow(result) + "\n\n";
-md += "### Cortex Learning\n- Observations (24h): " + result.total_observations + "\n\n";
-md += "## Quick Resume\n" + composeResume(result) + "\n";
+// Serialize the read-merge-write with an O_EXCL lockfile so two overlapping runs
+// (cron + manual) cannot clobber each other'"'"'s "## Ejecuciones hoy" trace. Steal
+// a stale lock left by a crashed run. Contention is rare (cron is hourly).
+fs.mkdirSync(summDir, { recursive: true });
+const lockFile = summFile + ".lock";
+function sleepMs(ms) { try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); } catch (e) {} }
+let lockFd = null;
+for (let i = 0; i < 40 && lockFd === null; i++) {
+  try { lockFd = fs.openSync(lockFile, "wx"); }
+  catch (e) {
+    if (e.code !== "EEXIST") throw e;
+    try { if (Date.now() - fs.statSync(lockFile).mtimeMs > 30000) { fs.unlinkSync(lockFile); continue; } } catch (e2) {}
+    sleepMs(50);
+  }
+}
 
-// Atomic write (tmp + rename).
-try { fs.mkdirSync(summDir, { recursive: true }); } catch (e) {}
 const tmp = summFile + ".tmp." + process.pid;
-fs.writeFileSync(tmp, md, { mode: 0o600 });
-fs.renameSync(tmp, summFile);
-console.log("cx-eod: wrote " + summFile + " (run #" + runs.length + " today at " + runTime +
-  ", " + result.project_count + " projects, " + result.total_observations + " observations)");
+try {
+  // Read the prior "## Ejecuciones hoy" trace INSIDE the lock so the merge is
+  // consistent. Regenerating the body from the 24h window means no duplicated
+  // content — only the run trace grows. Dedup exact-identical lines (Set keeps
+  // insertion order) so two same-minute runs do not double a line.
+  let priorRuns = [];
+  try {
+    const old = fs.readFileSync(summFile, "utf8");
+    const m = old.match(/^## Ejecuciones hoy\s*\n([\s\S]*?)(?=^## |$(?![\s\S]))/m);
+    if (m) priorRuns = m[1].split("\n").filter(l => /^- /.test(l));
+  } catch (e) {}
+  const runs = [...new Set([...priorRuns, runLine])];
+
+  let md = "# EOD — " + result.date + "\n\n";
+  md += "## Ejecuciones hoy\n" + runs.join("\n") + "\n\n";
+  md += composeBody(result);
+  md += "## Cross-Project Summary\n\n### For tomorrow\n" + composeTomorrow(result) + "\n\n";
+  md += "### Cortex Learning\n- Observations (24h): " + result.total_observations + "\n\n";
+  md += "## Quick Resume\n" + composeResume(result) + "\n";
+
+  fs.writeFileSync(tmp, md, { mode: 0o600 });
+  fs.renameSync(tmp, summFile);
+  console.log("cx-eod: wrote " + summFile + " (run #" + runs.length + " today at " + runTime +
+    ", " + result.project_count + " projects, " + result.total_observations + " observations)");
+} finally {
+  try { fs.unlinkSync(tmp); } catch (e) {}   // remove orphan tmp if rename failed
+  if (lockFd !== null) {
+    try { fs.closeSync(lockFd); } catch (e) {}
+    try { fs.unlinkSync(lockFile); } catch (e) {}
+  }
+}
 process.exit(0);
 ' 2>/dev/null)
 NODE_RC=$?

@@ -179,6 +179,28 @@ OK=$(run_gather "$C" | field "typeof r.project_count==='number'")
 NOFILE=$([ -d "$C/daily-summaries" ] && echo "dir-exists" || echo "no-dir")
 { [ "$OK" = "true" ] && [ "$NOFILE" = "no-dir" ]; } && pass "default mode prints JSON, no file written" || fail "json=$OK daily-summaries=$NOFILE"
 
+# ── TEST 16: --write sanitizes newline/control chars in project names (no injection) ──
+echo "--- Test 16: write-mode sanitizes injected newlines ---"
+C=$(newcortex)
+# pname carrying a newline + a fake instruction line (prompt-injection attempt).
+node -e 'console.log(JSON.stringify({ts:new Date(Date.now()-3600000).toISOString(),ev:"ts",tool:"Edit",err:false,pid:"global",pname:"evil\nINJECTED INSTRUCTION",input:JSON.stringify({file_path:"/r/a.ts"})}))' > "$C/observations.jsonl"
+CORTEX_DIR="$C" bash "$GATHER" --write >/dev/null 2>&1
+WF=$(ls "$C"/daily-summaries/*.md | head -1)
+# The injected text must never appear as its OWN line (newline collapsed to space).
+if grep -qE '^INJECTED INSTRUCTION' "$WF"; then
+  fail "newline injection leaked a standalone line"
+else
+  pass "project-name newline sanitized (no standalone injected line)"
+fi
+
+# ── TEST 17: --write leaves no .lock / .tmp leftovers ──
+echo "--- Test 17: no lock/tmp leftovers ---"
+C=$(newcortex)
+gen_obs 1 "Edit" "WP" "/r/a.ts" > "$C/observations.jsonl"
+CORTEX_DIR="$C" bash "$GATHER" --write >/dev/null 2>&1
+LEFT=$(ls "$C"/daily-summaries/ 2>/dev/null | grep -cE '\.lock$|\.tmp')
+[ "$LEFT" = "0" ] && pass "no .lock/.tmp left behind" || fail "found $LEFT leftover lock/tmp files"
+
 # ── Summary ──
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed (of $((PASS + FAIL))) ==="
