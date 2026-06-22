@@ -28,16 +28,27 @@
 
 CORTEX_DIR="${CORTEX_DIR:-$HOME/.claude/cortex}"
 
+# Mode: default "json" (print gather JSON for a caller to compose from).
+# "--write"/"--auto" → "write" (compose + write the daily summary deterministically,
+# no LLM — this is what a cron invokes directly, bypassing `claude -p`).
+MODE="json"
+case "${1:-}" in
+  --write|--auto) MODE="write" ;;
+esac
+
 if [ "${CORTEX_EOD_DEBUG:-}" = "1" ]; then
   exec 2>>"$HOME/.claude/cortex/log/cx-eod-gather-debug.log"
 fi
 
-if [ ! -d "$CORTEX_DIR/projects" ] && [ ! -f "$CORTEX_DIR/observations.jsonl" ]; then
+# Fast path only in json mode: nothing to gather → emit zero JSON without Node.
+# In write mode we still run Node so it writes a "no activity" summary + trace.
+if [ "$MODE" = "json" ] && [ ! -d "$CORTEX_DIR/projects" ] && [ ! -f "$CORTEX_DIR/observations.jsonl" ]; then
   echo '{"date":"'"$(date +%Y-%m-%d)"'","project_count":0,"total_observations":0,"projects":[]}'
   exit 0
 fi
 
-GATHER_OUT=$(CORTEX_DIR="$CORTEX_DIR" node -e '
+# shellcheck disable=SC2016  # the single-quoted body is JavaScript for `node -e`, not shell
+GATHER_OUT=$(CX_EOD_MODE="$MODE" CORTEX_DIR="$CORTEX_DIR" node -e '
 const fs = require("fs");
 const path = require("path");
 const { execFileSync } = require("child_process");
@@ -225,13 +236,110 @@ const result = {
   total_observations: projects.reduce((s, p) => s + p.observations_today, 0),
   projects
 };
-console.log(JSON.stringify(result, null, 2));
+
+// Default mode: emit JSON for a caller to compose from.
+if (process.env.CX_EOD_MODE !== "write") {
+  console.log(JSON.stringify(result, null, 2));
+  process.exit(0);
+}
+
+// --write mode: compose the daily summary markdown DETERMINISTICALLY (no LLM)
+// and write it, so a cron can call this script directly without spending model
+// quota. The interactive /cx-eod still lets Claude compose with judgment.
+const summDir = path.join(cortexDir, "daily-summaries");
+const summFile = path.join(summDir, result.date + ".md");
+const runTime = pad(now.getHours()) + ":" + pad(now.getMinutes());
+
+// Preserve prior "## Ejecuciones hoy" bullet lines (intraday accumulation),
+// then append this run. Regenerating the body from the 24h window means no
+// duplicated content — only the run trace grows.
+let priorRuns = [];
+try {
+  const old = fs.readFileSync(summFile, "utf8");
+  const m = old.match(/^## Ejecuciones hoy\s*\n([\s\S]*?)(?=^## |$(?![\s\S]))/m);
+  if (m) priorRuns = m[1].split("\n").filter(l => /^- /.test(l));
+} catch (e) {}
+const runLine = "- " + runTime + " — " + result.project_count + " proyectos, " +
+  result.total_observations + " observaciones";
+// Dedup exact-identical lines (e.g. two manual runs in the same minute with the
+// same counts) while preserving distinct runs (Set keeps insertion order).
+const runs = [...new Set([...priorRuns, runLine])];
+
+function composeBody(r) {
+  let out = "## Projects Worked Today: " + r.project_count + "\n\n";
+  if (r.project_count === 0) {
+    out += "No activity detected in any project in the last 24h.\n\n";
+    return out;
+  }
+  for (const p of r.projects) {
+    const g = p.git || {};
+    out += "### " + p.name + "\n";
+    out += "Branch: " + (g.branch || "(no git)") + "\n";
+    out += "Observations: " + p.observations_today + " | Errors: " + p.errors_today + "\n\n";
+    out += "**What was done**\n";
+    out += "- Commits (24h): " + (g.commits_today != null ? g.commits_today : 0) + "\n";
+    if (g.commits_log && g.commits_today) {
+      for (const c of g.commits_log.split("\n").slice(0, 10)) out += "  - " + c + "\n";
+    }
+    if (p.files_touched && p.files_touched.length) out += "- Files: " + p.files_touched.join(", ") + "\n";
+    out += "\n**Pending**\n- Uncommitted: " + (g.uncommitted_files != null ? g.uncommitted_files : 0) + "\n\n---\n\n";
+  }
+  return out;
+}
+
+// Deterministic "For tomorrow" + "Quick Resume" so hooks/session-start.py can
+// reinject context next session (it parses exactly these two section headers).
+function composeTomorrow(r) {
+  const bullets = [];
+  for (const p of r.projects) {
+    const g = p.git || {};
+    if (g.uncommitted_files) bullets.push("- " + p.name + ": " + g.uncommitted_files + " uncommitted file(s) to review/commit");
+  }
+  if (!bullets.length) bullets.push("- No pending changes detected across active projects");
+  return bullets.slice(0, 5).join("\n");
+}
+function composeResume(r) {
+  if (!r.project_count) return "> No activity in the last 24h.";
+  const top = r.projects[0];
+  const g = top.git || {};
+  const names = r.projects.slice(0, 4).map(p => p.name).join(", ");
+  let s = "> Worked across " + r.project_count + " project(s) in the last 24h (" + names + ").";
+  s += " Most active: " + top.name + (g.branch ? " (branch " + g.branch + ")" : "") +
+    " — " + (g.commits_today || 0) + " commit(s), " + (g.uncommitted_files || 0) + " uncommitted.";
+  return s;
+}
+
+let md = "# EOD — " + result.date + "\n\n";
+md += "## Ejecuciones hoy\n" + runs.join("\n") + "\n\n";
+md += composeBody(result);
+md += "## Cross-Project Summary\n\n### For tomorrow\n" + composeTomorrow(result) + "\n\n";
+md += "### Cortex Learning\n- Observations (24h): " + result.total_observations + "\n\n";
+md += "## Quick Resume\n" + composeResume(result) + "\n";
+
+// Atomic write (tmp + rename).
+try { fs.mkdirSync(summDir, { recursive: true }); } catch (e) {}
+const tmp = summFile + ".tmp." + process.pid;
+fs.writeFileSync(tmp, md, { mode: 0o600 });
+fs.renameSync(tmp, summFile);
+console.log("cx-eod: wrote " + summFile + " (run #" + runs.length + " today at " + runTime +
+  ", " + result.project_count + " projects, " + result.total_observations + " observations)");
+process.exit(0);
 ' 2>/dev/null)
 NODE_RC=$?
 
-# If Node is missing or errored (non-zero rc or empty output), emit a valid
-# zero-projects JSON so the caller's fallback path triggers cleanly instead of
-# choking on empty/invalid output. Never mask a real crash as silent success.
+# Write mode: surface real failures so cron logs them. Do NOT fake success.
+if [ "$MODE" = "write" ]; then
+  if [ "$NODE_RC" -ne 0 ] || [ -z "$GATHER_OUT" ]; then
+    echo "cx-eod: gather/write failed (node rc=$NODE_RC). Is node installed and CORTEX_DIR writable?" >&2
+    exit 1
+  fi
+  printf '%s\n' "$GATHER_OUT"
+  exit 0
+fi
+
+# JSON mode: if Node is missing or errored (non-zero rc or empty output), emit a
+# valid zero-projects JSON so the caller's fallback path triggers cleanly instead
+# of choking on empty/invalid output. Never mask a real crash as silent success.
 if [ "$NODE_RC" -ne 0 ] || [ -z "$GATHER_OUT" ]; then
   echo '{"date":"'"$(date +%Y-%m-%d)"'","project_count":0,"total_observations":0,"projects":[]}'
   exit 0

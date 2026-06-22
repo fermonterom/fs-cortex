@@ -9,21 +9,47 @@ command: true
 ## What it does
 
 Generates an end-of-day summary and saves context for the next session. Runs a
-deterministic multi-project gather (no LLM) over the last 24 hours, then composes
-a summary. Safe to run multiple times a day (e.g. by cron): each run **regenerates**
-the day's file from fresh data and records a trace of when it ran.
+deterministic multi-project gather (no LLM) over the last 24 hours. Safe to run
+multiple times a day: each run **regenerates** the day's file from fresh data and
+records a trace of when it ran.
+
+Two paths:
+- **Interactive (`/cx-eod`)** — Claude composes the summary with judgment
+  (prioritized "For tomorrow", prose "Quick Resume") from the gather JSON.
+- **`--auto` (cron)** — the gather script composes and writes the summary
+  **deterministically itself** (`--write`), with **no model call**. This is what
+  a scheduler runs, so it costs **zero model quota** and needs no `claude -p`.
 
 ## Usage
 
 ```
-/cx-eod              # Full end-of-day summary (interactive)
-/cx-eod --auto       # Non-interactive: regenerate without prompting (for cron)
+/cx-eod              # Full interactive summary (Claude composes with judgment)
+/cx-eod --auto       # Deterministic, no LLM — delegates to the gather --write mode
 /cx-eod --yesterday  # Show the most recent saved summary
 ```
 
+### Cron / scheduled use — call the script directly, NOT `claude -p`
+
+Because `--auto` is fully deterministic, automate it by calling the script
+**directly** — do not spend model quota launching a headless `claude`:
+
+```cron
+0 15,19,22 * * * bash ~/.claude/cortex/core/_cx-eod-gather.sh --write >> ~/.claude/cortex/log/cx-eod-cron.log 2>&1
+```
+
+`hooks/session-start.py` reinjects the resulting summary next session.
+
 ## Implementation
 
-### Step 1: Gather Context (deterministic, no LLM)
+### --auto path (deterministic — what cron uses)
+
+Run `bash ~/.claude/cortex/core/_cx-eod-gather.sh --write`. The script composes
+the markdown, merges the `## Ejecuciones hoy` trace, and writes
+`~/.claude/cortex/daily-summaries/<date>.md` — no model involvement. Report the
+one-line confirmation it prints. Stop here; the steps below are for the
+interactive path only.
+
+### Step 1: Gather Context (interactive — deterministic, no LLM)
 
 Run the gather script and parse its JSON. It scans ALL registered projects, not
 just the current one:

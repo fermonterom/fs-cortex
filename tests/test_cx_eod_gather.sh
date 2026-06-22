@@ -135,6 +135,50 @@ gen_obs 1 "MultiEdit" "MEProj" "/repo/src/handler.ts" > "$C/observations.jsonl"
 F=$(run_gather "$C" | field "(r.projects.find(p=>p.name==='MEProj')||{}).files_touched.join(',')")
 [ "$F" = "handler.ts" ] && pass "MultiEdit file_path captured" || fail "Expected 'handler.ts', got '$F'"
 
+# ── TEST 12: --write composes a deterministic summary file (no LLM) ──
+echo "--- Test 12: --write produces a summary file ---"
+C=$(newcortex)
+gen_obs 1 "Edit" "WP" "/r/a.ts" > "$C/observations.jsonl"
+CORTEX_DIR="$C" bash "$GATHER" --write >/dev/null 2>&1
+WF=$(ls "$C"/daily-summaries/*.md 2>/dev/null | head -1)
+{ [ -n "$WF" ] && grep -q '^# EOD —' "$WF" && grep -q '^## Ejecuciones hoy' "$WF"; } \
+  && pass "--write wrote a summary with EOD + Ejecuciones hoy" || fail "no summary file / missing headers ($WF)"
+
+# ── TEST 13: --write accumulates run-trace lines across passes (intraday) ──
+echo "--- Test 13: intraday run-trace accumulates ---"
+C=$(newcortex)
+gen_obs 1 "Edit" "WP" "/r/a.ts" > "$C/observations.jsonl"
+# Two passes; force distinct trace lines by editing the prior file's time + count.
+CORTEX_DIR="$C" bash "$GATHER" --write >/dev/null 2>&1
+WF=$(ls "$C"/daily-summaries/*.md | head -1)
+# Simulate an earlier pass already present with a different time.
+node -e '
+  const fs=require("fs"); const f=process.argv[1];
+  let t=fs.readFileSync(f,"utf8");
+  t=t.replace("## Ejecuciones hoy\n", "## Ejecuciones hoy\n- 09:00 — 1 proyectos, 1 observaciones\n");
+  fs.writeFileSync(f,t);
+' "$WF"
+CORTEX_DIR="$C" bash "$GATHER" --write >/dev/null 2>&1
+N=$(awk '/^## Ejecuciones hoy/{f=1;next}/^## /{f=0}f&&/^- /' "$WF" | grep -c '^- ')
+[ "$N" -ge 2 ] && pass "prior run-trace line preserved (>=2 lines)" || fail "Expected >=2 trace lines, got $N"
+
+# ── TEST 14: --write includes Quick Resume + For tomorrow (session-start parses) ──
+echo "--- Test 14: reinjection sections present ---"
+C=$(newcortex)
+gen_obs 1 "Edit" "WP" "/r/a.ts" > "$C/observations.jsonl"
+CORTEX_DIR="$C" bash "$GATHER" --write >/dev/null 2>&1
+WF=$(ls "$C"/daily-summaries/*.md | head -1)
+S=$(grep -cE '^## Quick Resume$|^### For tomorrow$' "$WF")
+[ "$S" = "2" ] && pass "Quick Resume + For tomorrow both present" || fail "Expected 2 sections, got $S"
+
+# ── TEST 15: default mode (no flag) still prints JSON, writes nothing ──
+echo "--- Test 15: default mode unchanged (JSON only) ---"
+C=$(newcortex)
+gen_obs 1 "Edit" "WP" > "$C/observations.jsonl"
+OK=$(run_gather "$C" | field "typeof r.project_count==='number'")
+NOFILE=$([ -d "$C/daily-summaries" ] && echo "dir-exists" || echo "no-dir")
+{ [ "$OK" = "true" ] && [ "$NOFILE" = "no-dir" ]; } && pass "default mode prints JSON, no file written" || fail "json=$OK daily-summaries=$NOFILE"
+
 # ── Summary ──
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed (of $((PASS + FAIL))) ==="

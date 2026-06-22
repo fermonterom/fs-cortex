@@ -1,23 +1,24 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Example launchd agent for running /cx-eod automatically on macOS.
+  Example launchd agent for running cx-eod automatically on macOS.
+
+  cx-eod's --auto path is FULLY DETERMINISTIC: the gather script composes and
+  writes the daily summary itself, with NO model call. So this agent invokes the
+  script directly via bash — it does NOT launch `claude -p`, costs zero model
+  quota, and needs no auth token or API key.
 
   This is a GENERIC TEMPLATE. Before loading it:
-    1. Replace __CLAUDE_BIN__ with the absolute path to the `claude` CLI
-       (find it with: which claude).
-    2. Replace __HOME__ with your home directory (e.g. /Users/you).
-    3. Adjust the StartCalendarInterval entries to the hours you want.
-       The entries below fire at 15:00, 19:00 and 22:00 every day — change
-       or remove them to taste.
+    1. Replace __HOME__ with your home directory (e.g. /Users/you).
+    2. Adjust the StartCalendarInterval entries to the hours you want.
+       The entries below fire at 15:00, 19:00 and 22:00 every day.
 
   Install with the helper:  bash examples/launchd/install-cx-eod-agent.sh
   Or manually:
     cp this file to ~/Library/LaunchAgents/com.cortex.cx-eod.plist
     launchctl load ~/Library/LaunchAgents/com.cortex.cx-eod.plist
 
-  cx-eod is idempotent: running it three times a day regenerates the same
-  day's summary file (it looks back 24h) and records each run under
-  "## Ejecuciones hoy" — no duplicated content.
+  Running it three times a day regenerates the same day's summary (24h window →
+  no duplicated content) and records each run under "## Ejecuciones hoy".
 -->
 <plist version="1.0">
 <dict>
@@ -26,9 +27,9 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>__CLAUDE_BIN__</string>
-        <string>-p</string>
-        <string>/cx-eod --auto</string>
+        <string>/bin/bash</string>
+        <string>__HOME__/.claude/cortex/core/_cx-eod-gather.sh</string>
+        <string>--write</string>
     </array>
 
     <!-- Run at 15:00, 19:00 and 22:00 every day. Edit/remove as needed. -->
