@@ -285,6 +285,25 @@ printf '\n\n\n\n\n\n' | HOME="$SANDBOX_ENV3" bash "$PROJECT_ROOT/install.sh" > /
 OPTOUT=$(python3 -c "import json; print(json.load(open('$SANDBOX_ENV3/.claude/settings.json'))['env']['CORTEX_AGENT_DISABLE_REFLEXES'])" 2>/dev/null)
 [ "$OPTOUT" = "0" ] && pass "env: user opt-out (=0) preserved" || fail "env: opt-out clobbered (got '$OPTOUT')"
 
+# ── TEST: non-interactive upgrade does not cancel on a piped 'n' (v3.38.2) ──
+echo ""
+echo "--- Non-interactive upgrade (piped 'n' must NOT cancel) ---"
+SANDBOX_NI=$(mktemp -d)
+SANDBOXES+=("$SANDBOX_NI")
+mkdir -p "$SANDBOX_NI/.claude"
+# Fresh install to create an existing installation.
+printf '\n\n\n\n\n\n' | HOME="$SANDBOX_NI" bash "$PROJECT_ROOT/install.sh" > /dev/null 2>&1 || true
+# Upgrade run with a stray 'n' on the pipe — pre-fix this aborted at exit 0.
+NI_OUT=$(printf 'n\nn\n' | HOME="$SANDBOX_NI" bash "$PROJECT_ROOT/install.sh" 2>&1 || true)
+if echo "$NI_OUT" | grep -qi "Installation cancelled"; then
+    fail "non-interactive upgrade cancelled on piped 'n'"
+else
+    pass "non-interactive upgrade proceeds despite piped 'n'"
+fi
+# Explicit -y flag also completes.
+NI_OUT2=$(HOME="$SANDBOX_NI" bash "$PROJECT_ROOT/install.sh" -y < /dev/null 2>&1 || true)
+echo "$NI_OUT2" | grep -qi "installed!" && pass "-y flag completes the install" || fail "-y flag did not complete"
+
 # --- Summary ---
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1
