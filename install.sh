@@ -21,7 +21,7 @@ COMMANDS_DIR="$CLAUDE_DIR/commands"
 HOOKS_DIR="$CLAUDE_DIR/hooks/cortex"
 SETTINGS_FILE="$CLAUDE_DIR/settings.json"
 CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
-NEW_VERSION="3.38.1"
+NEW_VERSION="3.38.2"
 
 # v3.25.1 — explicit downgrade flag. The installer is a copy-not-merge of
 # hooks/commands, so running an older `install.sh` over a newer install
@@ -30,9 +30,11 @@ NEW_VERSION="3.38.1"
 # `bash install.sh`. Default is now: abort on downgrade unless the operator
 # explicitly opts in.
 ALLOW_DOWNGRADE=false
+ASSUME_YES=false
 for arg in "$@"; do
     case "$arg" in
         --allow-downgrade) ALLOW_DOWNGRADE=true ;;
+        -y|--yes|--non-interactive) ASSUME_YES=true ;;
     esac
 done
 
@@ -61,6 +63,13 @@ ask_yes_no() {
     local prompt="$1"
     local default="${2:-y}"
     local yn
+    # Non-interactive (--yes/-y, or no TTY on stdin): assume the default — never
+    # block, and never consume a stray piped char. Fixes the silent
+    # "Installation cancelled" (exit 0) when run from cron/CI with a piped stdin.
+    if [ "${ASSUME_YES:-false}" = true ] || [ ! -t 0 ]; then
+        [ "$default" = "y" ]
+        return
+    fi
     if [ "$default" = "y" ]; then
         read -rp "$(echo -e "${BOLD}$prompt [Y/n]:${NC} ")" yn
         yn="${yn:-y}"
@@ -161,7 +170,9 @@ if ! $HAS_CORTEX; then
     echo ""
     echo -e "${BOLD}Do you have a backup from a previous Cortex installation?${NC}"
     echo "  (Created with /cx-backup — a .tar.gz file)"
-    read -rp "  Path to backup (or Enter to skip): " IMPORT_BACKUP
+    # `|| IMPORT_BACKUP=""` so EOF on a non-interactive stdin (e.g. `-y < /dev/null`)
+    # does not abort under `set -e`; a piped path is still read normally.
+    read -rp "  Path to backup (or Enter to skip): " IMPORT_BACKUP || IMPORT_BACKUP=""
     if [ -n "$IMPORT_BACKUP" ]; then
         if [ ! -f "$IMPORT_BACKUP" ]; then
             print_warn "Not a valid file: $IMPORT_BACKUP — skipping backup import"

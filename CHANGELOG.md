@@ -4,6 +4,23 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.38.2] — 2026-06-22
+
+### Fixed
+- **Installer no longer cancels silently when run non-interactively.** Over an
+  existing install, `install.sh`/`install.ps1` prompt `Update cortex installation?`
+  (default yes); a piped/empty stdin from cron/CI was read as the literal answer
+  and a stray `n` aborted with `Installation cancelled` at **exit 0** — masking
+  that nothing was deployed (hit during the v3.38.1 deploy). `ask_yes_no` /
+  `Ask-YesNo` now assume the default when stdin is not a TTY or `-y`/`--yes`/
+  `--non-interactive` is passed, so unattended `bash install.sh -y` deploys
+  cleanly. Added the `-y`/`--yes`/`--non-interactive` flag to both installers.
+  Follow-up (adversarial review): the fresh-install backup prompt (a plain
+  `read`, not `ask_yes_no`) no longer aborts under `set -e` on an EOF stdin
+  (`read … || IMPORT_BACKUP=""`); `install.ps1` skips the backup `Read-Host` and
+  defaults `Ask-YesNo` when `[Console]::IsInputRedirected` (more reliable than
+  `UserInteractive` alone on CI hosts). Backup-import via a piped path still works.
+
 ## [3.38.1] — 2026-06-22
 
 ### Changed
