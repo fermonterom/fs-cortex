@@ -348,7 +348,7 @@ def inject_eod_resume():
 
     # Extract "For tomorrow" bullets
     tomorrow_match = re.search(
-        r'^### For tomorrow\s*\n(.*?)(?=^###|^##|^---|$)',
+        r'^### For tomorrow\s*\n(.*?)(?=^###|^##|^---|\Z)',
         content, re.MULTILINE | re.DOTALL
     )
     priorities = ""
@@ -537,7 +537,7 @@ def main():
             sanitized = sanitize_injection(tagged_resume, 2000)
             parts.append(f'\n{sanitized}')
         if priorities:
-            parts.append(f'PRIORITIES: {priorities}')
+            parts.append(f'PRIORITIES: {sanitize_injection(priorities, 500)}')
         parts.append(
             'IMPORTANT: Present the EOD resume and priorities to the user in your '
             'FIRST response. Do NOT wait for the user to ask. Greet, summarize '

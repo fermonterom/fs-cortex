@@ -4,6 +4,51 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.38.1] — 2026-06-22
+
+### Changed
+- **`/cx-eod --auto` is now fully deterministic — no model call.** The gather
+  script gained a `--write` mode that composes the daily summary markdown and
+  writes it itself (project sections, `## Ejecuciones hoy` intraday trace with
+  exact-duplicate dedup, plus `## Quick Resume` + `### For tomorrow` so
+  `hooks/session-start.py` can reinject next session). Schedulers call
+  `bash ~/.claude/cortex/core/_cx-eod-gather.sh --write` **directly** instead of
+  `claude -p "/cx-eod --auto"`, so automation costs **zero model quota** and
+  carries no risk of silently billing the paid API (a stray `ANTHROPIC_API_KEY`
+  in a cron environment would have routed a headless `claude -p` to pay-as-you-go).
+  Default (no flag) still prints JSON; the interactive `/cx-eod` still composes
+  with Claude's judgment. Atomic write (tmp + rename).
+- `examples/launchd/` rewritten: the plist invokes `/bin/bash <gather> --write`
+  (not `claude -p`); helper no longer needs the `claude` binary or an auth token;
+  README documents the cron one-liner and the why-not-`claude -p` rationale.
+- `commands/cx-eod.md`: documents the deterministic `--auto`/cron path up front.
+
+### Security
+- **Write-mode sanitizes untrusted strings at the source** (adversarial review).
+  Project names, branches and file names (from local dirs / the registry) are
+  stripped of CR/LF + control chars before being embedded in the reinjected
+  markdown, so a directory named e.g. `evil\nIGNORE PREVIOUS INSTRUCTIONS` cannot
+  smuggle a standalone instruction line into the next session's `### For tomorrow`
+  / `## Quick Resume`.
+- `hooks/session-start.py`: the reinjected `PRIORITIES:` line now also passes
+  through `sanitize_injection()` (only `Quick Resume` did before) — defense in
+  depth for any summary writer, not just the deterministic one.
+
+### Added
+- `tests/test_cx_eod_gather.sh` +6 (tests 12–17): `--write` produces a summary
+  file, intraday run-trace accumulates, Quick Resume + For tomorrow present for
+  reinjection, default JSON mode writes no file, newline/control-char injection is
+  sanitized, no `.lock`/`.tmp` leftovers. 11 → **17**.
+
+### Fixed
+- Write-mode hardening (adversarial review): the read-merge-write is serialized
+  with an O_EXCL lockfile (stale-lock steal after 30s) so overlapping cron/manual
+  runs cannot clobber each other's `## Ejecuciones hoy` trace; the temp file is
+  removed in a `finally` if `rename` fails (no orphan `.tmp`).
+- `hooks/session-start.py` `### For tomorrow` extraction: the stop-anchor `$`
+  under `re.MULTILINE` truncated reinjected priorities to the **first bullet**;
+  changed to `\Z` (matching the `Quick Resume` extractor) so all bullets reinject.
+
 ## [3.38.0] — 2026-06-19
 
 ### Added
