@@ -170,7 +170,9 @@ if ! $HAS_CORTEX; then
     echo ""
     echo -e "${BOLD}Do you have a backup from a previous Cortex installation?${NC}"
     echo "  (Created with /cx-backup — a .tar.gz file)"
-    read -rp "  Path to backup (or Enter to skip): " IMPORT_BACKUP
+    # `|| IMPORT_BACKUP=""` so EOF on a non-interactive stdin (e.g. `-y < /dev/null`)
+    # does not abort under `set -e`; a piped path is still read normally.
+    read -rp "  Path to backup (or Enter to skip): " IMPORT_BACKUP || IMPORT_BACKUP=""
     if [ -n "$IMPORT_BACKUP" ]; then
         if [ ! -f "$IMPORT_BACKUP" ]; then
             print_warn "Not a valid file: $IMPORT_BACKUP — skipping backup import"

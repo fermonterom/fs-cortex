@@ -55,7 +55,7 @@ function Print-Error($msg) { Write-Host "  x $msg" -ForegroundColor Red }
 function Ask-YesNo($prompt, $default = "y") {
     # Non-interactive (-y/--yes, or no interactive host): assume the default —
     # never block on Read-Host. Parity with install.sh.
-    if ($AssumeYes -or -not [Environment]::UserInteractive) { return ($default -eq "y") }
+    if ($AssumeYes -or -not [Environment]::UserInteractive -or [Console]::IsInputRedirected) { return ($default -eq "y") }
     $suffix = @{ $true = "[Y/n]"; $false = "[y/N]" }[$default -eq "y"]
     $answer = Read-Host "$prompt $suffix"
     if ([string]::IsNullOrWhiteSpace($answer)) { $answer = $default }
@@ -146,9 +146,10 @@ if (Test-Path $CortexDir) {
     }
 }
 
-# Step 3: Check for backup to import
+# Step 3: Check for backup to import (interactive only — never block a
+# non-interactive run on Read-Host; parity with install.sh).
 $ImportBackup = ""
-if (-not $HasCortex) {
+if ((-not $HasCortex) -and (-not $AssumeYes) -and (-not [Console]::IsInputRedirected) -and [Environment]::UserInteractive) {
     Write-Host ""
     Write-Host "Do you have a backup from a previous Cortex installation?" -ForegroundColor White
     Write-Host "  (Created with /cx-backup - a .tar.gz file)"

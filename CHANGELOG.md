@@ -15,6 +15,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `Ask-YesNo` now assume the default when stdin is not a TTY or `-y`/`--yes`/
   `--non-interactive` is passed, so unattended `bash install.sh -y` deploys
   cleanly. Added the `-y`/`--yes`/`--non-interactive` flag to both installers.
+  Follow-up (adversarial review): the fresh-install backup prompt (a plain
+  `read`, not `ask_yes_no`) no longer aborts under `set -e` on an EOF stdin
+  (`read … || IMPORT_BACKUP=""`); `install.ps1` skips the backup `Read-Host` and
+  defaults `Ask-YesNo` when `[Console]::IsInputRedirected` (more reliable than
+  `UserInteractive` alone on CI hosts). Backup-import via a piped path still works.
 
 ## [3.38.1] — 2026-06-22
 

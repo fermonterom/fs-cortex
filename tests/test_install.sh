@@ -294,15 +294,18 @@ mkdir -p "$SANDBOX_NI/.claude"
 # Fresh install to create an existing installation.
 printf '\n\n\n\n\n\n' | HOME="$SANDBOX_NI" bash "$PROJECT_ROOT/install.sh" > /dev/null 2>&1 || true
 # Upgrade run with a stray 'n' on the pipe — pre-fix this aborted at exit 0.
-NI_OUT=$(printf 'n\nn\n' | HOME="$SANDBOX_NI" bash "$PROJECT_ROOT/install.sh" 2>&1 || true)
+NI_OUT=$(printf 'n\nn\n' | HOME="$SANDBOX_NI" bash "$PROJECT_ROOT/install.sh" 2>&1); NI_RC=$?
 if echo "$NI_OUT" | grep -qi "Installation cancelled"; then
     fail "non-interactive upgrade cancelled on piped 'n'"
+elif [ "$NI_RC" -eq 0 ] && echo "$NI_OUT" | grep -qi "installed!"; then
+    pass "non-interactive upgrade completes despite piped 'n' (rc=0, 'installed!')"
 else
-    pass "non-interactive upgrade proceeds despite piped 'n'"
+    fail "non-interactive upgrade did not complete (rc=$NI_RC)"
 fi
-# Explicit -y flag also completes.
-NI_OUT2=$(HOME="$SANDBOX_NI" bash "$PROJECT_ROOT/install.sh" -y < /dev/null 2>&1 || true)
-echo "$NI_OUT2" | grep -qi "installed!" && pass "-y flag completes the install" || fail "-y flag did not complete"
+# Explicit -y flag with no stdin also completes cleanly (rc=0 + success banner).
+NI_OUT2=$(HOME="$SANDBOX_NI" bash "$PROJECT_ROOT/install.sh" -y < /dev/null 2>&1); NI_RC2=$?
+{ [ "$NI_RC2" -eq 0 ] && echo "$NI_OUT2" | grep -qi "installed!"; } \
+  && pass "-y flag completes the install (rc=0)" || fail "-y flag did not complete (rc=$NI_RC2)"
 
 # --- Summary ---
 echo "=== Results: $PASS passed, $FAIL failed ==="
