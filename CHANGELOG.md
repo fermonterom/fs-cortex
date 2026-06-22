@@ -30,6 +30,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   markdown, so a directory named e.g. `evil\nIGNORE PREVIOUS INSTRUCTIONS` cannot
   smuggle a standalone instruction line into the next session's `### For tomorrow`
   / `## Quick Resume`.
+- `hooks/session-start.py`: the reinjected `PRIORITIES:` line now also passes
+  through `sanitize_injection()` (only `Quick Resume` did before) — defense in
+  depth for any summary writer, not just the deterministic one.
 
 ### Added
 - `tests/test_cx_eod_gather.sh` +6 (tests 12–17): `--write` produces a summary
@@ -42,6 +45,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   with an O_EXCL lockfile (stale-lock steal after 30s) so overlapping cron/manual
   runs cannot clobber each other's `## Ejecuciones hoy` trace; the temp file is
   removed in a `finally` if `rename` fails (no orphan `.tmp`).
+- `hooks/session-start.py` `### For tomorrow` extraction: the stop-anchor `$`
+  under `re.MULTILINE` truncated reinjected priorities to the **first bullet**;
+  changed to `\Z` (matching the `Quick Resume` extractor) so all bullets reinject.
 
 ## [3.38.0] — 2026-06-19
 
