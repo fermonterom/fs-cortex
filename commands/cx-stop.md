@@ -1,58 +1,15 @@
 ---
 name: cx-stop
-description: Close current session cleanly — flush observations and run Stop hook
+description: "[DEPRECATED v4] Close current session cleanly — flush observations and run Stop hook"
 command: true
 ---
 
-# /cx-stop
+# /cx-stop — DEPRECATED en v4.0.0
 
-## What it does
+Este comando fue eliminado en el set v4 (docs/DESIGN-V4.md).
 
-Manually triggers the Stop hook semantics: runs `session-learner.js` immediately on the current session. Useful when you want to end work on a session and have its patterns analyzed without waiting for Claude Code to detect inactivity.
+**Sin sustituto directo.** Razón: el cierre manual de sesión queda cubierto por `/cx-eod` (acumulativo 24h) y el propio hook Stop del harness (ver DESIGN-V4 §5).
 
-Does NOT close the chat — that's Claude Code's job. Only ensures the learning pipeline runs now.
+Mapeo: cx-analyze/cx-distill/cx-dream/cx-promote/cx-backfill → /cx-maintain (mantenimiento determinista). cx-validate/cx-evolve/cx-downvote/cx-retro → /cx-review (digest humano semanal). cx-timeline/cx-dashboard/cx-export → /cx-status. cx-audit → workflow `cortex-audit`. cx-feedback/cx-feedback-auto/cx-router/cx-stop → eliminados sin sustituto (razón en DESIGN-V4 §5).
 
-Does NOT trigger /cx-eod — EOD is independent and runs nightly.
-
-## Usage
-
-`/cx-stop`
-
-## Implementation
-
-### Step 1: Resolve session ID
-
-Get the current session ID from environment `CORTEX_SESSION_ID` or from Claude Code's session context.
-
-### Step 2: Run session-learner
-
-Execute via Bash:
-
-```bash
-SID="${CORTEX_SESSION_ID:-$(uuidgen 2>/dev/null || python3 -c 'import uuid; print(uuid.uuid4())' 2>/dev/null || python -c 'import uuid; print(uuid.uuid4())' 2>/dev/null || echo unknown)}"
-TS=$(date +%Y%m%d-%H%M%S)
-LOG="${TMPDIR:-/tmp}/cx-stop-${TS}.log"
-printf '{"session_id": "%s"}\n' "$SID" | node ~/.claude/hooks/cortex/session-learner.js > "$LOG" 2>&1
-EXIT=$?
-```
-
-### Step 3: Show result
-
-Read the last 20 lines of the log. Count proposals from `~/.claude/cortex/proposals.json` (delta vs before is informational only — actual count is what matters).
-
-Display:
-
-```
-✅ Session pipeline executed for session $SID
-   Total proposals in queue: N
-   Run /cx-status to inspect knowledge state.
-   Run /cx-validate to review pending proposals.
-```
-
-If exit code != 0, show last 10 lines of log and indicate failure.
-
-## What NOT to do
-
-- Do NOT auto-trigger /cx-eod (EOD runs nightly via cortex-daily-routine).
-- Do NOT close the Claude Code chat (out of scope).
-- Do NOT delete observations (idempotent — can be run multiple times safely).
+Al ejecutarse, este stub SOLO imprime este aviso. No ejecuta ninguna lógica antigua.

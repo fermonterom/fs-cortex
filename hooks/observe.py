@@ -150,12 +150,59 @@ TEST_RUNNER_RE = re.compile(
 )
 
 
+# v4 — port of Sinapsis observe_v3.py (SPEC-PORT-SINAPSIS.md §1). Per-line
+# guards applied BEFORE a candidate ERROR_PATTERNS hit is trusted: subprocess
+# log noise (`[codex]`, `npm warn/notice/info`), dependency version listings
+# (`+ pkg@1.2.3`), ASCII section headers (`===== file =====` from grep/awk),
+# "0 errors" summaries, and bare `warning:` lines that never mention "error".
+# A guarded line is skipped, not the whole output — scanning continues to the
+# next line so a real error later in the same tool call still surfaces.
+GUARD_PREFIX_RE = re.compile(r"^\s*(?:\[codex\]|npm (?:warn|notice|info)\b)", re.I)
+GUARD_VERSION_LISTING_RE = re.compile(r"^\s*\+ [\w@/.\-]+ \d+\.\d+")
+GUARD_HEADER_RE = re.compile(r"^=+ .+ =+$")
+GUARD_ZERO_ERRORS_RE = re.compile(r"\b0 errors\b", re.I)
+GUARD_WARNING_RE = re.compile(r"\bwarning:", re.I)
+
+
+def _is_guarded_line(line):
+    """True if `line` is benign log noise that must never count as an error,
+    even though it may contain a substring matching ERROR_PATTERNS."""
+    if GUARD_PREFIX_RE.search(line):
+        return True
+    if GUARD_VERSION_LISTING_RE.match(line):
+        return True
+    if GUARD_HEADER_RE.match(line.strip()):
+        return True
+    if GUARD_ZERO_ERRORS_RE.search(line):
+        return True
+    if GUARD_WARNING_RE.search(line) and not re.search(r"error", line, re.I):
+        return True
+    return False
+
+
+def _find_error_line(text):
+    """Return the first non-guarded line matching an ERROR_PATTERNS entry,
+    stripped and ready for err_msg, or None if no real error line exists."""
+    if not text:
+        return None
+    for line in str(text).split("\n"):
+        stripped = line.strip()
+        if not stripped or _is_guarded_line(line):
+            continue
+        for pat in ERROR_PATTERNS:
+            if pat.search(line):
+                return stripped
+    return None
+
+
 def detect_is_error(output_text, tool_name=None, response=None):
-    """Returns True if output contains error patterns.
+    """Returns True if output contains a real (non-guarded) error line.
 
     Heuristic fallback only — callers must prefer explicit is_error flags.
     Guards (v3.37.2): network tools and structured 2xx responses never match;
-    test-runner output never matches.
+    test-runner output never matches. Guards (v4/Sinapsis port): per-line
+    noise (npm/codex prefixes, version listings, headers, "0 errors",
+    bare "warning:") never counts as a match — see _is_guarded_line.
     """
     if not output_text:
         return False
@@ -168,10 +215,7 @@ def detect_is_error(output_text, tool_name=None, response=None):
     text = str(output_text)
     if TEST_RUNNER_RE.search(text):
         return False
-    for pat in ERROR_PATTERNS:
-        if pat.search(text):
-            return True
-    return False
+    return _find_error_line(text) is not None
 
 
 # v3.37.0 — binary/base64 payload detection for tc outputs. Screenshots and
@@ -636,16 +680,25 @@ def main():
 
     error_msg = None
     if is_error:
-        # Prefer the flat_text we just extracted (handles content[].text properly)
-        if flat_text:
+        # v4 — port of Sinapsis: err_msg is the first line that actually
+        # matches an ERROR_PATTERNS entry (post-guards), not just the head of
+        # the output. Falls back to the old head-of-output behavior when the
+        # error came from an explicit is_error flag with no lexical match
+        # (e.g. a structured API error with no matching keyword in the body).
+        err_line = _find_error_line(flat_text) if flat_text else None
+        if err_line:
+            error_msg = err_line[:500]
+        elif flat_text:
             error_msg = flat_text[:500]
         elif isinstance(tool_output, dict):
             error_msg = str(tool_output.get("error", tool_output.get("message", "")))[:500]
 
-    # v3.37.0 — caps raised 2000/1000 → 5000/8000. The learner's detectors
-    # need enough of the failing input to derive a specific trigger and
-    # enough of the output to show real evidence in /cx-validate. Disk cost
-    # is bounded by the existing 10MB rotation (archive_if_needed).
+    # v3.37.0 — caps raised 2000/1000 → 5000/8000. v4 (SPEC-PORT-SINAPSIS.md
+    # §1) raised output further 8000 → 10000 to match the Sinapsis port cap.
+    # The learner's detectors need enough of the failing input to derive a
+    # specific trigger and enough of the output to show real evidence in
+    # /cx-validate. Disk cost is bounded by the existing 10MB rotation
+    # (archive_if_needed).
     if isinstance(tool_input_raw, dict):
         input_truncated = json.dumps(tool_input_raw)[:5000]
     else:
@@ -653,11 +706,11 @@ def main():
 
     # For output logging on tc events, prefer flat_text (readable) over raw dict JSON.
     if flat_text and event == "tc":
-        output_truncated = flat_text[:8000]
+        output_truncated = flat_text[:10000]
     elif isinstance(tool_output, dict):
-        output_truncated = json.dumps(tool_output)[:8000]
+        output_truncated = json.dumps(tool_output)[:10000]
     else:
-        output_truncated = str(tool_output)[:8000]
+        output_truncated = str(tool_output)[:10000]
 
     # v3.37.0 — base64/screenshot blobs are disk noise, not signal: recent
     # fersora tc records were mostly image payloads, drowning the few

@@ -10,8 +10,11 @@ command: true
 
 Generates an end-of-day summary and saves context for the next session. Runs a
 deterministic multi-project gather (no LLM) over the last 24 hours. Safe to run
-multiple times a day: each run **regenerates** the day's file from fresh data and
-records a trace of when it ran.
+multiple times a day: each run **regenerates** the day's file from fresh data
+and records a trace of when it ran. Port of Sinapsis' `core/_eod-gather.sh`
+(`docs/SPEC-PORT-SINAPSIS.md` §3) — the accumulation is STRUCTURAL: the gather
+re-reads ALL of `observations.jsonl` for the local day on every call, so
+running it at 15:00, 19:00 and 22:00 each produces a superset, never a diff.
 
 Two paths:
 - **Interactive (`/cx-eod`)** — Claude composes the summary with judgment
@@ -37,7 +40,9 @@ Because `--auto` is fully deterministic, automate it by calling the script
 0 15,19,22 * * * bash ~/.claude/cortex/core/_cx-eod-gather.sh --write >> ~/.claude/cortex/log/cx-eod-cron.log 2>&1
 ```
 
-`hooks/session-start.py` reinjects the resulting summary next session.
+`hooks/session-start.py` reinjects the resulting summary next session, and —
+new in v4 — classifies yesterday's pending items into an Eisenhower matrix
+the first time a NEW day's session starts (see "Resuming next day" below).
 
 ## Implementation
 
@@ -61,7 +66,8 @@ bash ~/.claude/cortex/core/_cx-eod-gather.sh
 The script reads `~/.claude/cortex/projects/registry.json` plus each
 `projects/<hash>/observations.jsonl` and the root `observations.jsonl`
 (non-git "global" projects), filters to the **last 24 hours**, runs git per
-project root, and outputs:
+project root, and outputs (per-project shape matches
+`docs/SPEC-PORT-SINAPSIS.md` §3):
 
 ```json
 {
@@ -70,6 +76,7 @@ project root, and outputs:
   "total_observations": 142,
   "projects": [
     {
+      "hash": "abc123...",
       "name": "fs-cortex",
       "root": "/Users/fmm/github/fs-cortex",
       "observations_today": 25,
@@ -82,14 +89,18 @@ project root, and outputs:
         "commits_log": "abc123 fix: ...\ndef456 feat: ...",
         "uncommitted_files": 1,
         "status": " M install.sh"
-      }
+      },
+      "context": "## Proyecto: fs-cortex — v4 signal-first rewrite in progress"
     }
   ]
 }
 ```
 
 `git` is `null` for projects whose root is not present on this machine (foreign
-roots from a shared observations file). Compose the summary from this JSON.
+roots from a shared observations file). `context` is the first ~300 chars of
+that project's `projects/<hash>/context.md` bridge file (same source
+`hooks/session-start.py:inject_context_bridge` reinjects at SessionStart);
+empty string when the file is missing. Compose the summary from this JSON.
 
 **Why a 24h rolling window** (not `--since="00:00"`): captures the full work
 session regardless of when EOD runs (15:00, 22:00, or 02:00 after midnight),
@@ -112,7 +123,9 @@ git status -s 2>/dev/null
 
 Also gather Cortex learning state (file mtimes in the last 24h):
 - New/updated instincts under `~/.claude/cortex/instincts/`
-- Promotions pending (check `/cx-distill` candidates if cheap)
+- Pending review items — read `~/.claude/cortex/.review-digest.json`
+  (written by `/cx-maintain`, consumed by `/cx-review`); if `total_items > 0`
+  it means human review is backed up, worth a mention in "For tomorrow".
 
 ### Step 2: Generate Summary
 
@@ -133,6 +146,7 @@ Observations: {observations_today} | Errors: {errors_today}
 **What was done**
 - {Summary of commits (git.commits_log), grouped by theme}
 - {Files touched: files_touched}
+- {Context: context, if non-empty}
 
 **Pending**
 - {git.uncommitted_files uncommitted files}
@@ -153,7 +167,7 @@ Observations: {observations_today} | Errors: {errors_today}
 - New instincts: {count}
 - Updated instincts: {count}
 - Observations today: {total_observations}
-- Promotions pending: {yes/no}
+- Review digest pendiente: {N} item(s) -> /cx-review (only if > 0)
 
 ### Notes
 - {Any important context to carry over}
@@ -162,6 +176,12 @@ Observations: {observations_today} | Errors: {errors_today}
 > "Yesterday I worked on {projects}. In {project1} I was on branch {branch}
 > doing {what}. Priority for today: {what to do first}."
 ```
+
+The `--auto`/`--write` path composes the SAME `## Ejecuciones hoy`,
+`### For tomorrow`, `### Cortex Learning` (observations + review-digest line
+only — no LLM-derived instinct counts) and `## Quick Resume` sections
+deterministically from the gather JSON — no model involvement, see
+`core/_cx-eod-gather.sh`'s `composeBody`/`composeTomorrow`/`composeResume`.
 
 ### Step 3: Save to Disk — idempotent intraday regeneration
 
@@ -229,14 +249,32 @@ In `--auto` mode keep output terse (one or two lines): file path + run count.
 - **No git in directory / foreign root**: `git` is `null` — show observation data
   only, skip git fields.
 - **No gh CLI**: skip PR data silently.
+- **No context.md / expired context.md**: `context` is `""` — omit the
+  "Context:" line for that project, do not print an empty bullet.
 - **--yesterday**: read the most recent file in `~/.claude/cortex/daily-summaries/`
   (`ls -t …/*.md | head -1`) and display it.
 
 ## Resuming next day
 
-`hooks/session-start.py` reads today's (or yesterday's) summary at session start
-and injects the Quick Resume + "For tomorrow" priorities automatically. Or run
-`/cx-eod --yesterday`.
+`hooks/session-start.py` does TWO independent things with the daily summaries
+(v4 — `docs/SPEC-PORT-SINAPSIS.md` §3):
+
+1. **Quick Resume reinjection** (`inject_eod_resume`, unchanged since v3.31.0):
+   loads today's summary, or yesterday's if today's does not exist yet, and
+   injects the `## Quick Resume` + `### For tomorrow` sections. Gated by
+   `.eod-last-read` so the same file is not reshown every SessionStart/compact
+   within the same day.
+2. **`[eod-eisenhower]` matrix** (new in v4, independent idempotency marker
+   `.eod-eisenhower-last-shown`): fires ONLY on the first SessionStart of a
+   NEW day when yesterday's summary exists and today's does not yet — i.e.
+   exactly the "first session of the day" moment. Classifies yesterday's
+   `### For tomorrow` bullets into a compact Q1–Q4 matrix using a deterministic
+   keyword heuristic (see `hooks/session-start.py:build_eod_eisenhower`) and
+   injects it tagged `[eod-eisenhower]`, capped at 15 lines. This block does
+   NOT exist in Sinapsis — it is Cortex-specific, built on top of the ported
+   gather.
+
+Or run `/cx-eod --yesterday` manually at any time.
 
 ## What NOT to do
 
@@ -247,3 +285,6 @@ and injects the Quick Resume + "For tomorrow" priorities automatically. Or run
 - Do not append duplicate project sections on re-runs — REGENERATE; only the
   `## Ejecuciones hoy` trace accumulates.
 - Do not include secrets (env vars, tokens, passwords) in the summary.
+- Do not call `/cx-maintain` or `/cx-review` from inside this command — EOD
+  only READS `.review-digest.json` for a one-line mention; generating or
+  acting on it is out of scope here.

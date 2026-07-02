@@ -156,6 +156,21 @@ function gitFor(projectRoot) {
   }
 }
 
+// SPEC-PORT-SINAPSIS.md paragraph 3 per-project record includes a `context`
+// field: short free-text carried forward from each project context.md
+// bridge (the same file hooks/session-start.py:inject_context_bridge
+// reinjects at SessionStart, TTL 14 days). Bounded read + trim: this is a
+// summary field, not a full dump. Missing/foreign/unreadable context.md
+// resolves to an empty string.
+function contextFor(hash) {
+  if (!hash) return "";
+  try {
+    const p = path.join(projectsDir, hash, "context.md");
+    const raw = fs.readFileSync(p, "utf8").replace(/[\x00-\x1F\x7F]/g, " ").trim();
+    return raw.slice(0, 300);
+  } catch (e) { return ""; }
+}
+
 // Aggregate recent observations into a project record.
 function summarize(recentLines, name, root, hash) {
   const tools = [...new Set(recentLines.filter(l => l.tool).map(l => l.tool))];
@@ -179,7 +194,8 @@ function summarize(recentLines, name, root, hash) {
     tools_used: tools,
     files_touched: filesTouched,
     errors_today: errorCount,
-    git: gitFor(root)
+    git: gitFor(root),
+    context: contextFor(hash)
   };
 }
 
@@ -196,6 +212,7 @@ function add(rec) {
   if (!e.git && rec.git) e.git = rec.git;
   if (!e.root && rec.root) e.root = rec.root;
   if (!e.hash && rec.hash) e.hash = rec.hash;
+  if (!e.context && rec.context) e.context = rec.context;
 }
 
 // 1) Per-project subdirs (git-tracked projects). Skips _archive and any dir
@@ -282,6 +299,7 @@ function composeBody(r) {
       for (const c of g.commits_log.split("\n").slice(0, 10)) out += "  - " + safe(c) + "\n";
     }
     if (p.files_touched && p.files_touched.length) out += "- Files: " + p.files_touched.map(safe).join(", ") + "\n";
+    if (p.context) out += "- Context: " + safe(p.context) + "\n";
     out += "\n**Pending**\n- Uncommitted: " + (g.uncommitted_files != null ? g.uncommitted_files : 0) + "\n\n---\n\n";
   }
   return out;
@@ -339,11 +357,21 @@ try {
   } catch (e) {}
   const runs = [...new Set([...priorRuns, runLine])];
 
+  // Cheap read-only peek at the /cx-maintain digest (v4). No engine calls
+  // here — --write must stay LLM-free and dependency-free; this is a single
+  // JSON file read, same cost class as everything else in this script.
+  let reviewLine = "";
+  try {
+    const digest = JSON.parse(fs.readFileSync(path.join(cortexDir, ".review-digest.json"), "utf8"));
+    const n = Number(digest.total_items || 0);
+    if (n > 0) reviewLine = "\n- Review digest pendiente: " + n + " item(s) -> /cx-review";
+  } catch (e) {}
+
   let md = "# EOD — " + result.date + "\n\n";
   md += "## Ejecuciones hoy\n" + runs.join("\n") + "\n\n";
   md += composeBody(result);
   md += "## Cross-Project Summary\n\n### For tomorrow\n" + composeTomorrow(result) + "\n\n";
-  md += "### Cortex Learning\n- Observations (24h): " + result.total_observations + "\n\n";
+  md += "### Cortex Learning\n- Observations (24h): " + result.total_observations + reviewLine + "\n\n";
   md += "## Quick Resume\n" + composeResume(result) + "\n";
 
   fs.writeFileSync(tmp, md, { mode: 0o600 });

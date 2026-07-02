@@ -95,11 +95,16 @@ def load_instincts(dirpath):
         ls = d.get("last_seen", "?")
         if ls and ls != "?" and len(ls) >= 10:
             ls = ls[:10]
+        # v4 (SPEC-PORT-SINAPSIS.md §2): status field — draft (tracked, not
+        # injected) vs confirmed (injectable). Legacy instincts predate the
+        # field; default to "confirmed" per the spec's grandfather rule.
+        status = (d.get("status", "confirmed") or "confirmed").strip().lower()
         out.append({
             "id":         d.get("id", os.path.basename(f)[:-5]),
             "domain":     d.get("domain", "unknown"),
             "confidence": conf,
             "last_seen":  ls,
+            "status":     status,
         })
     return sorted(out, key=lambda x: -x["confidence"])
 
@@ -168,6 +173,28 @@ try:
 except Exception:
     pass
 
+# v4 — próximo /cx-maintain: weekly cadence, tracked via the `.last-distill`
+# compat marker /cx-maintain touches on every run (same marker
+# hooks/session-start.py:check_maintenance reads for its [MAINT] reminder).
+next_maintain = "never run"
+try:
+    mtime = os.path.getmtime(f"{CORTEX}/.last-distill")
+    age_days = (time.time() - mtime) / 86400
+    due_in = 7 - age_days
+    if due_in <= 0:
+        next_maintain = f"OVERDUE by {abs(due_in):.1f}d — run /cx-maintain"
+    else:
+        next_maintain = f"in {due_in:.1f}d"
+except Exception:
+    pass
+
+review_digest_items = 0
+try:
+    with open(f"{CORTEX}/.review-digest.json") as fh:
+        review_digest_items = int(json.load(fh).get("total_items", 0) or 0)
+except Exception:
+    pass
+
 # ── 7. Instinct tracking ──────────────────────────────────────────────────────
 tracking_top = []
 try:
@@ -204,6 +231,10 @@ print(json.dumps({
         "disk":          disk,
         "learn_pending": os.path.exists(f"{CORTEX}/.learn-pending"),
         "mem_size":      mem_size,
+        "next_maintain": next_maintain,
+        "review_digest_items": review_digest_items,
+        "instincts_draft":     sum(1 for i in proj_instincts + global_instincts if i["status"] == "draft"),
+        "instincts_confirmed": sum(1 for i in proj_instincts + global_instincts if i["status"] != "draft"),
     },
     "tracking_top": tracking_top,
     "evolved":      evolved,
@@ -224,6 +255,13 @@ Parse the single JSON blob and render the ASCII dashboard:
 - HYPOTHESES tier: 0.30 ≤ conf < 0.50
 - OBSERVATIONS tier: conf < 0.30
 
+Each instinct also carries `status` (v4, `docs/SPEC-PORT-SINAPSIS.md` §2):
+`draft` (tracked, NOT injected — needs `occurrences >= 5` in `>= 3` distinct
+sessions to auto-confirm via `/cx-maintain`) or `confirmed` (injectable;
+legacy pre-v4 instincts default here). Show the draft/confirmed split as a
+one-line summary using `health.instincts_draft` / `health.instincts_confirmed`
+— do not recompute, the collector already counted it.
+
 **Knowledge by Domain** — from both instinct lists combined, group by `domain`, count total and law-tier (conf ≥ 0.90). Sort by total descending.
 
 **Projects** — render table sorted by `obs` descending. Mark current project with `◀ current`.
@@ -235,7 +273,11 @@ Parse the single JSON blob and render the ASCII dashboard:
 - `unknown`: fallback (fireCount < 10 or no clear category)
 - `[NEVER FIRED]`: fireCount == 0
 
-**System Health** — render `health` fields. Flag `learn_pending` with ⚠.
+**System Health** — render `health` fields. Flag `learn_pending` with ⚠. Render
+`next_maintain` as its own line (e.g. `Próximo /cx-maintain: in 3.2d` or
+`Próximo /cx-maintain: OVERDUE by 1.4d — run /cx-maintain`, flagged with ⚠
+when overdue). Render `review_digest_items` as `Review digest: N item(s)
+pendientes -> /cx-review` when > 0, otherwise `Review digest: al día`.
 
 **Instinct Tracking** — top 10 from `tracking_top`. If empty: "No tracking data yet."
 

@@ -7,7 +7,8 @@ SessionStart (once per 24 h, idempotent) without any human judgment:
   1. Confidence decay  (-0.05 per 30 days unused)
   2. Archive low-confidence instincts (< 0.10)
   3. Auto-validate proposals that meet whitelist criteria (Sprint 7)
-  4. Promote mature instincts to laws (STRICT 7-criteria gate)
+  4. Promote mature instincts to laws (v4 deterministic 4-criteria gate —
+     see auto_promote_to_law docstring / DESIGN-V4.md §3)
   5. Auto-evolve: detect clusters of mature instincts, generate skill drafts (Sprint 7)
 
 Public API
@@ -86,16 +87,26 @@ DECAY_PERIOD_DAYS = 30
 ARCHIVE_THRESHOLD = 0.10
 LAW_THRESHOLD_CONF = 0.95
 LAW_SUSTAINED_DAYS = 14
-LAW_MIN_PROJECTS = 1  # v3.24.0: was 3 — unreachable for solo-project knowledge.
-                      # Audit C found: 11 mature instincts at conf>=0.95 but
-                      # zero promoted ever, because most learnings happen in
-                      # 1-2 projects and `_count_distinct_projects >= 3` was a
-                      # permanent dead-end. Lowered to 1: the other gates
-                      # (LAW_THRESHOLD_CONF=0.95, LAW_SUSTAINED_DAYS=14,
-                      # LAW_MIN_USEFUL_14D=5, LAW_MAX_NOISE_14D=0,
-                      # LAW_JACCARD_THRESHOLD=0.50) still preserve quality.
-LAW_MIN_USEFUL_14D = 5
+LAW_MIN_PROJECTS = 3  # v4 (2026-07-02, DESIGN-V4.md §3): restored 1 → 3.
+                      # v3.24.0 had lowered this to 1 because the old gate
+                      # combo (LAW_SUSTAINED_DAYS + LAW_MIN_DISTINCT_SESSIONS
+                      # + LAW_MIN_USEFUL_14D) already guaranteed quality and
+                      # a 3-project floor was a permanent dead-end for
+                      # solo-project knowledge. v4 drops that whole combo
+                      # (see auto_promote_to_law docstring) and needs
+                      # `projects_seen` to carry the universality signal on
+                      # its own — a law fires at EVERY SessionStart, so
+                      # cross-project evidence is the deliberate bar now.
+LAW_MIN_USEFUL_14D = 5  # v4: no longer read by auto_promote_to_law (kept —
+                        # referenced by legacy tests / possible future reuse).
 LAW_MAX_NOISE_14D = 0
+LAW_MIN_OCCURRENCES_V4 = 10  # v4 (DESIGN-V4.md §3): post-fix occurrence
+                             # counter. `occurrences` pre-v4 was inflated by
+                             # upstream tracking bugs and is not trustworthy;
+                             # `occurrences_v4` starts at 0 per-instinct
+                             # (lazy migration, see _ensure_occurrences_v4)
+                             # and is incremented by the normal tracking
+                             # pipeline going forward.
 LAW_MAX_ACTIVE = 15  # v3.32.0 §4.5: was 12. Raise + deprecation policy
                      # hybrid (Sprint 9 D4): subir cap da espacio inmediato a
                      # candidates conf=0.95 bloqueados HOY; el algoritmo de
@@ -151,7 +162,13 @@ VALIDATE_MIN_CONF = 0.50
 # TODOs ("consider /cx-evolve") — auto-validating them minted 19 instincts
 # with bare 'Agent' triggers that injected the same recommendation on every
 # Agent call (2026-06 corpus audit, SPAM_TRIGGER bucket).
-VALIDATE_AUTO_DOMAINS = {"gotcha", "pattern", "error-recovery"}
+# v4 (2026-07-02, DESIGN-V4.md §2 / CLAUDE.md item 5): 'error-recovery' moved
+# AUTO → HUMAN. `session-learner.js`'s error-recovery detector still confuses
+# normal subprocess output (grep headers, npm warn, codex CLI banners) with
+# real failures (audit-cortex-2026-07-02.md follow-up #6, observe.py not yet
+# fixed in this file's scope) — auto-accepting that domain kept minting
+# gotcha-basura instincts. Human review via /cx-review gates it now.
+VALIDATE_AUTO_DOMAINS = {"gotcha", "pattern"}
 # v3.29.0 (Sprint 8 §4.1): added 'coupling' + 'agent-quality'. Pre-v3.29.0 these
 # were orphan domains — emitted by detectFileCoupling + detectAgentSubtypes but
 # absent from every whitelist, so every proposal fell through to
@@ -159,7 +176,8 @@ VALIDATE_AUTO_DOMAINS = {"gotcha", "pattern", "error-recovery"}
 # here lets the operator review them via `/cx-validate` and decide manually
 # (human-gated, exactly as the Sprint 8 detector overhaul intends).
 VALIDATE_HUMAN_DOMAINS = {"correction", "user-preference", "decision", "workflow",
-                          "coupling", "agent-quality", "agent-evolution"}
+                          "coupling", "agent-quality", "agent-evolution",
+                          "error-recovery"}
 
 # v3.29.5 §F1 — Union of every domain that auto_validate_proposals knows how to
 # handle. Any proposal whose domain falls outside this set is HELD (not pending,
@@ -946,11 +964,49 @@ def _law_content_for_jaccard(law_path: Path) -> str:
         return ""
 
 
+# v4 (2026-07-02, DESIGN-V4.md §3, audit-cortex-2026-07-02.md follow-up #1):
+# a trigger is frequently a raw regex ("Bash|Edit|Write", "Read.*\\(file_path")
+# rather than prose. The old `trigger[:40]` blind char-slice truncated those
+# mid-pattern and shipped laws with a dangling `|` or an unclosed paren —
+# unreadable and, worse, looked like an unterminated regex to a human
+# skimming the law file. Any metacharacter typical of a tool-name alternation
+# routes to a prose summary (tool name only) instead of a char slice.
+_REGEX_METACHAR_RE = re.compile(r'[|()\\[\]^$*+?{}]')
+_TRIGGER_TOOL_NAME_RE = re.compile(r'^([A-Za-z][A-Za-z0-9_]*)')
+
+
+def _summarize_trigger(trigger: str) -> str:
+    """Return a prose-safe trigger phrase, never a raw/truncated regex.
+
+    - Regex-looking trigger (contains alternation/group/anchor metachars):
+      collapse to "<ToolName> se ejecuta" — the tool name is the only part
+      of a compiled matcher trigger that is meaningful prose on its own.
+    - Plain-text trigger: cut at a word boundary (rfind ' '), matching the
+      same policy the LAW_MAX_CHARS cut below already applies — never a
+      hard char slice that can land mid-word.
+    """
+    trigger = trigger.strip()
+    if not trigger:
+        return ""
+    if _REGEX_METACHAR_RE.search(trigger):
+        m = _TRIGGER_TOOL_NAME_RE.match(trigger)
+        tool = m.group(1) if m else "la herramienta"
+        return f"se usa {tool}"
+    if len(trigger) <= 40:
+        return trigger
+    cut = trigger.rfind(" ", 0, 40)
+    if cut <= 0:
+        cut = 40  # no usable word boundary in the first 40 chars — hard cut
+    return trigger[:cut].rstrip(" ,;:")
+
+
 def _derive_law_line(fields: dict) -> str:
     """Derive a ≤200-char one-liner for the law file from the instinct.
 
     v3.35.2 (#56.1): cap raised 120 → 200 and truncation now cuts at a word
     boundary, so a derived law never ends mid-word with a dangling clause.
+    v4 (2026-07-02): trigger truncation routed through `_summarize_trigger`
+    so a regex trigger is never embedded raw/truncated (follow-up #1).
     """
     action = str(fields.get("action", "")).strip()
     trigger = str(fields.get("trigger", "")).strip()
@@ -960,9 +1016,8 @@ def _derive_law_line(fields: dict) -> str:
         line = action
     else:
         # Build "When <trigger>, <action>"
-        if trigger:
-            # Truncate trigger if long
-            short_trigger = trigger[:40] if len(trigger) > 40 else trigger
+        short_trigger = _summarize_trigger(trigger)
+        if short_trigger:
             line = f"When {short_trigger}, {action}"
         else:
             line = action
@@ -1021,20 +1076,87 @@ def _count_distinct_sessions(iid: str, tracking_data: dict) -> int:
     return len(unique)
 
 
+# v4 — once-per-run guard so a missing impact.jsonl only logs one knowledge
+# entry per auto_promote_to_law pass instead of once per skipped instinct.
+_IMPACT_LOG_SKIP_LOGGED = {"done": False}
+
+
+def _ensure_occurrences_v4(fields: dict, text: str, dry_run: bool) -> tuple[int, str]:
+    """Lazily migrate the legacy `occurrences` counter to `occurrences_v4`.
+
+    DESIGN-V4.md §3: pre-v4 `occurrences` was inflated by upstream tracking
+    bugs and is not a trustworthy maturity signal. v4 resets the counter —
+    `occurrences_v4` starts at 0 and is incremented by the normal tracking
+    pipeline going forward; the old value survives as `occurrences_legacy`
+    for forensics but is never read again by the promotion gate. Migration
+    is lazy: it only touches a yaml the moment auto_promote_to_law visits
+    it, never a bulk rewrite of every instinct file.
+
+    Returns (occurrences_v4, possibly-updated text). Caller is responsible
+    for the atomic write (guarded by `dry_run`, matching every other
+    in-place mutation in this function).
+    """
+    if "occurrences_v4" in fields:
+        try:
+            return int(fields["occurrences_v4"]), text
+        except (TypeError, ValueError):
+            return 0, text
+
+    legacy_val = fields.get("occurrences", 0)
+    try:
+        legacy_val = int(legacy_val)
+    except (TypeError, ValueError):
+        legacy_val = 0
+
+    if dry_run:
+        return 0, text
+
+    new_text = _set_frontmatter_field(text, "occurrences_legacy", legacy_val)
+    new_text = _remove_frontmatter_field(new_text, "occurrences")
+    new_text = _set_frontmatter_field(new_text, "occurrences_v4", 0)
+    return 0, new_text
+
+
 def auto_promote_to_law(
     dry_run: bool = False,
 ) -> tuple[list[dict], list[dict]]:
-    """Check all instincts against strict 7-criteria law promotion gate.
+    """Deterministic law promotion gate (v4 — DESIGN-V4.md §3).
+
+    Promotes an instinct to a law when ALL of:
+      - confidence >= LAW_THRESHOLD_CONF (0.95)
+      - seen in >= LAW_MIN_PROJECTS distinct projects (3)
+      - occurrences_v4 >= LAW_MIN_OCCURRENCES_V4 (10, post-fix counter —
+        see `_ensure_occurrences_v4`)
+      - no noise feedback in the last 14 days, per impact.jsonl; if the
+        impact log itself is not accessible the check is SKIPPED (not
+        failed) and the skip is logged once per run
+
+    `law_eligible: false` is respected as an explicit human veto (an
+    instinct demoted from a law must never be re-promoted). `law_eligible:
+    true` is NOT required — the old opt-in flag ("Criteria 8") is gone;
+    statistical maturity across the 4 criteria above is now sufficient by
+    design (P3 — "reglas objetivas sustituyen a flags manuales que nadie
+    pone").
+
+    Two structural constraints are preserved from the pre-v4 gate (not
+    maturity criteria, just "can't do it right now"): no duplicate law
+    (exact id collision or Jaccard >= LAW_JACCARD_THRESHOLD against an
+    existing law) and active law count < LAW_MAX_ACTIVE (with the existing
+    deprecation-candidate surfacing via _find_least_impactful_law).
+
+    The old sustained-14-day-since-threshold field, the >=3-distinct-
+    sessions gate and the useful>=5-in-14d gate are gone: DESIGN-V4.md §3
+    only lists the 4 criteria above as "TODAS" required, and P4 ("menos
+    artefactos, mejores") explicitly retires the flags nobody read.
 
     Returns (promoted, candidates) where:
-      promoted   = instincts that now have a law file
+      promoted   = instincts that now have a law file (source yaml archived)
       candidates = instincts that almost qualify (for surfacing to user)
     """
     today = _dt.datetime.now(_dt.timezone.utc).date()
     impact = _impact_per_iid(days=14)
+    impact_log_accessible = IMPACT_FILE.exists()
     active_laws = _active_law_count()
-    # v3.29.0 §4.16: load instinct-tracking.json ONCE for the whole pass.
-    tracking_data = _load_instinct_tracking()
     promoted: list[dict] = []
     candidates: list[dict] = []
 
@@ -1056,9 +1178,11 @@ def auto_promote_to_law(
         if not iid:
             continue
 
-        # v3.34 Core/Domain split: an instinct explicitly demoted from a law
-        # (law_eligible:false) must never be re-promoted, or the split unravels
-        # on the next distill cycle. Skip it entirely (not even a candidate).
+        # v3.34 Core/Domain split, preserved in v4: an instinct explicitly
+        # demoted from a law (law_eligible:false) must never be re-promoted,
+        # or the split unravels on the next maintain cycle. Skip it
+        # entirely (not even a candidate). `law_eligible:true` no longer
+        # has a role here — see docstring.
         if str(fields.get("law_eligible", "")).strip().lower() == "false":
             continue
 
@@ -1068,73 +1192,51 @@ def auto_promote_to_law(
         except (TypeError, ValueError):
             continue
 
+        # ── v4 lazy migration: occurrences → occurrences_legacy + occurrences_v4
+        occurrences_v4, migrated_text = _ensure_occurrences_v4(fields, text, dry_run)
+        if migrated_text != text:
+            text = migrated_text
+            if not dry_run:
+                _atomic_write(path, text)
+
         failed_reasons: list[str] = []
 
-        # ── Criteria 1: confidence ≥ 0.95 ────────────────────────────────
+        # ── Criteria 1: confidence >= 0.95 ────────────────────────────────
         if conf < LAW_THRESHOLD_CONF:
-            # Not even a candidate — don't clutter the list
-            # But do update/clear the at_law_threshold_since field
-            existing_field = fields.get("at_law_threshold_since")
-            if existing_field and not dry_run:
-                new_text = _remove_frontmatter_field(text, "at_law_threshold_since")
-                _atomic_write(path, new_text)
+            # Not even a candidate — don't clutter the list.
             continue
 
-        # conf ≥ 0.95 — manage at_law_threshold_since
-        threshold_since_str = str(fields.get("at_law_threshold_since", "")).strip()
-        threshold_since: _dt.date | None = None
-        if threshold_since_str:
-            try:
-                threshold_since = _dt.date.fromisoformat(threshold_since_str)
-            except ValueError:
-                threshold_since = None
-
-        if threshold_since is None:
-            # Set the field for the first time
-            if not dry_run:
-                new_text = _set_frontmatter_field(text, "at_law_threshold_since", today.isoformat())
-                _atomic_write(path, new_text)
-            failed_reasons.append("sustained < 14d (just set threshold_since today)")
-        else:
-            days_at_threshold = (today - threshold_since).days
-            if days_at_threshold < LAW_SUSTAINED_DAYS:
-                failed_reasons.append(f"sustained < 14d ({days_at_threshold}d so far)")
-
-        # ── Criteria 2b (v3.29.0 §4.16): ≥ 3 distinct sessions ────────────
-        # v3.33.0 §7.2 C4: grandfather ONLY when tracking entry is absent.
-        distinct_sessions = _count_distinct_sessions(iid, tracking_data)
-        entry = tracking_data.get(iid)
-        has_tracking_entry = isinstance(entry, dict)
-        no_meaningful_tracking = not has_tracking_entry
-        if no_meaningful_tracking and conf >= LAW_THRESHOLD_CONF:
-            distinct_sessions = LAW_MIN_DISTINCT_SESSIONS  # grandfathered
-        if distinct_sessions < LAW_MIN_DISTINCT_SESSIONS:
-            need = LAW_MIN_DISTINCT_SESSIONS - distinct_sessions
-            failed_reasons.append(
-                f"sessions {distinct_sessions}/{LAW_MIN_DISTINCT_SESSIONS} (need {need} more)"
-            )
-
-        # ── Criteria 3: ≥ LAW_MIN_PROJECTS distinct projects ─────────────
-        # v3.29.4: use the constant (lowered to 1 in v3.24.0) instead of
-        # the stale literal "3" so /cx-distill audit output matches the
-        # gate actually applied.
+        # ── Criteria 2: >= LAW_MIN_PROJECTS distinct projects ─────────────
         proj_count = _count_distinct_projects(fields, iid)
         if proj_count < LAW_MIN_PROJECTS:
             failed_reasons.append(f"projects < {LAW_MIN_PROJECTS} ({proj_count} seen)")
 
-        # ── Criteria 4 & 5: impact events ────────────────────────────────
-        iid_impact = impact.get(iid, {"useful": 0, "noise": 0})
-        if iid_impact["noise"] > LAW_MAX_NOISE_14D:
-            failed_reasons.append(f"noise > 0 ({iid_impact['noise']} in 14d)")
-        if iid_impact["useful"] < LAW_MIN_USEFUL_14D:
-            failed_reasons.append(f"useful < 5 ({iid_impact['useful']} in 14d)")
+        # ── Criteria 3: occurrences_v4 >= LAW_MIN_OCCURRENCES_V4 ──────────
+        if occurrences_v4 < LAW_MIN_OCCURRENCES_V4:
+            failed_reasons.append(
+                f"occurrences_v4 < {LAW_MIN_OCCURRENCES_V4} ({occurrences_v4})"
+            )
 
-        # ── Criteria 6: no existing law + Jaccard < 0.50 ─────────────────
+        # ── Criteria 4: no noise feedback in 14d ──────────────────────────
+        if impact_log_accessible:
+            iid_impact = impact.get(iid, {"useful": 0, "noise": 0})
+            if iid_impact["noise"] > LAW_MAX_NOISE_14D:
+                failed_reasons.append(f"noise > 0 ({iid_impact['noise']} in 14d)")
+        elif not _IMPACT_LOG_SKIP_LOGGED.get("done"):
+            # impact.jsonl missing/unreadable — skip this specific check
+            # rather than failing every candidate on infra absence.
+            _log_knowledge(
+                "impact-log-unavailable", "-",
+                "impact.jsonl not accessible; noise-14d check skipped this pass",
+                source="cx-auto-promote",
+            )
+            _IMPACT_LOG_SKIP_LOGGED["done"] = True
+
+        # ── Structural: no existing law + Jaccard < 0.50 ──────────────────
         law_path = LAWS_DIR / f"{iid}.txt"
         if law_path.exists() and "archive" not in str(law_path):
             failed_reasons.append(f"law already exists ({iid}.txt)")
         else:
-            # Jaccard check against all existing laws
             candidate_content = _derive_law_line(fields)
             for law_id, law_content in existing_laws:
                 sim = _jaccard(candidate_content, law_content)
@@ -1142,11 +1244,11 @@ def auto_promote_to_law(
                     failed_reasons.append(f"duplicate of {law_id} (Jaccard {sim:.2f})")
                     break
 
-        # ── Criteria 7: active law count < LAW_MAX_ACTIVE ────────────────
-        # v3.32.0 §4.5: when saturated, propose a deprecation candidate
-        # (lowest useful/(1+noise) ratio, age >= 7d) so the operator
-        # knows which law to retire via /cx-distill --swap. Engine never
-        # auto-swaps — only the operator confirms.
+        # ── Structural: active law count < LAW_MAX_ACTIVE ─────────────────
+        # v3.32.0 §4.5, kept in v4: when saturated, propose a deprecation
+        # candidate (lowest useful/(1+noise) ratio, age >= 7d) so the
+        # operator knows which law to retire via the existing swap
+        # mechanism. Engine never auto-swaps — only the operator confirms.
         if active_laws >= LAW_MAX_ACTIVE:
             candidate = _find_least_impactful_law(impact)
             if candidate:
@@ -1174,20 +1276,6 @@ def auto_promote_to_law(
                     )
                     _LAW_CAP_STALL_LOGGED["done"] = True
 
-        # ── Criteria 8 (v3.34.2): universality opt-in ────────────────────
-        # A law injects at EVERY SessionStart, so promotion is high-impact and
-        # must be deliberate. Statistical maturity ≠ universality: a frequent
-        # instinct can still be project/stack-specific (the bug that let
-        # contextual instincts silently inflate the Core). Require an explicit
-        # `law_eligible: true` to AUTO-promote; everything else is routed to
-        # candidates for human review via /cx-distill — which already surfaces
-        # a "Pending review: N law candidate" reminder at SessionStart, so the
-        # decision is never lost.
-        if str(fields.get("law_eligible", "")).strip().lower() != "true":
-            failed_reasons.append(
-                "not marked law_eligible:true — review + promote via /cx-distill"
-            )
-
         if failed_reasons:
             candidates.append({
                 "id": iid,
@@ -1197,7 +1285,7 @@ def auto_promote_to_law(
             if not dry_run:
                 _log_knowledge("candidate", iid, "; ".join(failed_reasons))
         else:
-            # All 7 criteria pass — promote!
+            # All criteria pass — promote!
             law_line = _derive_law_line(fields)
             promoted.append({"id": iid, "confidence": round(conf, 4)})
             if not dry_run:
@@ -1207,6 +1295,28 @@ def auto_promote_to_law(
                 # Refresh existing laws list for subsequent iterations
                 existing_laws.append((iid, law_line))
                 _log_knowledge("promoted", iid, f"law written: {law_line[:80]}")
+
+                # v4 item 3 (DESIGN-V4.md §3): auto-archive the source
+                # instinct after a successful promotion, same convention
+                # the 2026-07-02 manual cleanup used
+                # (`<id>.promoted-to-law-<YYYYMMDD>.yaml`).
+                archive_dir = path.parent / "archive"
+                ts = today.strftime("%Y%m%d")
+                archive_dest = archive_dir / f"{iid}.promoted-to-law-{ts}.yaml"
+                try:
+                    archive_dir.mkdir(parents=True, exist_ok=True)
+                    path.rename(archive_dest)
+                    _log_knowledge(
+                        "archived", iid,
+                        f"promoted to law; source archived as {archive_dest.name}",
+                        source="cx-auto-promote",
+                    )
+                except OSError as e:
+                    _log_knowledge(
+                        "archive-failed", iid,
+                        f"law promoted but source archive failed: {e}",
+                        source="cx-auto-promote",
+                    )
 
     return promoted, candidates
 
@@ -2149,32 +2259,21 @@ def auto_evolve_detect(dry_run: bool = False) -> dict:
     return {"drafts_generated": drafts_generated, "skipped": skipped}
 
 
-# ── Candidates markdown file ──────────────────────────────────────────────────
+# ── Candidates markdown file (v4: deprecated no-op) ────────────────────────
 
 def _write_candidates_file(candidates: list[dict]) -> None:
-    """Write ~/.claude/cortex/auto-distill-candidates.md with promotion candidates."""
-    if not candidates:
-        # Truncate to empty so the maintenance reminder suppresses itself
-        CANDIDATES_FILE.parent.mkdir(parents=True, exist_ok=True)
-        CANDIDATES_FILE.write_text("", encoding="utf-8")
-        return
+    """DEPRECATED no-op (v4, DESIGN-V4.md §3, item 4).
 
-    today = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
-    lines = [
-        f"# Auto-distill candidates — {today}",
-        "",
-        "These instincts are almost ready for law promotion but did not meet all 7 criteria.",
-        "Run `/cx-distill` to review and manually promote if appropriate.",
-        "",
-    ]
-    for c in candidates:
-        lines.append(f"## {c['id']} (conf={c['confidence']})")
-        for r in c["reasons"]:
-            lines.append(f"- {r}")
-        lines.append("")
-
-    CANDIDATES_FILE.parent.mkdir(parents=True, exist_ok=True)
-    CANDIDATES_FILE.write_text("\n".join(lines), encoding="utf-8")
+    Pre-v4 this wrote ~/.claude/cortex/auto-distill-candidates.md — a
+    mailbox nobody read (§1 of DESIGN-V4.md: "era un buzón que nadie
+    leía"). v4 promotion is a deterministic 4-criteria gate (see
+    `auto_promote_to_law`); an instinct that doesn't meet it is simply not
+    a candidate, full stop — there's nothing to review in a separate file.
+    `run_auto_distill` still calls this (kept for call-site compatibility)
+    but the body is now a no-op; any pre-existing candidates file is left
+    untouched on disk for the operator to remove manually.
+    """
+    return
 
 
 # ── Rate-limit marker ─────────────────────────────────────────────────────────
