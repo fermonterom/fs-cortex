@@ -1710,6 +1710,113 @@ PYEOF
                                 || fail "#56 tags writer: got '$result'"
 rm -rf "$T52"
 
+# ── Test 53: promote-counts-projects-from-tracking-json (AD fix #2, 2026-07-02) ──
+# instinct-tracking.json's projects_seen[] (written by injector-engine.js at
+# PreToolUse time) must count toward Criteria 2, even when the YAML itself
+# only carries a single project_id and no projects_seen list, and the
+# instinct id has no matching file under any projects/*/instincts/ dir.
+echo "--- Test 53: promote-counts-projects-from-tracking-json ---"
+T53="$(mktemp -d -t distill-t53-XXXXXX)"
+export CORTEX_DIR="$T53"
+TODAY=$(python3 -c "from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime('%Y-%m-%d'))")
+mkdir -p "$T53/instincts/global" "$T53/laws"
+cat > "$T53/instincts/global/t53-trackingproj.yaml" <<YAML
+---
+id: t53-trackingproj
+confidence: 0.9500
+domain: testing
+trigger: "Bash"
+action: "Always verify test results before reporting success to user"
+last_seen: $TODAY
+first_seen: $TODAY
+occurrences_v4: 20
+project_id: proj-alpha
+law_eligible: true
+---
+YAML
+cat > "$T53/instinct-tracking.json" <<JSON
+{
+  "t53-trackingproj": {
+    "count": 20,
+    "sessions": ["s1", "s2", "s3"],
+    "sessions_seen": ["s1", "s2", "s3"],
+    "projects_seen": ["proj-alpha", "proj-beta", "proj-gamma"],
+    "first_seen": "$TODAY"
+  }
+}
+JSON
+make_impact_events "$T53/impact.jsonl" "t53-trackingproj" 6 0
+
+result=$(python3 - <<PYEOF
+$(_py_patch "$T53")
+promoted, candidates = de.auto_promote_to_law()
+was_promoted = any(p['id'] == 't53-trackingproj' for p in promoted)
+law_exists = (de.LAWS_DIR / 't53-trackingproj.txt').exists()
+print(was_promoted, law_exists)
+PYEOF
+)
+if echo "$result" | grep -q "True True"; then
+  pass "promote-counts-projects-from-tracking-json: 1 YAML project + 3 in tracking.json -> promoted"
+else
+  fail "promote-counts-projects-from-tracking-json: got '$result'"
+fi
+
+# Sanity check in isolation: _count_distinct_projects alone must return 3
+# (1 from YAML project_id + 2 NEW from tracking.json, deduped against the
+# YAML's own proj-alpha).
+result2=$(python3 - <<PYEOF
+$(_py_patch "$T53")
+fields = {'project_id': 'proj-alpha'}
+tracking = de._load_instinct_tracking()
+n = de._count_distinct_projects(fields, 't53-trackingproj', tracking)
+print(n)
+PYEOF
+)
+[ "$result2" = "3" ] && pass "_count_distinct_projects fuses YAML + tracking.json + filesystem, deduped (3)" \
+                      || fail "_count_distinct_projects: got '$result2' (want 3)"
+rm -rf "$T53"
+
+# ── Test 54: proposal-to-instinct-yaml-nests-draft (AD fix #3, 2026-07-02) ──
+# _proposal_to_instinct_yaml (used by cx-auto-validate) must write
+# `status: draft` — DESIGN-V4.md §2's 5-occurrences/3-sessions gate only
+# applies if the instinct is born draft; pre-fix it carried no status field
+# at all, which parse_yaml_frontmatter/session-learner.js/cx-status.md all
+# grandfather-default to "confirmed", skipping the gate entirely.
+echo "--- Test 54: proposal-to-instinct-yaml-nests-draft ---"
+T54="$(mktemp -d -t distill-t54-XXXXXX)"
+export CORTEX_DIR="$T54"
+result=$(python3 - <<PYEOF
+$(_py_patch "$T54")
+y = de._proposal_to_instinct_yaml(
+    {'id': 't54', 'trigger': 'Bash', 'action': 'do x', 'confidence': 0.6,
+     'domain': 'gotcha', 'scope': 'global', 'tags': []},
+    '2026-07-02')
+import re
+m = re.search(r'^status:\s*(\S+)', y, re.M)
+print(m.group(1) if m else 'MISSING')
+PYEOF
+)
+[ "$result" = "draft" ] && pass "_proposal_to_instinct_yaml writes status: draft" \
+                        || fail "_proposal_to_instinct_yaml status field: got '$result'"
+
+# End-to-end via auto_validate_proposals: the generated instinct file on
+# disk must carry status: draft too (not just the raw generator function).
+T54B="$(mktemp -d -t distill-t54b-XXXXXX)"
+export CORTEX_DIR="$T54B"
+make_proposal "$T54B/proposals.json" "t54-e2e-gotcha" "0.60" "gotcha"
+result2=$(python3 - <<PYEOF
+$(_py_patch "$T54B")
+r = de.auto_validate_proposals()
+content = (de.CORTEX_DIR / 'instincts' / 'global' / 't54-e2e-gotcha.yaml').read_text()
+import re
+m = re.search(r'^status:\s*(\S+)', content, re.M)
+print(m.group(1) if m else 'MISSING')
+PYEOF
+)
+[ "$result2" = "draft" ] && pass "auto_validate_proposals: instinct written to disk carries status: draft" \
+                         || fail "auto_validate_proposals status field: got '$result2'"
+rm -rf "$T54" "$T54B"
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

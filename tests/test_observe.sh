@@ -267,6 +267,22 @@ assert _find_error_line(real_error) == 'Error: ENOENT: no such file or directory
 print('OK')
 " | grep -q "OK" && pass "v4 guards: npm/header/codex/0-errors/bare-warning ignored, real ENOENT error line extracted" || fail "v4 guards + err_msg line extraction"
 
+# --- Test 9b: AD fix #4 — [codex] prefix guard does not mask real errors (2026-07-02) ---
+python3 -c "
+from observe import detect_is_error, _find_error_line
+
+# Benign codex log line — no strong error token — stays guarded.
+codex_benign = '[codex] Starting task'
+assert detect_is_error(codex_benign) == False, '[codex] Starting task should stay guarded'
+assert _find_error_line(codex_benign) is None, '[codex] Starting task should stay guarded (err line)'
+
+# Real error surfaced through the [codex] log prefix — must NOT be masked.
+codex_real_error = '[codex] error: authentication failed'
+assert detect_is_error(codex_real_error) == True, '[codex] error: authentication failed must be detected'
+assert _find_error_line(codex_real_error) == '[codex] error: authentication failed', _find_error_line(codex_real_error)
+print('OK')
+" | grep -q "OK" && pass "AD fix #4: [codex] error: line detected, [codex] Starting task stays guarded" || fail "AD fix #4: [codex] guard override"
+
 # --- Test 10: output cap raised to 10.000 chars (v4 — SPEC-PORT-SINAPSIS.md §1) ---
 echo "--- Output cap (10k) ---"
 SANDBOX_CAP=$(mktemp -d)

@@ -163,11 +163,35 @@ GUARD_HEADER_RE = re.compile(r"^=+ .+ =+$")
 GUARD_ZERO_ERRORS_RE = re.compile(r"\b0 errors\b", re.I)
 GUARD_WARNING_RE = re.compile(r"\bwarning:", re.I)
 
+# AD fix #4 (2026-07-02) — the subprocess log-prefix guard (`[codex]`, `npm
+# warn/notice/info`) was unconditional: `[codex] error: authentication
+# failed` was silently discarded because the LINE started with `[codex]`,
+# even though it is a real failure the subprocess is reporting through its
+# own log prefix, not benign noise. Prefixed tools still emit real errors
+# ("[codex] error: ...", "npm notice failed to fetch ..."). A strong error
+# token anywhere in the line overrides the prefix guard specifically — the
+# other guards (version listings, `=== headers ===`, "0 errors" summaries,
+# bare "warning:") stay unconditional because they are structural noise
+# shapes, not a log-prefix convention that a real tool failure could also
+# start with.
+#
+# Divergence from the literal AD wording ("error:|failed|exception|
+# traceback|fatal"): bare `failed` is deliberately EXCLUDED from the
+# override. `failed` alone is exactly the word ERROR_PATTERNS already
+# treats as noisy prose ("request has failed to keep up with security
+# patches", "[codex] task failed to reach quorum, retrying" — both
+# regression-tested below as benign) — including it here would flip those
+# known-benign lines back into false-positive errors, reintroducing the
+# exact class of bug v3.37.2 fixed. `error:` (colon-qualified, i.e. a tool
+# actually labeling something as an error) plus `exception`/`traceback`/
+# `fatal` are unambiguous enough to safely override the prefix guard.
+STRONG_ERROR_TOKEN_RE = re.compile(r"error:|\bexception\b|\btraceback\b|\bfatal\b", re.I)
+
 
 def _is_guarded_line(line):
     """True if `line` is benign log noise that must never count as an error,
     even though it may contain a substring matching ERROR_PATTERNS."""
-    if GUARD_PREFIX_RE.search(line):
+    if GUARD_PREFIX_RE.search(line) and not STRONG_ERROR_TOKEN_RE.search(line):
         return True
     if GUARD_VERSION_LISTING_RE.match(line):
         return True

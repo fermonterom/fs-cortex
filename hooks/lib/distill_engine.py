@@ -656,8 +656,20 @@ def archive_decayed(threshold: float = ARCHIVE_THRESHOLD, dry_run: bool = False)
 
 # ── 3. Auto-promote to law ────────────────────────────────────────────────────
 
-def _count_distinct_projects(fields: dict, iid: str) -> int:
-    """Count distinct project hashes where this instinct has been seen."""
+def _count_distinct_projects(fields: dict, iid: str, tracking_data: dict | None = None) -> int:
+    """Count distinct project hashes where this instinct has been seen.
+
+    AD fix #2 (2026-07-02): injector-engine.js writes `projects_seen[]` into
+    instinct-tracking.json on every PreToolUse match (the live, cross-project
+    signal — see injector-engine.js:462-470), but this function pre-fix only
+    looked at the YAML's own `projects_seen` field and the filesystem — both
+    of which stay empty for instincts that only ever matched via the
+    injector's inline tracking. Result: the law-promotion gate's Criteria 2
+    (`>= LAW_MIN_PROJECTS distinct projects`) was structurally unreachable
+    for exactly the instincts it's meant to detect. Fusing in
+    instinct-tracking.json closes that gap; the three sources are deduped
+    into one set.
+    """
     seen: set[str] = set()
 
     # From the YAML itself
@@ -665,13 +677,27 @@ def _count_distinct_projects(fields: dict, iid: str) -> int:
     if pid:
         seen.add(pid)
 
-    # From projects_seen[] list field
+    # From projects_seen[] list field (YAML)
     ps = fields.get("projects_seen")
     if isinstance(ps, list):
         for p in ps:
             s = str(p).strip()
             if s:
                 seen.add(s)
+
+    # From instinct-tracking.json's projects_seen[] (injector-engine.js,
+    # PreToolUse-time writes — AD fix #2).
+    if tracking_data is None:
+        tracking_data = _load_instinct_tracking()
+    if isinstance(tracking_data, dict):
+        entry = tracking_data.get(iid)
+        if isinstance(entry, dict):
+            tracked_ps = entry.get("projects_seen")
+            if isinstance(tracked_ps, list):
+                for p in tracked_ps:
+                    s = str(p).strip()
+                    if s:
+                        seen.add(s)
 
     # From filesystem: check all project instinct dirs for the same id
     proj_dir = CORTEX_DIR / "projects"
@@ -1157,6 +1183,10 @@ def auto_promote_to_law(
     impact = _impact_per_iid(days=14)
     impact_log_accessible = IMPACT_FILE.exists()
     active_laws = _active_law_count()
+    # AD fix #2 — loaded once per run and passed to _count_distinct_projects
+    # so instinct-tracking.json's projects_seen[] (injector-engine.js writes)
+    # counts toward Criteria 2 without a per-instinct file read.
+    tracking_data = _load_instinct_tracking()
     promoted: list[dict] = []
     candidates: list[dict] = []
 
@@ -1207,7 +1237,7 @@ def auto_promote_to_law(
             continue
 
         # ── Criteria 2: >= LAW_MIN_PROJECTS distinct projects ─────────────
-        proj_count = _count_distinct_projects(fields, iid)
+        proj_count = _count_distinct_projects(fields, iid, tracking_data)
         if proj_count < LAW_MIN_PROJECTS:
             failed_reasons.append(f"projects < {LAW_MIN_PROJECTS} ({proj_count} seen)")
 
@@ -1430,6 +1460,14 @@ def _proposal_to_instinct_yaml(proposal: dict, today: str) -> str:
         f"first_seen: '{_yaml_single_quote(today)}'",
         f"last_seen: '{_yaml_single_quote(today)}'",
         f"occurrences: 1",
+        # AD fix #3 (2026-07-02) — DESIGN-V4.md §2: "un instinct nuevo nace
+        # como draft y solo pasa a confirmed ... con >=5 ocurrencias en >=3
+        # sesiones". Pre-fix this generator (used by cx-auto-validate) never
+        # wrote `status`, so parse_yaml_frontmatter/session-learner.js
+        # treated the instinct as already-confirmed (grandfather default —
+        # see cx-status.md's load_instincts) and it injected immediately
+        # with zero tracked occurrences, skipping the draft gate entirely.
+        f"status: draft",
         f"evidence:",
         f"{evidence_line}",
         "---",

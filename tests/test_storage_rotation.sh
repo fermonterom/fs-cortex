@@ -232,8 +232,17 @@ n_snap=$(ls "$S9/daily-snapshots" | wc -l | tr -d ' ')
 [ "$n_snap" = "3" ] && pass "daily-snapshots pruned to keep=3" || fail "snapshots: $n_snap (want 3)"
 [ -f "$S9/daily-snapshots/snap-05.json" ] && pass "newest snapshot survives" || fail "newest snapshot deleted"
 [ ! -f "$S9/daily-snapshots/snap-01.json" ] && pass "oldest snapshot pruned" || fail "oldest snapshot kept"
-n_sum=$(ls "$S9/daily-summaries" | wc -l | tr -d ' ')
-[ "$n_sum" = "3" ] && pass "daily-summaries pruned to keep=3" || fail "summaries: $n_sum (want 3)"
+[ ! -d "$S9/daily-snapshots/archive" ] && pass "daily-snapshots has no archive dir (still hard-deleted)" || fail "daily-snapshots archive dir unexpectedly created"
+# AD fix #5 (2026-07-02): daily-summaries are archived, not unlinked — count
+# only files at the top level (the new archive/ subdir is excluded by the
+# isFile() filter in _pruneDirByCount, same reason it doesn't inflate "keep").
+n_sum=$(find "$S9/daily-summaries" -maxdepth 1 -type f | wc -l | tr -d ' ')
+[ "$n_sum" = "3" ] && pass "daily-summaries pruned to keep=3 (live files)" || fail "summaries: $n_sum (want 3)"
+[ -f "$S9/daily-summaries/sum-05.md" ] && pass "newest summary survives" || fail "newest summary deleted"
+[ ! -f "$S9/daily-summaries/sum-01.md" ] && pass "oldest summary not live anymore" || fail "oldest summary still live"
+n_sum_archive=$(ls "$S9/daily-summaries/archive" 2>/dev/null | wc -l | tr -d ' ')
+[ "$n_sum_archive" = "2" ] && pass "2 pruned summaries archived, not deleted" || fail "summaries archive has $n_sum_archive (want 2)"
+[ -f "$S9/daily-summaries/archive/sum-01.md" ] && pass "oldest summary content preserved in archive" || fail "sum-01.md missing from archive"
 [ ! -f "$S9/.fire-once/old-marker" ] && pass "stale fire-once marker pruned" || fail "stale marker kept"
 [ -f "$S9/.fire-once/fresh-marker" ] && pass "fresh fire-once marker kept" || fail "fresh marker pruned"
 rm -rf "$S9"
