@@ -127,7 +127,9 @@ T3="$(mktemp -d -t cortex-killsw-t3-XXXXXX)"
 trap 'rm -rf "$T3"' EXIT
 
 # Seed: one pending whitelisted proposal that, if auto-validate runs, would
-# materialise as an instinct YAML.
+# materialise as an instinct YAML. v4 (DESIGN-V4.md §2): 'error-recovery'
+# moved AUTO → HUMAN, so the negative control below needs a domain that's
+# still AUTO-eligible ('gotcha') to actually prove the pipeline ran.
 cat > "$T3/proposals.json" <<'JSON'
 [
   {
@@ -135,7 +137,7 @@ cat > "$T3/proposals.json" <<'JSON'
     "trigger": "Bash",
     "action": "Always run tests before push",
     "confidence": 0.60,
-    "domain": "error-recovery",
+    "domain": "gotcha",
     "scope": "global",
     "project_id": "global",
     "project_name": "cross-project",
@@ -214,7 +216,7 @@ else
 fi
 
 # Negative control: removing the switch must run the pipeline. The proposal
-# is whitelisted (error-recovery, conf 0.60) so it should auto-validate.
+# is whitelisted (gotcha, conf 0.60) so it should auto-validate.
 skipped=$(run_distill off)
 [ "$skipped" = "None" ] && pass "AUTODISTILL_OFF=0 negative control → skipped_reason=None" \
                        || fail "AUTODISTILL_OFF negative control: skipped_reason='$skipped'"

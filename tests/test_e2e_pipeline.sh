@@ -104,14 +104,24 @@ else
   fail "Stop hook → no error-recovery proposal emitted"
 fi
 
-# Now run auto-distill: the AUTO-domain proposal should auto-validate
-# into an instinct YAML.
+# v4 (DESIGN-V4.md §2): 'error-recovery' moved AUTO → HUMAN — the
+# error-fix detector still confuses normal subprocess output with real
+# failures, so auto-distill must now leave this proposal pending instead
+# of materialising an instinct. Human review via /cx-review gates it.
 run_distill "$T1" >/dev/null 2>&1 || true
 # Use find (not ls + glob) because under `set -euo pipefail` a glob that
 # matches zero files makes `ls` exit non-zero and pipefail kills the script.
 inst_count=$(find "$T1/instincts/global" -maxdepth 1 -name 'gotcha-*.yaml' 2>/dev/null | wc -l | tr -d ' ')
-[ "$inst_count" -ge "1" ] && pass "auto-distill → gotcha-*.yaml instinct materialised" \
-                          || fail "auto-distill → no instinct file created"
+[ "$inst_count" = "0" ] && pass "auto-distill → error-recovery proposal NOT materialised (HUMAN-gated)" \
+                        || fail "auto-distill leaked HUMAN-gated error-recovery into instinct YAML"
+status_ok=$(python3 -c "
+import json
+data = json.load(open('$T1/proposals.json'))
+p = next((p for p in data if p.get('domain') == 'error-recovery'), None)
+print('OK' if p and p.get('status') == 'pending' else 'FAIL')
+")
+[ "$status_ok" = "OK" ] && pass "auto-distill → error-recovery proposal remains status=pending" \
+                       || fail "auto-distill mutated error-recovery status"
 rm -rf "$T1"
 
 # ── Test 2: HUMAN-gated proposal stays pending across the pipeline ───────────
@@ -207,13 +217,19 @@ out="$(make_sandbox)"; T5="${out%|*}"; PID5="${out##*|}"
 append_error_fix "$T5/projects/$PID5/observations.jsonl" "sess-e2e-5" "2026-05-15"
 run_learner "$T5" "sess-e2e-5"
 # Simulate the ghost: stamp the auto-domain proposal as rejected by the
-# unauthorized identity.
+# unauthorized identity. v4 (DESIGN-V4.md §2): 'error-recovery' moved
+# AUTO → HUMAN, which would make the post-restore auto_validate step skip
+# the proposal as needs-human-judgment regardless of the ghost guard —
+# that's a different assertion (covered by Test 1 above). This test's
+# actual target is the ghost-guard restore→auto-validate cycle, so switch
+# the fixture's domain to the still-AUTO 'gotcha' to keep exercising it.
 python3 - <<PYEOF
 import json
 path = '$T5/proposals.json'
 data = json.load(open(path))
 for p in data:
     if p.get('domain') == 'error-recovery':
+        p['domain'] = 'gotcha'
         p['status'] = 'rejected'
         p['rejected_by'] = 'cx-validate-auto'
         p['rejected_reason'] = 'ghost-bulk'
@@ -227,7 +243,7 @@ run_distill "$T5" >/dev/null 2>&1 || true
 final_state=$(python3 -c "
 import json
 data = json.load(open('$T5/proposals.json'))
-p = next((p for p in data if p.get('domain') == 'error-recovery'), None)
+p = next((p for p in data if p.get('domain') == 'gotcha'), None)
 print(p.get('status') if p else 'missing')
 ")
 inst_after=$(find "$T5/instincts/global" -maxdepth 1 -name 'gotcha-*.yaml' 2>/dev/null | wc -l | tr -d ' ')

@@ -13,24 +13,31 @@
 
 ## What it does
 
-- **Observes** every tool call silently via async hooks (0 tokens overhead)
+- **Observes** every tool call silently via async hooks (0 tokens overhead), capturing real output + error lines with anti-noise guards
 - **Injects** matched instincts and reflexes per tool use via PreToolUse (~120 tokens max)
-- **Analyzes** patterns on demand and proposes instincts with evidence
-- **Distills** proven knowledge into Laws — one-liners injected every session (~300 tokens)
-- **Evolves** clusters of mature instincts into reusable skills, commands, and rules
+- **Learns** patterns automatically: instincts start as silent `draft`, earn `confirmed` (injectable) at 5+ occurrences across 3+ sessions — no manual analyze/validate step
+- **Maintains** itself: `/cx-maintain` (deterministic, cron-able) promotes proven instincts to Laws, dedups, decays, rotates storage — zero questions
+- **Reviews** weekly with you: `/cx-review` is the only command left with judgment — one shorthand digest, two minutes
 - **Protects** with deterministic reflex hooks (not probabilistic instructions)
+
+v4.0.0 ("signal-first, zero-decision") replaced the old 20+-command,
+mostly-interactive pipeline with this design — see
+[`docs/MIGRATION-V4.md`](docs/MIGRATION-V4.md) if you're upgrading from v3.
 
 ## How it works
 
 ```
-Observe (hooks)  →  Analyze  →  Validate  →  Distill  →  Evolve  →  Audit
-    auto             manual      manual       manual      manual     manual
+Observe (hooks, output+err_msg captured)  →  draft (silent tracking)
+    auto                                        auto
 
-   OBSERVATIONS  →  PROPOSALS  →  INSTINCTS  →  LAWS  →  SKILLS/COMMANDS/RULES/AGENTS
-   (JSONL, 0 tok)                  (YAML)       (TXT)     (evolved/)
+  draft → confirmed (occ>=5, sessions>=3)  →  /cx-maintain  →  /cx-review
+     auto                                    cron-able         weekly, human
+
+  OBSERVATIONS → INSTINCTS (draft/confirmed) → LAWS → SKILLS/COMMANDS/RULES
+  (JSONL, 0 tok)   (YAML)                       (TXT)   (evolved/)
 ```
 
-Parallel systems: **Reflexes** (11 deterministic rules, always fire) and **Agents** (3 specialized: pattern analysis, code review, task planning).
+Parallel systems: **Reflexes** (13 deterministic rules, always fire) and **Agents** (3 specialized: pattern analysis, code review, task planning).
 
 ### Dual Injection
 
@@ -49,13 +56,17 @@ Continuous 0.0–0.95 scale (capped, always refinable):
 | 0.70 - 0.89 | Instinct | Automatic, promotion candidate |
 | 0.90 - 0.95 | Law | Auto-distilled one-liner, injected always |
 
+New instincts also carry a separate `status: draft` field — tracked silently,
+never injected regardless of confidence, until they earn `status: confirmed`
+at 5+ occurrences across 3+ distinct sessions.
+
 **Inline staleness**: instincts not seen in 60+ days are silently skipped at injection time (no file writes, immediate effect).
 
-**Decay**: -0.05 per 30 days via Dream Cycle. What you don't use fades.
+**Decay**: -0.05 per 30 days, applied by `/cx-maintain`. What you don't use fades.
 
-**Downvote**: `/cx-downvote` records negative feedback. 30%+ rejection rate → confidence reduced.
+**Feedback**: `/cx-review` closes the human loop on incorrect injections. 30%+ rejection rate → confidence reduced.
 
-**Promotion**: Jaccard similarity ≥ 0.70 + 2 projects + avg confidence ≥ 0.80 → global.
+**Promotion**: Jaccard similarity ≥ 0.70 + 2 projects + avg confidence ≥ 0.80 → global, computed inside `/cx-maintain`.
 
 ## Quick Start
 
@@ -117,38 +128,46 @@ The installer:
 
 Open Claude Code and work normally. Cortex works automatically.
 
+### 3c. Schedule the weekly maintenance (recommended)
+
+`/cx-maintain` is deterministic and safe to run unattended. Register it once
+with cron (macOS/Linux) or Claude Code's own schedule:
+
+```cron
+0 4 * * 0 claude -p "/cx-maintain" >> ~/.claude/cortex/log/cx-maintain-cron.log 2>&1
+```
+
+A daily "maintain-lite" pass (decay + rotation) already runs automatically at
+every SessionStart, so the weekly cron is a top-up, not a requirement — but
+without it, decay/promotion/dedup only advance on days you happen to open
+Claude Code.
+
 ## Usage Guide
 
 ### What happens automatically (no action needed)
 
 | Hook | When it runs | What it does |
 |------|-------------|-------------|
-| `observe.py` | Every tool use | Records observations silently (async, 0 tokens, ~70ms) |
-| `session-start.py` | Session open / `/compact` | Injects your laws + context bridge + EOD resume |
-| `injector.sh` / `injector.js` | Every tool use | Injects matching instincts (max 3) + reflexes (max 2), same id max 2x/session. `.sh` on Unix, `.js` on Windows. |
-| `session-learner.js` | Session close | Detects error→fix pairs, corrections, workflows → proposals |
+| `observe.py` | Every tool use | Records observations + real output/error lines silently (async, 0 tokens, ~70ms), with per-line noise guards |
+| `session-start.py` | Session open / `/compact` | Injects your laws + context bridge + EOD resume (with Eisenhower Q1-Q4 classification) |
+| `injector.sh` / `injector.js` | Every tool use | Injects matching `confirmed` instincts (max 3) + reflexes (max 2), same id max 2x/session. `.sh` on Unix, `.js` on Windows. |
+| `session-learner.js` | Session close | Detects error→fix pairs, corrections, workflows → new instincts (born `status: draft`, auto-promote to `confirmed` at 5+ occurrences / 3+ sessions) |
 
 You don't configure or run anything. Just work — Cortex learns in the background.
 
 ### What you run periodically
 
-Cortex reminds you when action is needed:
-
-**Every 1-2 days** — when you see `[ACTION] N pending proposals`:
+**Weekly, deterministic** — cron-able, zero questions:
 
 ```
-/cx-analyze    ← Detect patterns in observations → generate proposals
-/cx-validate   ← Review proposals: A=accept, X=reject, S=skip
+/cx-maintain   ← decay + dedup + promotion to law + storage rotation + health check
 ```
 
-Note: triggers that fail the ReDoS guard are held as `status='held'` and shown in `/cx-validate` output (informational only).
-
-**Weekly** — when you see `[MAINT]`:
+**Weekly, human** — when you see `[REVIEW] N items pendientes`:
 
 ```
-/cx-distill    ← Promote mature instincts (0.90+) to laws, apply decay
-/cx-dream      ← Dedup, contradictions, staleness cleanup, health score
-/cx-audit      ← Token overhead, duplicates, conflicts, cleanup
+/cx-review     ← ONE shorthand digest: pending proposals, evolve drafts, law
+                 deprecation candidates. 2 minutes, not twenty.
 ```
 
 **When needed:**
@@ -156,86 +175,88 @@ Note: triggers that fail the ReDoS guard are held as `status='held'` and shown i
 ```
 /cx-status     ← Dashboard: laws, instincts, projects, system health
 /cx-gotcha     ← Capture an error→fix as a high-priority instinct
-/cx-eod        ← End-of-day summary (auto-injected tomorrow morning)
+/cx-eod        ← End-of-day summary (cumulative, auto-injected tomorrow morning)
 /cx-backup     ← Portable .tar.gz backup for another machine
 ```
 
 ### Daily workflow
 
 ```
-1. Open Claude Code     → laws inject automatically
-2. Work normally        → observe.py records, injector injects
-3. [ACTION] N proposals → /cx-validate (1 min)
-4. [MAINT] reminder     → /cx-distill or /cx-dream (30 sec each)
-5. End of day           → /cx-eod (optional but useful)
+1. Open Claude Code     → laws inject automatically, [REVIEW] badge if pending
+2. Work normally        → observe.py records real output/errors, injector injects
+3. Instincts mature      → draft → confirmed automatically, no action from you
+4. End of day            → /cx-eod (optional but useful, now cumulative)
 ```
 
 ### Weekly maintenance
 
 ```
-/cx-dream  →  /cx-distill  →  /cx-audit
- cleanup       promotions      token check
+/cx-maintain  →  /cx-review
+ deterministic    human digest (2 min)
 ```
 
 ### How knowledge evolves
 
 ```
-You work → Cortex observes → /cx-analyze detects patterns → /cx-validate you confirm
-→ instinct confidence grows with use → /cx-distill promotes to law → law injects every session
-→ unused knowledge decays (-0.05/month) → /cx-dream cleans up stale instincts
+You work → Cortex captures output+errors (guarded) → instinct born as draft
+→ 5+ occurrences across 3+ sessions → status: confirmed → starts injecting
+→ /cx-maintain promotes proven instincts to law deterministically
+→ /cx-review is your only weekly touchpoint for what's left to decide
 ```
 
-## Commands (22)
+## Commands (7 active + 17 deprecated)
+
+v4.0.0 replaced the old manual-judgment command set. Deterministic maintenance
+lives in `/cx-maintain`; the one remaining human-judgment step lives in
+`/cx-review`. Upgrading from v3? See [`docs/MIGRATION-V4.md`](docs/MIGRATION-V4.md)
+for the full command mapping.
 
 | Command | What it does |
 |---------|-------------|
 | `/cx-status` | Dashboard: laws, instincts, projects, reflexes, tracking, health, domain grouping |
-| `/cx-analyze` | Detect patterns in observations → proposals (with descriptions) |
-| `/cx-distill` | Distill laws (universality gate, max 15), decay, Jaccard promotions. Sub-mode `--swap <old> <new> --confirm` (v3.32.0 §4.5): atomic deprecation when the cap saturates |
-| `/cx-validate` | Review proposals with Claude verdicts + shorthand input |
-| `/cx-evolve` | Cluster instincts → skills/commands/rules/agents (checks existing) |
-| `/cx-dream` | Dream Cycle: dedup, contradictions, staleness, regex, health, cleanup |
-| `/cx-timeline` | Knowledge event log: creations, promotions, decays, archives, evolutions |
-| `/cx-router` | Command catalog with token costs and next action suggestion |
-| `/cx-promote` | Promote project instincts to global (cross-project, Jaccard ≥0.70). Sub-mode `--auto <source> --confirm` (v3.32.0 §4.4): promote a HUMAN-gated detector source to AUTO once the statistical gate passes (n ≥ 20, accept_rate ≥ 70 %, ≥ 3 sessions, 0 critical) |
-| `/cx-audit` | Token overhead, duplicates, conflicts, cleanup |
-| `/cx-eod` | End-of-day summary, saves context for next session |
+| `/cx-maintain` | **Deterministic, cron-able.** decay + Jaccard dedup + purge + deterministic law promotion + storage rotation + proposals↔instincts reconciliation + health check. Zero questions. |
+| `/cx-review` | **The only command with judgment, weekly.** One consolidated shorthand digest of everything deterministic maintenance left for a human to decide. |
+| `/cx-eod` | End-of-day summary, cumulative across the day, Eisenhower-classified for next session |
 | `/cx-gotcha` | Capture error→fix as high-priority instinct |
-| `/cx-downvote` | Negative feedback on incorrect instinct injection (reduces confidence) |
-| `/cx-retro` | Weekly retrospective: command usage, instinct activations, health trend |
-| `/cx-dashboard` | Generate a visual HTML dashboard of Cortex state with Fersora brand — open in browser |
-| `/cx-export` | Generate portable skill for Claude.ai or sharing |
 | `/cx-backup` | Create portable .tar.gz backup for machine transfer |
 | `/cx-restore` | Import knowledge from a backup archive |
-| `/cx-feedback` | Cierra el loop humano del funnel de impacto — marca la última inyección como útil o ruido |
-| `/cx-feedback-auto` | Agent self-rating on tool-choice reflexes — emits feedback with source=agent |
-| `/cx-backfill` | Recover legacy `session_id` data for the promotion gate (dry-run only in v3.33.0; `--apply` deferred to v3.34, issue #49) |
-| `/cx-stop` | Flush current session through the Stop hook now (run the learner without waiting for inactivity) |
+
+### Deprecated (17, stub-only)
+
+Each prints a one-line notice + its v4 replacement and runs no legacy logic:
+`/cx-analyze`, `/cx-distill`, `/cx-dream`, `/cx-promote`, `/cx-backfill` →
+`/cx-maintain`. `/cx-validate`, `/cx-evolve`, `/cx-downvote`, `/cx-retro` →
+`/cx-review`. `/cx-timeline`, `/cx-dashboard`, `/cx-export` → `/cx-status`.
+`/cx-audit` → workflow `cortex-audit` (no longer a slash command).
+`/cx-feedback`, `/cx-feedback-auto`, `/cx-router`, `/cx-stop` → eliminados sin
+sustituto. Full rationale in [`docs/MIGRATION-V4.md`](docs/MIGRATION-V4.md).
 
 ### Interactive Shorthand
 
-All interactive commands use a consistent shorthand system — no modal dialogs:
+`/cx-review` uses the same shorthand convention the old interactive commands
+did — no modal dialogs:
 
-| Letter | Meaning | Used in |
-|--------|---------|---------|
-| A | Accept / Promote | validate, distill, evolve |
-| X | Reject / No promote | validate, distill, evolve |
-| S | Skip (review later) | validate, distill, evolve |
-| M | Merge | distill, evolve |
-| O | Omit (already covered) | evolve |
-| I | Install (pending skill) | evolve |
+| Letter | Meaning |
+|--------|---------|
+| A | Accept (proposal) |
+| X | Reject (proposal) |
+| S | Skip (review later) |
+| I | Install (evolve draft) |
+| D | Discard (evolve draft) |
+| P | Deprecate (law) |
+| M | Mantener / keep (law) |
 
-Example: `"1A, 2A, 3X, 4S"` or `"all-A"` to accept all.
+Example: `"1A, 2S, 3M, 4I"`.
 
 Claude provides a verdict with reasoning per item before you decide. All commands require explicit confirmation before writing files.
 
 ### Learning Pipeline
 
 ```
-/cx-analyze  →  /cx-validate  →  /cx-distill  →  /cx-evolve  →  /cx-dream  →  /cx-audit
- detect          confirm          laws + decay     skills         dedup          cleanup
- patterns        or reject        + promotions     commands       contradictions
-                                                   rules          staleness
+Observe (output+err_msg, per-line guards) → draft instinct (silent tracking)
+   → confirmed (occurrences>=5, sessions_seen>=3)
+   → /cx-maintain (deterministic law promotion + dedup + decay + rotation)
+   → /cx-review (weekly, the only step left that needs a human)
 ```
 
 ## Architecture
@@ -264,14 +285,15 @@ Also fires `session-start.py` on `/compact` to re-inject laws.
 ```
 ~/.claude/cortex/
 ├── memory.json              # Identity + config + stats
-├── reflexes.json            # Deterministic rules (11 default — see below)
+├── reflexes.json            # Deterministic rules (13 default — see below)
 ├── impact.jsonl             # Impact funnel (Sprint 0+, v:1) — inject/follow/feedback/outcome events
-├── proposals.json           # Pending proposals from session-learner + cx-analyze
-├── laws/                    # One-liners (max 15 active; deprecation via /cx-distill --swap)
+├── proposals.json           # Pending proposals from session-learner (human-gated domains only, v4)
+├── .review-digest.json      # (v4) written by /cx-maintain, consumed by /cx-review
+├── laws/                    # One-liners (max 15 active; deprecation via /cx-review)
 │   ├── *.txt
 │   └── archive/
 ├── instincts/
-│   ├── global/              # Promoted cross-project instincts
+│   ├── global/              # Promoted cross-project instincts (status: draft/confirmed)
 │   └── archive/             # Decayed below 0.10
 ├── projects/
 │   ├── registry.json        # All known projects
@@ -280,7 +302,7 @@ Also fires `session-start.py` on `/compact` to re-inject laws.
 │       ├── context.md       # Session bridge (14d TTL)
 │       └── instincts/       # Project-scoped instincts
 ├── evolved/
-│   ├── skills/              # Generated by /cx-evolve (fs- prefix)
+│   ├── skills/              # Drafted by /cx-maintain's auto-evolve pass, installed via /cx-review (fs- prefix)
 │   ├── commands/
 │   ├── rules/
 │   └── agents/

@@ -206,123 +206,32 @@ else
 fi
 rm -rf "$T4"
 
-# ── Test 5: at-law-threshold-since-set — conf 0.95, field absent → set today ─
-echo "--- Test 5: at-law-threshold-since-set ---"
-T5="$(mktemp -d -t distill-t5-XXXXXX)"
-export CORTEX_DIR="$T5"
-TODAY=$(python3 -c "from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime('%Y-%m-%d'))")
-make_instinct "$T5/instincts/global" "t5-thresh" "0.9500" "$TODAY" \
-  "projects_seen:\n- proj-alpha\n- proj-beta\n- proj-gamma"
-# Add enough impact events
-make_impact_events "$T5/impact.jsonl" "t5-thresh" 6 0
+# ── Test 5: retired in v4 (was at-law-threshold-since-set) ──────────────────
+# retired in v4: `at_law_threshold_since` is no longer read or written by
+# auto_promote_to_law (DESIGN-V4.md §3 drops the whole sustained-14-day
+# combo). Nothing in the engine sets this field anymore, so there is no
+# behavior left to assert.
 
-result=$(python3 -c "
-import sys, os; sys.path.insert(0, '$PROJECT_ROOT/hooks/lib')
-os.environ['CORTEX_DIR'] = '$T5'
-import distill_engine as de
-from pathlib import Path
-de.CORTEX_DIR = Path('$T5')
-de.INSTINCTS_DIR = de.CORTEX_DIR / 'instincts' / 'global'
-de.LAWS_DIR = de.CORTEX_DIR / 'laws'
-de.IMPACT_FILE = de.CORTEX_DIR / 'impact.jsonl'
-de.KNOWLEDGE_LOG = de.CORTEX_DIR / 'knowledge-log.md'
-de.CANDIDATES_FILE = de.CORTEX_DIR / 'auto-distill-candidates.md'
-de.MARKER_FILE = de.CORTEX_DIR / '.last-auto-distill'
-de.LOCK_FILE = de.CORTEX_DIR / '.distill-engine.lock'
-promoted, candidates = de.auto_promote_to_law()
-# check field was set
-text = Path('$T5/instincts/global/t5-thresh.yaml').read_text()
-has_field = 'at_law_threshold_since' in text
-promoted_now = any(p['id'] == 't5-thresh' for p in promoted)
-print(has_field, promoted_now)
-")
-if echo "$result" | grep -q "True False"; then
-  pass "at-law-threshold-since-set: field added, not promoted yet"
-else
-  fail "at-law-threshold-since-set: got '$result'"
-fi
-rm -rf "$T5"
+# ── Test 6: retired in v4 (was at-law-threshold-since-cleared) ──────────────
+# retired in v4: same removal as Test 5 — the clearing side of a field the
+# engine no longer manages.
 
-# ── Test 6: at-law-threshold-since-cleared — conf drops below 0.95 ──────────
-echo "--- Test 6: at-law-threshold-since-cleared ---"
-T6="$(mktemp -d -t distill-t6-XXXXXX)"
-export CORTEX_DIR="$T6"
-TODAY=$(python3 -c "from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime('%Y-%m-%d'))")
-FOURTEEN_AGO=$(python3 -c "from datetime import datetime, timezone, timedelta; print((datetime.now(timezone.utc)-timedelta(days=15)).strftime('%Y-%m-%d'))")
-make_instinct "$T6/instincts/global" "t6-drop" "0.8500" "$TODAY" \
-  "at_law_threshold_since: $FOURTEEN_AGO"
+# ── Test 7: retired in v4 (was promote-rejects-young) ───────────────────────
+# retired in v4: the 'sustained < 14d' rejection reason no longer exists —
+# see auto_promote_to_law docstring, "the old sustained-14-day-since-
+# threshold field ... are gone".
 
-result=$(python3 -c "
-import sys, os; sys.path.insert(0, '$PROJECT_ROOT/hooks/lib')
-os.environ['CORTEX_DIR'] = '$T6'
-import distill_engine as de
-from pathlib import Path
-de.CORTEX_DIR = Path('$T6')
-de.INSTINCTS_DIR = de.CORTEX_DIR / 'instincts' / 'global'
-de.LAWS_DIR = de.CORTEX_DIR / 'laws'
-de.IMPACT_FILE = de.CORTEX_DIR / 'impact.jsonl'
-de.KNOWLEDGE_LOG = de.CORTEX_DIR / 'knowledge-log.md'
-de.CANDIDATES_FILE = de.CORTEX_DIR / 'auto-distill-candidates.md'
-de.MARKER_FILE = de.CORTEX_DIR / '.last-auto-distill'
-de.LOCK_FILE = de.CORTEX_DIR / '.distill-engine.lock'
-de.auto_promote_to_law()
-text = Path('$T6/instincts/global/t6-drop.yaml').read_text()
-print('cleared' if 'at_law_threshold_since' not in text else 'still_there')
-")
-[ "$result" = "cleared" ] && pass "at-law-threshold-since-cleared: field removed when conf < 0.95" || fail "at-law-threshold-since-cleared: got '$result'"
-rm -rf "$T6"
-
-# ── Test 7: promote-rejects-young — threshold_since=today → candidate ────────
-echo "--- Test 7: promote-rejects-young ---"
-T7="$(mktemp -d -t distill-t7-XXXXXX)"
-export CORTEX_DIR="$T7"
-TODAY=$(python3 -c "from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime('%Y-%m-%d'))")
-make_instinct "$T7/instincts/global" "t7-young" "0.9500" "$TODAY" \
-  "at_law_threshold_since: $TODAY
-projects_seen:
-- proj-alpha
-- proj-beta
-- proj-gamma"
-make_impact_events "$T7/impact.jsonl" "t7-young" 6 0
-
-result=$(python3 -c "
-import sys, os; sys.path.insert(0, '$PROJECT_ROOT/hooks/lib')
-os.environ['CORTEX_DIR'] = '$T7'
-import distill_engine as de
-from pathlib import Path
-de.CORTEX_DIR = Path('$T7')
-de.INSTINCTS_DIR = de.CORTEX_DIR / 'instincts' / 'global'
-de.LAWS_DIR = de.CORTEX_DIR / 'laws'
-de.IMPACT_FILE = de.CORTEX_DIR / 'impact.jsonl'
-de.KNOWLEDGE_LOG = de.CORTEX_DIR / 'knowledge-log.md'
-de.CANDIDATES_FILE = de.CORTEX_DIR / 'auto-distill-candidates.md'
-de.MARKER_FILE = de.CORTEX_DIR / '.last-auto-distill'
-de.LOCK_FILE = de.CORTEX_DIR / '.distill-engine.lock'
-promoted, candidates = de.auto_promote_to_law()
-in_candidates = any(c['id'] == 't7-young' for c in candidates)
-not_promoted = not any(p['id'] == 't7-young' for p in promoted)
-reason_ok = any('sustained' in r for c in candidates if c['id'] == 't7-young' for r in c['reasons'])
-print(in_candidates, not_promoted, reason_ok)
-")
-if echo "$result" | grep -q "True True True"; then
-  pass "promote-rejects-young: 0d threshold → candidate with 'sustained < 14d'"
-else
-  fail "promote-rejects-young: got '$result'"
-fi
-rm -rf "$T7"
-
-# ── Test 8: promote-accepts-single-project (v3.24.0+) ────────────────────────
-# v3.24.0: LAW_MIN_PROJECTS lowered from 3 to 1 (Audit C P0). Single-project
-# knowledge IS promotable now provided every other gate passes. The previous
-# test asserted the opposite — kept here renamed and inverted.
-echo "--- Test 8: promote-accepts-single-project (v3.24.0+) ---"
+# ── Test 8: promote-rejects-single-project (DESIGN-V4.md §3) ────────────────
+# v4 restored LAW_MIN_PROJECTS 1 → 3 (see the constant's comment: a 3-project
+# floor is the deliberate cross-project-evidence bar now that the sustained-
+# days/session combo is gone). This inverts the v3.24.0-era test that used
+# to assert single-project promotion.
+echo "--- Test 8: promote-rejects-single-project (DESIGN-V4.md §3) ---"
 T8="$(mktemp -d -t distill-t8-XXXXXX)"
 export CORTEX_DIR="$T8"
 TODAY=$(python3 -c "from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime('%Y-%m-%d'))")
-FIFTEEN_AGO=$(python3 -c "from datetime import datetime, timezone, timedelta; print((datetime.now(timezone.utc)-timedelta(days=15)).strftime('%Y-%m-%d'))")
-make_instinct "$T8/instincts/global" "t8-single" "0.9500" "$TODAY" \
-  "at_law_threshold_since: $FIFTEEN_AGO"
-# Only 1 project (project_id=proj-alpha, no projects_seen) — should now PASS
+make_instinct "$T8/instincts/global" "t8-single" "0.9500" "$TODAY" "occurrences_v4: 20"
+# Only 1 project (project_id=proj-alpha, no projects_seen) — must now BLOCK
 make_impact_events "$T8/impact.jsonl" "t8-single" 6 0
 
 result=$(python3 -c "
@@ -340,13 +249,13 @@ de.MARKER_FILE = de.CORTEX_DIR / '.last-auto-distill'
 de.LOCK_FILE = de.CORTEX_DIR / '.distill-engine.lock'
 promoted, candidates = de.auto_promote_to_law()
 got_promoted = any(p['id'] == 't8-single' for p in promoted)
-in_cand_for_projects = any('projects' in r for c in candidates if c['id'] == 't8-single' for r in c['reasons'])
+in_cand_for_projects = any('projects < 3' in r for c in candidates if c['id'] == 't8-single' for r in c['reasons'])
 print(got_promoted, in_cand_for_projects)
 ")
-if echo "$result" | grep -q "True False"; then
-  pass "promote-accepts-single-project: 1 project → promoted (LAW_MIN_PROJECTS=1)"
+if echo "$result" | grep -q "False True"; then
+  pass "promote-rejects-single-project: 1 project → blocked (LAW_MIN_PROJECTS=3)"
 else
-  fail "promote-accepts-single-project: got '$result' (expected 'True False')"
+  fail "promote-rejects-single-project: got '$result' (expected 'False True')"
 fi
 rm -rf "$T8"
 
@@ -488,12 +397,11 @@ else
 fi
 rm -rf "$T11"
 
-# ── Test 12: promote-accepts — all 7 criteria pass ───────────────────────────
+# ── Test 12: promote-accepts — all 4 criteria pass (DESIGN-V4.md §3) ─────────
 echo "--- Test 12: promote-accepts ---"
 T12="$(mktemp -d -t distill-t12-XXXXXX)"
 export CORTEX_DIR="$T12"
 TODAY=$(python3 -c "from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime('%Y-%m-%d'))")
-FIFTEEN_AGO=$(python3 -c "from datetime import datetime, timezone, timedelta; print((datetime.now(timezone.utc)-timedelta(days=15)).strftime('%Y-%m-%d'))")
 mkdir -p "$T12/instincts/global"
 cat > "$T12/instincts/global/t12-good.yaml" <<YAML
 ---
@@ -505,13 +413,12 @@ trigger: "Bash"
 action: "Always verify test results before reporting success to user"
 last_seen: $TODAY
 first_seen: $TODAY
-occurrences: 20
+occurrences_v4: 20
 project_id: proj-alpha
 projects_seen:
 - proj-alpha
 - proj-beta
 - proj-gamma
-at_law_threshold_since: $FIFTEEN_AGO
 ---
 YAML
 make_impact_events "$T12/impact.jsonl" "t12-good" 6 0
@@ -537,7 +444,7 @@ log_exists = (de.KNOWLEDGE_LOG).exists()
 print(was_promoted, law_exists, log_exists)
 ")
 if echo "$result" | grep -q "True True True"; then
-  pass "promote-accepts: all 7 criteria → law file created + knowledge-log appended"
+  pass "promote-accepts: all 4 v4 criteria → law file created + knowledge-log appended"
 else
   fail "promote-accepts: got '$result'"
 fi
@@ -713,7 +620,9 @@ PYEOF
 echo "--- Test 16: auto-validate-accepts-gotcha-conf-high ---"
 T16="$(mktemp -d -t distill-t16-XXXXXX)"
 export CORTEX_DIR="$T16"
-make_proposal "$T16/proposals.json" "t16-gotcha" "0.60" "error-recovery"
+# v4 (DESIGN-V4.md §2): 'error-recovery' moved AUTO → HUMAN, so this must
+# use the still-AUTO 'gotcha' domain to actually exercise auto-accept.
+make_proposal "$T16/proposals.json" "t16-gotcha" "0.60" "gotcha"
 
 result=$(python3 - <<PYEOF
 $(_py_patch "$T16")
@@ -730,7 +639,7 @@ print('t16-gotcha' in accepted_ids, instinct_exists, status_ok)
 PYEOF
 )
 if echo "$result" | grep -q "True True True"; then
-  pass "auto-validate-accepts-gotcha-conf-high: error-recovery conf=0.60 accepted, instinct created"
+  pass "auto-validate-accepts-gotcha-conf-high: gotcha conf=0.60 accepted, instinct created"
 else
   fail "auto-validate-accepts-gotcha-conf-high: got '$result'"
 fi
@@ -1236,16 +1145,30 @@ else
 fi
 rm -rf "$T34"
 
-# ── v3.29.0 (Sprint 8 §4.16) — multi-session promotion gate ──────────────────
+# ── v4 (DESIGN-V4.md §3) — projects_seen replaces the multi-session gate ────
+# retired in v4: the whole v3.29.0/v3.31.2 multi-session promotion gate
+# (instinct-tracking.json sessions[] read by auto_promote_to_law, plus its
+# grandfather clause for missing/empty/corrupt tracking entries) is gone —
+# auto_promote_to_law no longer calls _count_distinct_sessions at all (see
+# its docstring: "the >=3-distinct-sessions gate ... are gone"). The
+# universality signal is now LAW_MIN_PROJECTS via _count_distinct_projects
+# (project_id / projects_seen[] on the instinct yaml, or a scan of
+# projects/*/instincts/<iid>.yaml). Former Tests 32-34 and 36-40 (blocks-at-2,
+# promotes-at-3, grandfather-missing-tracking, gf-entry-absent,
+# gf-sessions-empty-list, gf-sessions-populated, gf-sessions-null-blocks,
+# gf-missing-sessions-key-blocks) exercised that removed integration and are
+# replaced below by the two tests that cover the new gate end to end.
 
 make_promotable_instinct() {
   # make_promotable_instinct <dir> <iid>
-  # Creates an instinct that PASSES every criterion EXCEPT the new
-  # distinct_sessions gate, so tests below can isolate that one signal.
+  # v4: creates an instinct that PASSES every auto_promote_to_law criterion
+  # (conf>=0.95, projects>=3, occurrences_v4>=10, no noise) — occurrences_v4
+  # is set directly so the test doesn't depend on the one-time lazy
+  # migration from the legacy `occurrences` counter (see
+  # _ensure_occurrences_v4; it starts a migrated instinct at 0).
   local dir="$1" iid="$2"
-  local today fifteen
+  local today
   today=$(python3 -c "from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime('%Y-%m-%d'))")
-  fifteen=$(python3 -c "from datetime import datetime, timezone, timedelta; print((datetime.now(timezone.utc)-timedelta(days=15)).strftime('%Y-%m-%d'))")
   mkdir -p "$dir"
   cat > "$dir/${iid}.yaml" <<YAML
 ---
@@ -1256,115 +1179,82 @@ trigger: "Bash"
 action: "Always verify test results before reporting success to user"
 last_seen: $today
 first_seen: $today
-occurrences: 20
+occurrences_v4: 20
 project_id: proj-alpha
-at_law_threshold_since: $fifteen
+projects_seen:
+- proj-alpha
+- proj-beta
+- proj-gamma
 law_eligible: true
 ---
 YAML
 }
 
-# ── Test 32: distinct-sessions-blocks-at-2 (§4.16) ──────────────────────────
-echo "--- Test 32: distinct-sessions-blocks-at-2 ---"
-T32="$(mktemp -d -t distill-t28-XXXXXX)"
+# ── Test 32: promote-blocks-below-3-projects (DESIGN-V4.md §3) ──────────────
+echo "--- Test 32: promote-blocks-below-3-projects ---"
+T32="$(mktemp -d -t distill-t32-XXXXXX)"
 export CORTEX_DIR="$T32"
-make_promotable_instinct "$T32/instincts/global" "t32-twosess"
-make_impact_events "$T32/impact.jsonl" "t32-twosess" 6 0
-# Tracking entry with 2 distinct sessions — below LAW_MIN_DISTINCT_SESSIONS=3
-cat > "$T32/instinct-tracking.json" <<JSON
-{
-  "t32-twosess": {
-    "count": 17,
-    "sessions": ["sess-A", "sess-B", "sess-A"],
-    "projects_seen": ["proj-alpha"],
-    "first_seen": "2026-05-01T00:00:00Z",
-    "last_seen": "2026-05-14T00:00:00Z"
-  }
-}
-JSON
+TODAY=$(python3 -c "from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime('%Y-%m-%d'))")
+mkdir -p "$T32/instincts/global"
+cat > "$T32/instincts/global/t32-oneproj.yaml" <<YAML
+---
+id: t32-oneproj
+confidence: 0.9500
+domain: testing
+trigger: "Bash"
+action: "Always verify test results before reporting success to user"
+last_seen: $TODAY
+first_seen: $TODAY
+occurrences_v4: 20
+project_id: proj-alpha
+---
+YAML
+make_impact_events "$T32/impact.jsonl" "t32-oneproj" 6 0
 
 result=$(python3 - <<PYEOF
 $(_py_patch "$T32")
 promoted, candidates = de.auto_promote_to_law()
-was_promoted = any(p['id'] == 't32-twosess' for p in promoted)
-cand = next((c for c in candidates if c['id'] == 't32-twosess'), None)
-reason_ok = bool(cand) and any('sessions 2/3' in r for r in cand['reasons'])
+was_promoted = any(p['id'] == 't32-oneproj' for p in promoted)
+cand = next((c for c in candidates if c['id'] == 't32-oneproj'), None)
+reason_ok = bool(cand) and any('projects < 3' in r for r in cand['reasons'])
 print(was_promoted, reason_ok)
 PYEOF
 )
 if echo "$result" | grep -q "False True"; then
-  pass "distinct-sessions-blocks-at-2: NOT promoted, candidate reason 'sessions 2/3 (need 1 more)'"
+  pass "promote-blocks-below-3-projects: 1 project → NOT promoted, candidate reason 'projects < 3'"
 else
-  fail "distinct-sessions-blocks-at-2: got '$result'"
+  fail "promote-blocks-below-3-projects: got '$result'"
 fi
 rm -rf "$T32"
 
-# ── Test 33: distinct-sessions-promotes-at-3 (§4.16) ─────────────────────────
-echo "--- Test 33: distinct-sessions-promotes-at-3 ---"
-T33="$(mktemp -d -t distill-t29-XXXXXX)"
+# ── Test 33: promote-passes-at-3-projects (DESIGN-V4.md §3) ─────────────────
+echo "--- Test 33: promote-passes-at-3-projects ---"
+T33="$(mktemp -d -t distill-t33-XXXXXX)"
 export CORTEX_DIR="$T33"
-make_promotable_instinct "$T33/instincts/global" "t33-threesess"
-make_impact_events "$T33/impact.jsonl" "t33-threesess" 6 0
-cat > "$T33/instinct-tracking.json" <<JSON
-{
-  "t33-threesess": {
-    "count": 30,
-    "sessions": ["sess-A", "sess-B", "sess-C"],
-    "projects_seen": ["proj-alpha"],
-    "first_seen": "2026-05-01T00:00:00Z",
-    "last_seen": "2026-05-14T00:00:00Z"
-  }
-}
-JSON
+make_promotable_instinct "$T33/instincts/global" "t33-threeproj"
+make_impact_events "$T33/impact.jsonl" "t33-threeproj" 6 0
 mkdir -p "$T33/laws"
 
 result=$(python3 - <<PYEOF
 $(_py_patch "$T33")
 promoted, candidates = de.auto_promote_to_law()
-was_promoted = any(p['id'] == 't33-threesess' for p in promoted)
-law_exists = (de.LAWS_DIR / 't33-threesess.txt').exists()
+was_promoted = any(p['id'] == 't33-threeproj' for p in promoted)
+law_exists = (de.LAWS_DIR / 't33-threeproj.txt').exists()
 print(was_promoted, law_exists)
 PYEOF
 )
 if echo "$result" | grep -q "True True"; then
-  pass "distinct-sessions-promotes-at-3: law file created"
+  pass "promote-passes-at-3-projects: 3 projects + occurrences_v4=20 → law file created"
 else
-  fail "distinct-sessions-promotes-at-3: got '$result'"
+  fail "promote-passes-at-3-projects: got '$result'"
 fi
 rm -rf "$T33"
 
-# ── Test 34: grandfather-missing-tracking (§4.16) ────────────────────────────
-# Pre-existing high-confidence instincts created BEFORE v3.29 shipped this
-# gate won't have any tracking entry yet. Without the grandfather clause
-# they would all be retroactively blocked. With it: conf >= 0.95 + missing
-# entry → promote anyway.
-echo "--- Test 34: grandfather-missing-tracking ---"
-T34="$(mktemp -d -t distill-t30-XXXXXX)"
-export CORTEX_DIR="$T34"
-make_promotable_instinct "$T34/instincts/global" "t34-grandfather"
-make_impact_events "$T34/impact.jsonl" "t34-grandfather" 6 0
-# NO instinct-tracking.json deliberately — simulates pre-v3.29 corpus
-mkdir -p "$T34/laws"
-
-result=$(python3 - <<PYEOF
-$(_py_patch "$T34")
-promoted, candidates = de.auto_promote_to_law()
-was_promoted = any(p['id'] == 't34-grandfather' for p in promoted)
-law_exists = (de.LAWS_DIR / 't34-grandfather.txt').exists()
-print(was_promoted, law_exists)
-PYEOF
-)
-if echo "$result" | grep -q "True True"; then
-  pass "grandfather-missing-tracking: pre-v3.29 instinct promotes without tracking entry"
-else
-  fail "grandfather-missing-tracking: got '$result'"
-fi
-rm -rf "$T34"
-
-# ── Test 35: count-distinct-sessions-defensive (§4.16) ───────────────────────
-# The helper must return 0 on every malformed shape: missing file, missing
-# key, non-dict entry, non-list sessions, empty/None UUIDs. Direct call
-# against the function — no full promote pass needed.
+# ── Test 35: count-distinct-sessions-defensive ───────────────────────────────
+# _count_distinct_sessions is no longer wired into auto_promote_to_law (see
+# retirement note above) but the helper itself is untouched code (hooks/ is
+# not in scope for this pass without a demonstrated bug) — keep the direct
+# unit coverage of its defensive malformed-shape handling.
 echo "--- Test 35: count-distinct-sessions-defensive ---"
 result=$(python3 - <<'PYEOF'
 import sys, pathlib
@@ -1389,173 +1279,6 @@ else
   fail "count-distinct-sessions-defensive: got '$result'"
 fi
 
-# ── v3.31.2 §4.1.A — grandfather narrow per AD P1-1 ─────────────────────────
-# Tests 36-40 verify the narrowed grandfather clause: it fires ONLY when
-# (entry absent) OR (sessions == [] explicit). Tracking corruption shapes
-# (null, missing key, wrong type) keep blocking so the operator notices.
-
-# ── Test 36: gf-entry-absent — case 1: missing tracking entry promotes ──────
-echo "--- Test 36: gf-entry-absent (v3.31.2 §4.1.A case 1) ---"
-T36="$(mktemp -d -t distill-t36-XXXXXX)"
-export CORTEX_DIR="$T36"
-make_promotable_instinct "$T36/instincts/global" "t36-absent"
-make_impact_events "$T36/impact.jsonl" "t36-absent" 6 0
-# No instinct-tracking.json on disk at all
-mkdir -p "$T36/laws"
-
-result=$(python3 - <<PYEOF
-$(_py_patch "$T36")
-promoted, candidates = de.auto_promote_to_law()
-was_promoted = any(p['id'] == 't36-absent' for p in promoted)
-law_exists = (de.LAWS_DIR / 't36-absent.txt').exists()
-print(was_promoted, law_exists)
-PYEOF
-)
-if echo "$result" | grep -q "True True"; then
-  pass "gf-entry-absent: missing tracking entry + conf=0.95 promotes (grandfather case 1)"
-else
-  fail "gf-entry-absent: got '$result'"
-fi
-rm -rf "$T36"
-
-# ── Test 37: gf-sessions-empty-list — v3.33.0 Option B: sessions:[] blocks ─
-echo "--- Test 37: gf-sessions-empty-list (v3.33.0 Option B) ---"
-T37="$(mktemp -d -t distill-t37-XXXXXX)"
-export CORTEX_DIR="$T37"
-make_promotable_instinct "$T37/instincts/global" "t37-emptylist"
-make_impact_events "$T37/impact.jsonl" "t37-emptylist" 6 0
-cat > "$T37/instinct-tracking.json" <<'JSON'
-{
-  "t37-emptylist": {
-    "count": 0,
-    "sessions": [],
-    "projects_seen": [],
-    "first_seen": "2026-05-01T00:00:00Z",
-    "last_seen": "2026-05-14T00:00:00Z"
-  }
-}
-JSON
-mkdir -p "$T37/laws"
-
-result=$(python3 - <<PYEOF
-$(_py_patch "$T37")
-promoted, candidates = de.auto_promote_to_law()
-was_promoted = any(p['id'] == 't37-emptylist' for p in promoted)
-cand = next((c for c in candidates if c['id'] == 't37-emptylist'), None)
-reason_ok = bool(cand) and any('sessions 0/3' in r for r in cand['reasons'])
-print(was_promoted, reason_ok)
-PYEOF
-)
-if echo "$result" | grep -q "False True"; then
-  pass "gf-sessions-empty-list: sessions:[] + conf=0.95 blocks (must earn sessions)"
-else
-  fail "gf-sessions-empty-list: got '$result'"
-fi
-rm -rf "$T37"
-
-# ── Test 38: gf-sessions-populated — normal path still works ────────────────
-echo "--- Test 38: gf-sessions-populated (v3.31.2 §4.1.A normal path) ---"
-T38="$(mktemp -d -t distill-t38-XXXXXX)"
-export CORTEX_DIR="$T38"
-make_promotable_instinct "$T38/instincts/global" "t38-populated"
-make_impact_events "$T38/impact.jsonl" "t38-populated" 6 0
-cat > "$T38/instinct-tracking.json" <<'JSON'
-{
-  "t38-populated": {
-    "count": 30,
-    "sessions": ["sess-A", "sess-B", "sess-C"],
-    "projects_seen": ["proj-alpha"],
-    "first_seen": "2026-05-01T00:00:00Z",
-    "last_seen": "2026-05-14T00:00:00Z"
-  }
-}
-JSON
-mkdir -p "$T38/laws"
-
-result=$(python3 - <<PYEOF
-$(_py_patch "$T38")
-promoted, candidates = de.auto_promote_to_law()
-was_promoted = any(p['id'] == 't38-populated' for p in promoted)
-law_exists = (de.LAWS_DIR / 't38-populated.txt').exists()
-print(was_promoted, law_exists)
-PYEOF
-)
-if echo "$result" | grep -q "True True"; then
-  pass "gf-sessions-populated: 3 distinct sessions + conf=0.95 promotes (normal path)"
-else
-  fail "gf-sessions-populated: got '$result'"
-fi
-rm -rf "$T38"
-
-# ── Test 39: gf-sessions-null-blocks — corruption guard ─────────────────────
-echo "--- Test 39: gf-sessions-null-blocks (v3.31.2 §4.1.A AD P1-1 negative) ---"
-T39="$(mktemp -d -t distill-t39-XXXXXX)"
-export CORTEX_DIR="$T39"
-make_promotable_instinct "$T39/instincts/global" "t39-null"
-make_impact_events "$T39/impact.jsonl" "t39-null" 6 0
-cat > "$T39/instinct-tracking.json" <<'JSON'
-{
-  "t39-null": {
-    "count": 0,
-    "sessions": null,
-    "projects_seen": [],
-    "first_seen": "2026-05-01T00:00:00Z",
-    "last_seen": "2026-05-14T00:00:00Z"
-  }
-}
-JSON
-mkdir -p "$T39/laws"
-
-result=$(python3 - <<PYEOF
-$(_py_patch "$T39")
-promoted, candidates = de.auto_promote_to_law()
-was_promoted = any(p['id'] == 't39-null' for p in promoted)
-cand = next((c for c in candidates if c['id'] == 't39-null'), None)
-reason_ok = bool(cand) and any('sessions 0/3' in r for r in cand['reasons'])
-print(was_promoted, reason_ok)
-PYEOF
-)
-if echo "$result" | grep -q "False True"; then
-  pass "gf-sessions-null-blocks: sessions:null does NOT grandfather (corruption guard)"
-else
-  fail "gf-sessions-null-blocks: got '$result'"
-fi
-rm -rf "$T39"
-
-# ── Test 40: gf-missing-sessions-key-blocks — corruption guard ──────────────
-echo "--- Test 40: gf-missing-sessions-key-blocks (v3.31.2 §4.1.A AD P1-1 negative) ---"
-T40="$(mktemp -d -t distill-t40-XXXXXX)"
-export CORTEX_DIR="$T40"
-make_promotable_instinct "$T40/instincts/global" "t40-missingkey"
-make_impact_events "$T40/impact.jsonl" "t40-missingkey" 6 0
-cat > "$T40/instinct-tracking.json" <<'JSON'
-{
-  "t40-missingkey": {
-    "count": 0,
-    "projects_seen": [],
-    "first_seen": "2026-05-01T00:00:00Z",
-    "last_seen": "2026-05-14T00:00:00Z"
-  }
-}
-JSON
-mkdir -p "$T40/laws"
-
-result=$(python3 - <<PYEOF
-$(_py_patch "$T40")
-promoted, candidates = de.auto_promote_to_law()
-was_promoted = any(p['id'] == 't40-missingkey' for p in promoted)
-cand = next((c for c in candidates if c['id'] == 't40-missingkey'), None)
-reason_ok = bool(cand) and any('sessions 0/3' in r for r in cand['reasons'])
-print(was_promoted, reason_ok)
-PYEOF
-)
-if echo "$result" | grep -q "False True"; then
-  pass "gf-missing-sessions-key-blocks: missing 'sessions' key does NOT grandfather (corruption guard)"
-else
-  fail "gf-missing-sessions-key-blocks: got '$result'"
-fi
-rm -rf "$T40"
-
 # ── v3.31.2 §4.1.B — auto_validate_proposals skip_breakdown logging ─────────
 # Tests 41-42 verify the new instrumentation: aggregated skip-reason
 # Counter returned in dict AND persisted to auto-validate-skips.jsonl.
@@ -1566,13 +1289,17 @@ T41="$(mktemp -d -t distill-t41-XXXXXX)"
 export CORTEX_DIR="$T41"
 mkdir -p "$T41/instincts/global"
 # Pre-existing instinct so p3 triggers `already-instinct`.
+# v4 (DESIGN-V4.md §2): 'error-recovery' moved AUTO → HUMAN, so p2/p3/p4 use
+# the still-AUTO 'gotcha' domain — otherwise every proposal here lands on
+# needs-human-judgment before the confidence/already-instinct checks ever
+# run, collapsing the 3 distinct skip reasons this test exists to prove.
 cat > "$T41/instincts/global/p3-exists.yaml" <<'YAML'
 ---
 id: p3-exists
 trigger: 'Bash'
 action: 'Test existing instinct'
 confidence: 0.9500
-domain: error-recovery
+domain: gotcha
 type: gotcha
 source: cx-auto-validate
 scope: global
@@ -1591,11 +1318,11 @@ cat > "$T41/proposals.json" <<'JSON'
 [
   {"id": "p1-human", "domain": "correction", "confidence": 0.95, "status": "pending",
    "trigger": "Bash", "action": "Always verify migrations before applying"},
-  {"id": "p2-low", "domain": "error-recovery", "confidence": 0.30, "status": "pending",
+  {"id": "p2-low", "domain": "gotcha", "confidence": 0.30, "status": "pending",
    "trigger": "Bash", "action": "Catch and retry on transient failure"},
-  {"id": "p3-exists", "domain": "error-recovery", "confidence": 0.95, "status": "pending",
+  {"id": "p3-exists", "domain": "gotcha", "confidence": 0.95, "status": "pending",
    "trigger": "Bash", "action": "Test existing instinct"},
-  {"id": "p4-accept", "domain": "error-recovery", "confidence": 0.95, "status": "pending",
+  {"id": "p4-accept", "domain": "gotcha", "confidence": 0.95, "status": "pending",
    "trigger": "Bash", "action": "Sanitize input before processing user data"}
 ]
 JSON
@@ -1905,49 +1632,17 @@ else
 fi
 rm -rf "$T49"
 
-# ── Summary ──────────────────────────────────────────────────────────────────
 echo ""
-# ── Test 49: criteria-8 universality opt-in (v3.34.2) ────────────────────────
-# An instinct that passes EVERY statistical criterion but lacks an explicit
-# law_eligible:true must NOT auto-promote — it goes to candidates for human
-# review (so contextual instincts can't silently inflate the Core).
-echo "--- Test 49: criteria-8 law_eligible opt-in ---"
-TC8="$(mktemp -d -t distill-c8-XXXXXX)"
-export CORTEX_DIR="$TC8"
-TODAY8=$(python3 -c "from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime('%Y-%m-%d'))")
-FIFTEEN8=$(python3 -c "from datetime import datetime, timezone, timedelta; print((datetime.now(timezone.utc)-timedelta(days=15)).strftime('%Y-%m-%d'))")
-mkdir -p "$TC8/instincts/global" "$TC8/laws"
-cat > "$TC8/instincts/global/c8-ctx.yaml" <<YAML
----
-id: c8-ctx
-confidence: 0.9500
-domain: testing
-trigger: "Bash"
-action: "Some contextual project-specific thing"
-last_seen: $TODAY8
-first_seen: $TODAY8
-occurrences: 20
-project_id: proj-alpha
-at_law_threshold_since: $FIFTEEN8
----
-YAML
-make_impact_events "$TC8/impact.jsonl" "c8-ctx" 6 0
-cat > "$TC8/instinct-tracking.json" <<JSON
-{ "c8-ctx": { "count": 30, "sessions": ["s-A", "s-B", "s-C"], "projects_seen": ["proj-alpha"] } }
-JSON
-result=$(python3 - <<PYEOF
-$(_py_patch "$TC8")
-promoted, candidates = de.auto_promote_to_law()
-prom = any(p['id'] == 'c8-ctx' for p in promoted)
-cand = next((c for c in candidates if c['id'] == 'c8-ctx'), None)
-has_reason = bool(cand and any('law_eligible' in r for r in cand['reasons']))
-law = (de.LAWS_DIR / 'c8-ctx.txt').exists()
-print(prom, has_reason, law)
-PYEOF
-)
-[ "$result" = "False True False" ] && pass "criteria-8: unmarked mature instinct → candidate (not law)" \
-                                  || fail "criteria-8: got '$result' (expected 'False True False')"
-rm -rf "$TC8"
+# ── Test 49b: retired in v4 (was criteria-8 universality opt-in, v3.34.2) ───
+# retired in v4: the manual `law_eligible: true` opt-in ("Criteria 8") is
+# gone — DESIGN-V4.md §3 / P3 ("reglas objetivas sustituyen a flags
+# manuales que nadie pone") replaces it with the 4 statistical criteria
+# tested above (Test 12 promote-accepts, Test 33 promote-passes-at-3-
+# projects). `law_eligible: false` survives as an explicit human VETO only
+# (still covered by test_law_tier.sh Test 6) — `law_eligible: true` no
+# longer gates anything, so an instinct missing the field is no longer
+# blocked from promotion, which is the exact behavior this test used to
+# assert as a failure case.
 
 # ── Test 50: write-path ops acquire the engine LOCK_FILE (#45) ───────────────
 echo "--- Test 50: #45 demote serializes under LOCK_FILE ---"

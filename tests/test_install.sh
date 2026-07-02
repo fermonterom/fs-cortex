@@ -45,9 +45,11 @@ for lib in dream_cycle.py validate_instinct.py cortex_utils.py yaml-utils.js inj
     [ -f "$SANDBOX/.claude/hooks/cortex/lib/$lib" ] && pass "lib: $lib installed" || fail "lib: $lib MISSING"
 done
 
-# 1e: All 21 commands installed (v3.33.0 added /cx-backfill)
+# 1e: All 24 commands installed (v4 DESIGN-V4.md §5 added /cx-maintain +
+# /cx-review on top of the 22 pre-v4 commands; the other 17 became
+# deprecation stubs rather than being deleted, so the file count grew).
 CMD_COUNT=$(ls "$SANDBOX/.claude/commands/cx-"*.md 2>/dev/null | wc -l | tr -d ' ')
-[ "$CMD_COUNT" -eq 22 ] && pass "22 commands installed" || fail "commands: $CMD_COUNT (expected 22)"
+[ "$CMD_COUNT" -eq 24 ] && pass "24 commands installed" || fail "commands: $CMD_COUNT (expected 24)"
 
 # 1f: SKILL.md installed
 [ -f "$SANDBOX/.claude/skills/cortex/SKILL.md" ] && pass "SKILL.md installed" || fail "SKILL.md MISSING"
