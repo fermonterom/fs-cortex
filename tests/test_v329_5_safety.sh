@@ -212,4 +212,5 @@ test_f5_history_split
 
 echo "──────────────────────────────────────"
 echo "Passed: $PASSES   Failed: $FAILS"
+echo "=== Results: $PASSES passed, $FAILS failed ==="
 [ "$FAILS" -eq 0 ] && exit 0 || exit 1

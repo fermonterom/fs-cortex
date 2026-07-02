@@ -68,4 +68,5 @@ run_test "real_upgrade_path"      "3.0.0"       ""                   0 "$NEW_VER
 
 echo ""
 echo "Result: ${PASS}/$((PASS + FAIL)) PASS"
+echo "=== Results: $PASS passed, $FAIL failed ==="
 [ $FAIL -eq 0 ]

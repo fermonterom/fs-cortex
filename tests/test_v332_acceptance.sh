@@ -416,6 +416,7 @@ rm -rf "$PC_SANDBOX"
 
 echo ""
 echo "=== Acceptance Gate: $PASS passed, $FAIL failed ==="
+echo "=== Results: $PASS passed, $FAIL failed ==="
 if [ "$FAIL" -gt "0" ]; then
   echo "✗ v3.32.0 NOT cleared for tag."
   exit 1

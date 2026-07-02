@@ -248,66 +248,122 @@ COLLECTOR
 
 ### Render from JSON output
 
-Parse the single JSON blob and render the ASCII dashboard:
+Parse the single JSON blob and render the **visual** ASCII dashboard (glance
+first, detail on request). Nothing from the collector is dropped — anything
+that does not fit the glance moves to a compact secondary line inside its
+own section, never removed. Semaphore thresholds are fixed below so the
+render is deterministic across runs/models (rule f).
 
-**Laws** — list each `id` + first line of `content`. Count = `len(laws)`, tokens ≈ count × 38.
+**Semaphore legend:** 🟢 todo OK · 🟡 atención (no bloquea) · 🔴 acción
+requerida · ⚪ sin datos suficientes.
 
-**Instincts** — group `proj_instincts` and `global_instincts` by confidence tier:
-- LAWS tier: conf ≥ 0.90
-- INSTINCTS tier: 0.70 ≤ conf < 0.90
-- PATTERNS tier: 0.50 ≤ conf < 0.70
-- HYPOTHESES tier: 0.30 ≤ conf < 0.50
-- OBSERVATIONS tier: conf < 0.30
+#### Threshold table (source of truth — do not improvise a different cut)
 
-Each instinct also carries `status` (v4, `docs/SPEC-PORT-SINAPSIS.md` §2):
-`draft` (tracked, NOT injected — needs `occurrences >= 5` in `>= 3` distinct
-sessions to auto-confirm via `/cx-maintain`) or `confirmed` (injectable;
-legacy pre-v4 instincts default here). Show the draft/confirmed split as a
-one-line summary using `health.instincts_draft` / `health.instincts_confirmed`
-— do not recompute, the collector already counted it.
+| Señal | Campo del collector | 🟢 | 🟡 | 🔴 |
+|---|---|---|---|---|
+| Maintain | `health.next_maintain` (parse `due_in` days) | due_in ≥ 2d | 0 ≤ due_in < 2d ("vence pronto") | due_in < 0 o "never run" (overdue) |
+| Review digest | `health.review_digest_items` | 0 | 1–10 | > 10 |
+| Reflexes noisy | `reflexes[]` vía reglas `--reflexes` (abajo) | noisy == 0 | — (no aplica en este resumen) | noisy ≥ 1 |
+| Obs vivas | `health.last_obs` (antigüedad) | ≤ 48h | 48h – 7d | > 7d o "never"/no parseable |
+| LAWS | `len(laws)` vs cap fijo **15** (`LAW_MAX_ACTIVE`, `docs/FEATURES.md`) | < 14 | == 14 (1 hueco libre) | ≥ 15 (cap alcanzado, bloquea nuevas promociones) |
+| INSTINCTS | `health.instincts_draft` (backlog sin confirmar) | ≤ 10 | 11–30 | > 30 |
+| REFLEXES (sección completa) | agregados de `reflexes[]` | noisy == 0 AND borderline ≤ 5 | borderline > 5 (y noisy == 0) | noisy ≥ 1 |
+| SISTEMA | `health.hook_count`, `health.learn_pending` | hook_count > 0 AND learn_pending == false | learn_pending == true (hook_count > 0) | hook_count == 0 (hooks no registrados en `settings.json` — proxy de "learn errors", el collector no expone un contador de errores real) |
 
-**Knowledge by Domain** — from both instinct lists combined, group by `domain`, count total and law-tier (conf ≥ 0.90). Sort by total descending.
+**SALUD GLOBAL** = el peor semáforo entre {Maintain, Review digest, Reflexes
+noisy, Obs vivas, LAWS, INSTINCTS, REFLEXES, SISTEMA}. 🔴 si cualquiera es
+🔴, si no 🟡 si cualquiera es 🟡, si no 🟢.
 
-**Projects** — render table sorted by `obs` descending. Mark current project with `◀ current`.
+**Header** — `🧠 CORTEX v4 ── {fecha/hora actual de la sesión} ── proyecto:
+{proj_name o "sin detectar"}`. La fecha/hora sale del contexto de la sesión
+(no dispares una segunda llamada Bash solo para `date`; si no hay hora
+precisa disponible, muestra solo la fecha).
 
-**Reflexes** — for each reflex apply STATUS rules:
-- `healthy`: usefulCount ≥ 10 AND noiseCount < 3
-- `borderline`: noiseCount == 1 OR noiseCount == 2
-- `NOISY`: noiseCount ≥ 3 AND fireCount ≥ 10 AND usefulCount < noiseCount
-- `unknown`: fallback (fireCount < 10 or no clear category)
-- `[NEVER FIRED]`: fireCount == 0
+**LAWS** — `📜 LAWS {semáforo} {len(laws)}/15 ······· ~{len(laws)*38} tok/sesión`.
+Segunda línea: ids separados por ` · `, envueltos a ~70 cols. El primer
+renglón de `content` de cada law (tooltip) solo se muestra si el usuario
+pide detalle explícito (`/cx-status --help` no cuenta; hay que pedirlo en la
+conversación) — sigue disponible en el JSON, no se pierde.
 
-**System Health** — render `health` fields. Flag `learn_pending` with ⚠. Render
-`next_maintain` as its own line (e.g. `Próximo /cx-maintain: in 3.2d` or
-`Próximo /cx-maintain: OVERDUE by 1.4d — run /cx-maintain`, flagged with ⚠
-when overdue). Render `review_digest_items` as `Review digest: N item(s)
-pendientes -> /cx-review` when > 0, otherwise `Review digest: al día`.
+**INSTINCTS** — `🧬 INSTINCTS {semáforo} {total} ({N proyecto} + {N global}) · draft {health.instincts_draft} → confirmed {health.instincts_confirmed}`.
+Segunda línea: barra de confianza por tier (LAWS ≥.90, INSTINCTS .70-.89,
+PATTERNS .50-.69, HYPOTHESES .30-.49, OBSERVATIONS <.30 — omite tiers en 0).
+Escala de barras (máx 14 caracteres): `bar_len = max(1, floor(tier_count /
+max_tier_count * 14))` si `tier_count > 0`, si no 0 caracteres. `max_tier_count`
+es el conteo del tier más numeroso. Formato por tier: `conf ≥.90 {barra}
+{count}   .70-.89 {barra} {count}   .50-.69 {barra} {count}` (omite tiers
+vacíos). Tercera línea: `domains: {top4 "domain N" separados por · } · +resto {suma del resto}`
+— agrupa `proj_instincts + global_instincts` por `domain`, ordena desc,
+top 4 inline, el resto se suma en un solo `+resto N` (si el resto es 0, omite
+el segmento).
 
-**Instinct Tracking** — top 10 from `tracking_top`. If empty: "No tracking data yet."
+**PROJECTS** — sin semáforo (informativo). `📁 PROJECTS (top 5 por obs, ◀ =
+actual)` + una línea `name {obs formateado} {◀ si current} · name {obs} ...`.
+Formato de `obs`: `f"{obs/1000:.1f}k"` si `obs >= 1000`, si no el entero tal
+cual. Segunda línea compacta: `Detalle completo (root · hash corto · inst ·
+last_seen) de las {len(projects)} entradas → pide "proyectos detalle" o usa
+--json.` — el resto de `projects` sigue en el JSON, no se descarta.
 
-**Evolved** — render counts from `evolved`.
+**REFLEXES** — `⚡ REFLEXES {semáforo} {len(reflexes)} → 🟢×{healthy} 🟡×{borderline} ⚪×{unknown} 🔴×{noisy}`
+usando las reglas STATUS ya definidas para `--reflexes` (healthy/borderline/
+NOISY/unknown, ver más abajo — misma fuente, no la dupliques con otro
+criterio). Segunda línea (leyenda fija): `(🟢 healthy · 🟡 borderline · ⚪ sin
+datos · 🔴 noisy→candidato a disable)`. Detalle por reflex individual
+(fireCount/usefulCount/noiseCount/condition/enabled) vía `/cx-status
+--reflexes` — no se repite aquí para no duplicar la sección dedicada.
+
+**SISTEMA** — `🔧 SISTEMA {semáforo}  hooks {health.hook_count} · disco
+{health.disk} · última obs hace {antigüedad relativa de health.last_obs} ·
+learn-pending {"⚠ sí" si true, si no "✓ no"}`. Segunda línea compacta:
+`memory.json: {health.mem_size formateado en KB/MB}`. Render `next_maintain`
+y `review_digest_items` en el cuadro SALUD GLOBAL de cabecera (no los
+repitas aquí, ya están cubiertos ahí con su propio semáforo).
+
+**TOP TRACKING** — sin semáforo. `📈 TOP TRACKING (occurrences_v4, contador
+honesto v4)` + una línea con los top 5 de `tracking_top` como `{id}×{count}
+(s{sessions})` separados por ` · ` si caben en ~100 cols; si no caben,
+parte en 2 líneas de hasta 3 entradas cada una (nunca se corta un id a
+medias). Si `tracking_top` está vacío: `No tracking data yet.`
+
+**EVOLVED** — sin semáforo. Si `evolved.skills + evolved.commands +
+evolved.rules == 0`: `🚀 EVOLVED: 0 drafts pendientes`. Si > 0: `🚀 EVOLVED:
+{total} drafts pendientes ({skills} skills · {commands} commands · {rules}
+rules)`.
 
 ## Output format
 
-Use clean ASCII box format:
+Usa el formato visual siguiente (plantilla obligatoria — mantiene toda la
+info del formato anterior, reorganizada para lectura de un vistazo):
 
 ```
-================================================================
-  CORTEX STATUS
-  Date: YYYY-MM-DD HH:MM
-================================================================
+🧠 CORTEX v4 ── 2026-07-02 17:05 ── proyecto: fersora
+┌─────────────────────────────────────────────────────────┐
+│  SALUD GLOBAL: 🟢 TODO OK   (o 🟡 ATENCIÓN / 🔴 ACCIÓN) │
+│  🟢 Maintain in 6.9d   🟢 Review al día   🟢 Reflexes 0 noisy   🟢 Obs vivas │
+└─────────────────────────────────────────────────────────┘
 
-  [Section 1: Laws]
-  [Section 2: Instincts]
-  [Section 3: Projects]
-  [Section 4: Reflexes]
-  [Section 5: System Health]
-  [Section 6: Instinct Tracking]
-  [Section 7: Evolved]
+📜 LAWS 🟢 8/15 ······· ~304 tok/sesión
+   advisor-escalation · build-output-to-log · deep-work-to-docs · e2e-playwright
+   loop-reorient · macos-downloads · project-bootstrap · read-instructions
+   (id corto + tooltip: primera línea solo si el usuario pide detalle)
 
-================================================================
-  Total: N laws | N instincts (N project + N global) | N projects
-================================================================
+🧬 INSTINCTS 🟢 127 (62 proyecto + 65 global) · draft 0 → confirmed 127
+   conf ≥.90 ██████████████ 66   .70-.89 █████████ 45   .50-.69 ███ 16
+   domains: workflow 35 · gotcha 34 · pattern 16 · tool-pref 11 · +resto 35
+
+📁 PROJECTS (top 5 por obs, ◀ = actual)
+   fs-cortex 15.0k · fersora 11.3k ◀ · fs-vps-playbook 3.7k · LinkedIn 3.4k · ceo-dash 2.0k
+
+⚡ REFLEXES 🟢 23 → 🟢×16 🟡×3 ⚪×4 🔴×0
+   (🟢 healthy · 🟡 borderline · ⚪ sin datos · 🔴 noisy→candidato a disable)
+
+🔧 SISTEMA 🟢  hooks 7 · disco 169M · última obs hace Xmin · learn-pending ✓ no
+   memory.json: 42 KB
+
+📈 TOP TRACKING (occurrences_v4, contador honesto v4)
+   id×count(sN) top 5 en una o dos líneas si caben
+
+🚀 EVOLVED: 0 drafts pendientes
 ```
 
 ## Flags
