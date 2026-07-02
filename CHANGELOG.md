@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [4.0.0] — 2026-07-02
 
 **"Signal-first, zero-decision."** Full design rationale in `docs/DESIGN-V4.md`
-(gitignored, not shipped — public summary lives here and in
+(tracked in-repo alongside `docs/SPEC-PORT-SINAPSIS.md` and
 `docs/MIGRATION-V4.md`). Diagnosis that motivated this release: capture was
 silently starving every downstream detector (output/err_msg rarely populated
 → gotcha-basura → 88.5% historical rejection rate), and 20+ mostly-interactive
