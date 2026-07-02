@@ -204,12 +204,18 @@ else
 fi
 rm -rf "$PC_SANDBOX"
 
-# ── Assert 8: §4.16 multi-session gate — blocks at 2, promotes at 3 ──────────
-echo "--- Assert 8: multi-session promotion gate ---"
+# ── Assert 8: DESIGN-V4.md §3 — projects gate blocks at 1, promotes at 3 ────
+# v4: the old v3.29.0 §4.16 multi-session gate (instinct-tracking.json
+# sessions[] read by auto_promote_to_law) is gone — see the function's
+# docstring, "the >=3-distinct-sessions gate ... are gone". The
+# universality signal is now LAW_MIN_PROJECTS via projects_seen[] /
+# project_id on the instinct yaml itself. occurrences_v4 is seeded directly
+# in the fixture (not via the legacy `occurrences` counter) so this test
+# doesn't depend on the one-time lazy migration in _ensure_occurrences_v4.
+echo "--- Assert 8: law promotion projects gate (DESIGN-V4.md §3) ---"
 MS_SANDBOX="$(mktemp -d -t cortex-acc-ms-XXXXXX)"
 mkdir -p "$MS_SANDBOX/instincts/global" "$MS_SANDBOX/laws"
 TODAY=$(python3 -c "from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime('%Y-%m-%d'))")
-FIFTEEN=$(python3 -c "from datetime import datetime, timezone, timedelta; print((datetime.now(timezone.utc)-timedelta(days=15)).strftime('%Y-%m-%d'))")
 cat > "$MS_SANDBOX/instincts/global/acc8-inst.yaml" <<YAML
 ---
 id: acc8-inst
@@ -219,9 +225,8 @@ trigger: "Bash"
 action: "Always verify test results before reporting success to user"
 last_seen: $TODAY
 first_seen: $TODAY
-occurrences: 20
+occurrences_v4: 20
 project_id: proj-a
-at_law_threshold_since: $FIFTEEN
 law_eligible: true
 ---
 YAML
@@ -234,10 +239,7 @@ with open('$MS_SANDBOX/impact.jsonl', 'w') as f:
         f.write('{"v":1,"ts":"' + ts + '","ev":"feedback","iid":"acc8-inst","rating":"useful"}\n')
 PYEOF
 
-# Round 1: only 2 distinct sessions → blocked.
-cat > "$MS_SANDBOX/instinct-tracking.json" <<'JSON'
-{"acc8-inst": {"count": 10, "sessions": ["sA", "sB", "sA"], "projects_seen": ["proj-a"]}}
-JSON
+# Round 1: only 1 project (project_id=proj-a, no projects_seen) → blocked.
 r1=$(python3 - <<PYEOF
 import sys
 sys.path.insert(0, '$HOOKS_DIR/lib')
@@ -252,16 +254,23 @@ de.CANDIDATES_FILE = de.CORTEX_DIR / 'auto-distill-candidates.md'
 de.INSTINCT_TRACKING_FILE = de.CORTEX_DIR / 'instinct-tracking.json'
 promoted, candidates = de.auto_promote_to_law()
 cand = next((c for c in candidates if c['id'] == 'acc8-inst'), None)
-print('BLOCKED' if cand and any('sessions 2/3' in r for r in cand['reasons']) else 'LEAKED')
+print('BLOCKED' if cand and any('projects < 3' in r for r in cand['reasons']) else 'LEAKED')
 PYEOF
 )
-[ "$r1" = "BLOCKED" ] && pass "multi-session: 2 sessions → blocked (reason 'sessions 2/3')" \
+[ "$r1" = "BLOCKED" ] && pass "projects-gate: 1 project → blocked (reason 'projects < 3')" \
                      || fail "multi-session at 2: $r1"
 
-# Round 2: bump to 3 distinct sessions → promotes.
-cat > "$MS_SANDBOX/instinct-tracking.json" <<'JSON'
-{"acc8-inst": {"count": 15, "sessions": ["sA", "sB", "sC"], "projects_seen": ["proj-a"]}}
-JSON
+# Round 2: bump to 3 distinct projects_seen on the instinct itself → promotes.
+python3 - <<PYEOF
+from pathlib import Path
+p = Path("$MS_SANDBOX/instincts/global/acc8-inst.yaml")
+text = p.read_text(encoding="utf-8")
+text = text.replace(
+    "project_id: proj-a\n",
+    "project_id: proj-a\nprojects_seen:\n- proj-a\n- proj-b\n- proj-c\n",
+)
+p.write_text(text, encoding="utf-8")
+PYEOF
 r2=$(python3 - <<PYEOF
 import sys
 sys.path.insert(0, '$HOOKS_DIR/lib')
@@ -278,7 +287,7 @@ promoted, _ = de.auto_promote_to_law()
 print('PROMOTED' if any(p['id'] == 'acc8-inst' for p in promoted) else 'STILL-BLOCKED')
 PYEOF
 )
-[ "$r2" = "PROMOTED" ] && pass "multi-session: bump to 3 sessions → promotes to law" \
+[ "$r2" = "PROMOTED" ] && pass "projects-gate: bump to 3 projects_seen → promotes to law" \
                        || fail "multi-session at 3: $r2"
 rm -rf "$MS_SANDBOX"
 

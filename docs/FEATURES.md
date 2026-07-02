@@ -1,7 +1,13 @@
-# fs-cortex v3.38.2 — Feature Reference
+# fs-cortex v4.0.0 — Feature Reference
 
 > Complete inventory of all features, commands, hooks, modules, and capabilities.
-> Last updated: 2026-06-22
+> Last updated: 2026-07-02
+>
+> **v4.0.0 ("signal-first, zero-decision")** replaces the manual-judgment
+> command set with 7 active commands (`/cx-status`, `/cx-maintain`,
+> `/cx-review`, `/cx-eod`, `/cx-gotcha`, `/cx-backup`, `/cx-restore`) + 17
+> deprecated stubs. See [`MIGRATION-V4.md`](MIGRATION-V4.md) for the full
+> v3→v4 mapping and rationale.
 
 ---
 
@@ -79,6 +85,7 @@ or `python3 impact_log.py stats --json`.
 - **Robust PostToolUse parser** (v3.15.0): unwraps `tool_response.content[type=text][text]` (Anthropic v1 API shape) and prefers `tool_response.is_error` over the regex heuristic. Fixes the live-corpus bug where `err_msg` never persisted (3 errors / 0 messages on 3 730 obs)
 - **is_error flag** on each observation for downstream pattern detection
 - **Heuristic false-positive guards** (v3.37.2, mirrored in `session-learner.js` `isError()`): network tools (`WebFetch`/`WebSearch`) are exempt from the keyword scan (explicit `is_error` flag only — their output is page/search content where "error" is just a word), structured responses with HTTP 2xx `code` are success by contract, and test-runner output (`=== Results:`, `PASS:`/`FAIL:` lines, `N passed`, `Tests: N`) never counts as a tool failure
+- **v4 per-line capture guards** (`docs/SPEC-PORT-SINAPSIS.md` §1, port of Sinapsis `observe_v3.py`): before trusting a candidate `ERROR_PATTERNS` hit, each output line is checked against subprocess log noise (`[codex]`, `npm warn/notice/info`), dependency version listings (`+ pkg@1.2.3`), ASCII section headers (`===== file =====`), `0 errors` summaries, and bare `warning:` lines without the word "error". A guarded line is skipped, not the whole output — later real errors in the same call still surface. `err_msg` is now the first non-guarded line matching `ERROR_PATTERNS` (was: head of raw output). `output` cap raised 8 000 → 10 000 chars to match the Sinapsis port
 - Session ID truncated to 24 chars (not 16) for collision avoidance
 - File-based project ID cache (5min TTL) — avoids git subprocess per tool use
 - Conditional registry.json write — skips when project metadata unchanged
@@ -95,7 +102,10 @@ or `python3 impact_log.py stats --json`.
 - **Imports shared `yaml-utils.js`** for YAML parsing (eliminates inline parser drift risk)
 - **Monorepo-aware domain pre-filter** (v3.15.0): scans recursively up to depth 3, reads `pnpm-workspace.yaml`, `turbo.json`, `nx.json`, `lerna.json`, `rush.json`, plus typical folders (`apps/`, `packages/`, `libs/`, `services/`). Detects more stacks (remix, gatsby, koa, hono, elysia, nestjs, stripe, playwright, fastapi, django, flask). Cached 5 min in `.project-domains-cache`. Before v3.15.0 only depth-0 — Turborepo/pnpm-workspace silently lost ALL stack instincts
 - **Impact funnel emit** (v3.14.0): for every instinct that survives all filters, appends an `inject` event to `~/.claude/cortex/impact.jsonl` via the `impact_log.js` fast path (no Python spawn). Try/catch wrapper — never blocks injection if the writer fails
-- **Domain dedup**: 1 instinct per domain per injection — higher confidence wins within the same domain. Prevents redundant advice from the same area saturating context
+- **Subtopic dedup (v4)**: dedup switched from 1-per-`domain` (too coarse) to 1-per-subtopic (first 2 words of the instinct id). A soft ceiling of max 2 accepted per `domain` still applies underneath, with a 2nd allowed through only when BOTH candidates have `confidence >= 0.85`. Prevents redundant advice from the same area saturating context
+- **JSON-fragment + prompt-injection guards (v4)**: actions containing raw JSON (`{"`, `file_path"`, `old_string"`) never parse as injectable; actions attempting `ignore previous instructions` / `</system>` / `system: you are...` are dropped at load, not neutered
+- **Degenerate-trigger validation (v4)**: a trigger that is a bare tool-name alternation anchored at start (`^Bash|Read|Edit|...`) matches almost every tool call — skipped with a `CORTEX_DEBUG` warning instead of silently starving every other instinct's injection odds
+- **Draft/confirmed status gate (v4)**: `status: draft` instincts are tracked (occurrences/sessions) but never candidates for injection, regardless of confidence; only `status: confirmed` (or legacy instincts with no `status` field, treated as confirmed) reach the domain/subtopic dedup stage
 - **Occurrence tracking**: writes `instinct-tracking.json` with per-instinct schema: `{ count, sessions[], projects_seen[], first_seen, last_seen }`. Tracks ALL matches including drafts (confidence < 0.30), not just injected instincts
 - **Session tracking**: stores last 20 session IDs per instinct (capped to prevent unbounded growth). Used for multi-session auto-promote gating
 - **Cross-project tracking**: `projects_seen[]` per instinct — records which projects triggered each instinct. Used by `/cx-promote` for cross-project analysis
@@ -231,46 +241,47 @@ or `python3 impact_log.py stats --json`.
 
 ---
 
-## Commands (20)
+## Commands (7 active + 17 deprecated, 24 files total — `ls commands/*.md`)
+
+**v4.0.0 replaces the manual-judgment command set.** Every deterministic
+maintenance step lives in `/cx-maintain` (cron-able); every remaining
+human-judgment call lives in `/cx-review` (one weekly digest). The other 17
+commands are stubs that print their replacement and run no legacy logic. Full
+mapping: [`MIGRATION-V4.md`](MIGRATION-V4.md).
 
 | Command | Purpose | Token Cost |
 |---|---|---|
-| `/cx-status` | Dashboard: laws, instincts, projects, reflexes, tracking, health, domain grouping. **`--impact` flag** (v3.14.0): show the Sprint 0 funnel + Go/No-Go Gate recommendation. **`--reflexes` flag** (v3.18.0): per-reflex health table with healthy/borderline/NOISY/unknown status. **`--pipeline` flag** (v3.23.1): consolidated knowledge-pipeline activity (auto-validate / auto-distill / auto-evolve counts, queue depths, last-run markers) — single source of truth for what the system did automatically | ~200 |
-| `/cx-dashboard` | Visual HTML report with Fersora brand — laws, instincts, reflexes, projects, health, timeline | ~150 |
-| `/cx-analyze` | Detect patterns in observations → proposals (Opus 1M agent) | ~5K |
-| `/cx-distill` | Promote instincts to laws (0.90+), apply decay, Jaccard promotions | ~800 |
-| `/cx-validate` | Review and accept/reject proposals interactively (shorthand UX) | ~500 |
-| `/cx-evolve` | Cluster mature instincts → skills/commands/rules/agents | ~1K |
-| `/cx-dream` | Dream Cycle: dedup, contradictions, staleness, regex, health score | ~600 |
-| `/cx-router` | Command catalog with token costs, session budget estimate, next action | ~50 |
-| `/cx-promote` | Cross-project instinct promotion (Jaccard ≥0.70, 2+ projects) | ~300 |
-| `/cx-audit` | Token overhead, duplicates, conflicts, cleanup | ~400 |
-| `/cx-eod` | **(v3.38.1)** End-of-day summary. Deterministic gather (`core/_cx-eod-gather.sh`, no LLM) over all projects' last 24h; idempotent intraday regeneration with `## Ejecuciones hoy` trace. `--auto`/cron uses the script's `--write` mode (composes the summary itself, **zero model quota**, no `claude -p`); interactive `/cx-eod` composes with Claude's judgment | ~300 / 0 (auto) |
-| `/cx-gotcha` | Capture error→fix as high-priority instinct | ~200 |
-| `/cx-feedback` | **(v3.14.0, source-split v3.17.0)** Close the human loop on the impact funnel. Always writes `source: user`. Modes `useful \| noise \| ignore` (last-injected) or explicit `<instinct-id>`. Soft confidence nudge (+0.02 / -0.05). Writes `feedback.jsonl` mirror | ~100 |
-| `/cx-feedback-auto` | **(v3.17.0)** Agent-emitted feedback for tool-choice reflexes the user cannot evaluate. Always writes `source: agent`. No confidence nudge on instincts; tracks `noiseCount` on reflexes for auto-disable (default-on via installer-managed `CORTEX_AGENT_DISABLE_REFLEXES=1` since v3.19.0). See `docs/AGENT-FEEDBACK.md` | ~100 |
-| `/cx-downvote` | Negative feedback on incorrect instinct injection (reduces confidence) | ~100 |
-| `/cx-retro` | Weekly retrospective: command usage, instinct activations, health trend | ~200 |
-| `/cx-timeline` | Knowledge event log: creations, promotions, decays, archives, evolutions | ~100 |
-| `/cx-export` | Generate portable skill for Claude.ai or sharing | ~500 |
-| `/cx-backup` | Create portable .tar.gz backup for machine transfer | ~100 |
-| `/cx-restore` | Import knowledge from backup archive | ~200 |
+| `/cx-status` | Dashboard: laws, instincts, projects, reflexes, tracking, health, domain grouping. `--impact`, `--reflexes`, `--pipeline` flags unchanged from v3 | ~200 |
+| `/cx-maintain` | **New in v4, deterministic, cron-able.** Single pass: engine decay/purge/auto-validate/deterministic law-promotion, Jaccard dedup by subtopic, storage rotation, proposals↔instincts reconciliation, health check, writes `.review-digest.json` for `/cx-review`. Zero questions, idempotent | ~400 |
+| `/cx-review` | **New in v4, the only command with judgment, weekly.** Presents the accumulated digest (human-gated proposals + evolve drafts + law deprecation candidate) as ONE shorthand list. Fuses the old `cx-validate` + `cx-evolve` confirmation + `cx-downvote` + `cx-distill --swap` | ~600 |
+| `/cx-eod` | End-of-day summary. Deterministic gather (`core/_cx-eod-gather.sh`, no LLM); structurally cumulative (rereads the full day on every run); **v4**: per-project `context` field from `context.md`, `[eod-eisenhower]` Q1–Q4 keyword classification of "for tomorrow" bullets on next-day reinjection, review-digest pending count surfaced in `--write` mode | ~300 / 0 (auto) |
+| `/cx-gotcha` | Capture error→fix as high-priority instinct (unchanged) | ~200 |
+| `/cx-backup` | Create portable .tar.gz backup for machine transfer (unchanged) | ~100 |
+| `/cx-restore` | Import knowledge from backup archive (unchanged) | ~200 |
+
+### Deprecated (17, stub-only)
+
+| Command | v4 replacement |
+|---|---|
+| `/cx-analyze`, `/cx-distill`, `/cx-dream`, `/cx-promote`, `/cx-backfill` | `/cx-maintain` |
+| `/cx-validate`, `/cx-evolve`, `/cx-downvote`, `/cx-retro` | `/cx-review` |
+| `/cx-timeline`, `/cx-dashboard`, `/cx-export` | `/cx-status` |
+| `/cx-audit` | workflow `cortex-audit` (no longer a slash command) |
+| `/cx-feedback`, `/cx-feedback-auto`, `/cx-router`, `/cx-stop` | eliminados sin sustituto |
 
 ### Interactive Shorthand System
-All interactive commands use consistent shorthand (no modal dialogs):
-- **A** = Accept/Promote
-- **X** = Reject
-- **S** = Skip (review later)
-- **M** = Merge
-- **O** = Omit (already covered)
-- **I** = Install (pending skill)
+`/cx-review` uses the same shorthand convention the old interactive commands
+did (no modal dialogs):
+- **A** = Accept · **X** = Reject · **S** = Skip · **I** = Install (evolve draft)
+- **D** = Discard (evolve draft) · **P** = Deprecate (law) · **M** = Mantener (law)
 
 ### Learning Pipeline
 ```
-/cx-analyze → /cx-validate → /cx-distill → /cx-evolve → /cx-dream → /cx-audit
- detect        confirm        laws+decay     skills        dedup       cleanup
- patterns      or reject      +promotions    commands      contradictions
-                                             rules         staleness
+Observe (output+err_msg, per-line guards) → draft instinct (silent tracking)
+   → confirmed (occurrences>=5, sessions_seen>=3)
+   → /cx-maintain (deterministic law promotion: conf>=0.95, 3+ projects,
+      occurrences_v4>=10, no 14d noise feedback)
+   → /cx-review (weekly, the only human-judgment step left)
 ```
 
 ---
@@ -295,12 +306,20 @@ All interactive commands use consistent shorthand (no modal dialogs):
 | 0.70–0.89 | Instinct | Automatic | Promotion candidate |
 | 0.90–0.95 | Law | Always (SessionStart) | Auto-distilled one-liner, capped at 0.95 |
 
-**Inline staleness**: instincts not seen in 60+ days are skipped at injection time (read-only, no file writes). Immediate effect without manual `/cx-dream`.
-**Decay**: linear -0.05 per 30 days via Dream Cycle (e.g., 0.80 confidence after 60 days → 0.70). 90-day stale instincts auto-archive.
-**Domain dedup**: 1 instinct per domain per injection. Higher confidence wins within the same domain. Max 3 domains per tool use. Prevents context saturation from redundant advice.
-**Promotion**: Jaccard similarity ≥0.70 + 2 projects + avg confidence ≥0.60 → global via `/cx-promote`. Cross-project analysis uses `projects_seen[]` from instinct-tracking.json.
-**Draft auto-promote**: 5+ trigger matches across 3+ distinct sessions → confidence bumped to 0.35. Events logged to `knowledge-log.md` with source `injector-engine`.
-**Downvote**: `/cx-downvote` records negative feedback. 30%+ rejection rate → confidence reduced. Below 0.10 → auto-archive.
+> **v4 note**: the "Draft" *label* in the table above is a confidence-range
+> name (0.00–0.29), independent from the new `status: draft`/`confirmed`
+> YAML field (see Instinct Format below). A new instinct can carry
+> `status: draft` at any confidence — the field gates injection eligibility
+> before confidence even matters. Legacy instincts with no `status` field
+> default to `confirmed`.
+
+**Inline staleness**: instincts not seen in 60+ days are skipped at injection time (read-only, no file writes). Immediate effect without manual maintenance.
+**Decay**: linear -0.05 per 30 days, applied by `/cx-maintain`'s engine pass (e.g., 0.80 confidence after 60 days → 0.70). 90-day stale instincts auto-archive.
+**Subtopic dedup**: 1 instinct per subtopic per injection (v4, see Hooks section for detail); a domain-level soft ceiling of 2 still applies at conf>=0.85. Prevents context saturation from redundant advice.
+**Promotion to global**: Jaccard similarity ≥0.70 + 2 projects + avg confidence ≥0.60 → global, now computed inside `/cx-maintain`'s dedup step (replaces the deprecated `/cx-promote`). Cross-project analysis uses `projects_seen[]` from instinct-tracking.json.
+**Draft→confirmed auto-promote (status field)**: `occurrences >= 5` across `sessions_seen >= 3` distinct sessions → `status: confirmed` (v4, `session-learner.js`). Distinct from the confidence-based "draft auto-promote" below.
+**Draft auto-promote (confidence)**: 5+ trigger matches across 3+ distinct sessions → confidence bumped to 0.35. Events logged to `knowledge-log.md` with source `injector-engine`.
+**Negative feedback**: recorded via `/cx-review` (replaces the deprecated `/cx-downvote`). 30%+ rejection rate → confidence reduced. Below 0.10 → auto-archive.
 
 ---
 
@@ -369,7 +388,7 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 ### What Gets Updated
 - Hooks (6 files: observe.py, injector.sh, injector.js, session-start.py, session-learner.js, **precompact.py** new in v3.15.0)
 - `hooks/lib/` (8 files: dream_cycle.py, validate_instinct.py, yaml-utils.js, yaml_normalize.py, dashboard_gen.py, **impact_log.py**, **impact_log.js**, **fire_once.py**)
-- Commands (20 .md files, including `cx-feedback` since v3.14.0 and `cx-feedback-auto` since v3.17.0)
+- Commands (24 .md files total — 7 active + 17 deprecated stubs, `ls commands/*.md`; v4 adds `cx-maintain` and `cx-review`)
 - SKILL.md + 3 agents (cortex-observer, cortex-reviewer, cortex-planner)
 - Cortex section in CLAUDE.md
 - Version marker
@@ -378,11 +397,13 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 
 ---
 
-## Tests (35 bash suites, 586+ tests, + 1 PowerShell suite)
+## Tests (37 bash suites, 605+ tests, + 1 PowerShell suite)
 
 > Totals verified with `run_all.sh` on 2026-06-09 (34/34 suites green; 569 tests
 > across the 31 suites that print the standard `Results:` counter); v3.38.1 adds
-> `test_cx_eod_gather.sh` (17 tests). The table
+> `test_cx_eod_gather.sh` (17 tests); v4.0.0 adds `test_distill_v4.sh` (6/6 PASS,
+> verified standalone this release) and `test_injector_v4.sh` (13/13 PASS,
+> verified standalone this release) — 35 → **37 suites**. The table
 > below describes the core suites — `run_all.sh` and CI execute every
 > `tests/test_*.sh` regardless of whether it is listed here.
 
@@ -398,7 +419,9 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 | `test_install.sh` | 42 | Fresh install, upgrade, idempotency, **strict** path traversal (no fake-green), **v3.19.0 env merge** (CORTEX_AGENT_DISABLE_REFLEXES added, user vars preserved, idempotency, opt-out respected) |
 | `test_hooks_e2e.sh` | 14 | Full pipeline: observe→inject→learn, **token budget reset** |
 | `test_uninstall.sh` | 13 | Cleanup, backup creation, data preservation, **safety guard**, CLAUDE.md preservation, **v3.19.0 env removal** (Cortex var removed, user vars preserved, empty env block dropped) |
-| `test_integrity.sh` | 14 | observe.py direct, **21 commands** validated (EXPECTED_COMMANDS subset; 22 command files total incl. cx-feedback-auto + cx-backfill + cx-stop), core file schemas, **version consistency** |
+| `test_integrity.sh` | 14 | observe.py direct, **21 commands** validated (EXPECTED_COMMANDS subset; 24 command files total as of v4.0.0 — `ls commands/*.md` — incl. new `cx-maintain`/`cx-review` not yet in EXPECTED_COMMANDS), core file schemas, **version consistency** |
+| `test_distill_v4.sh` | 6 | **(v4.0.0)** `auto_promote_to_law` deterministic gate: conf/projects/occurrences_v4/noise-14d criteria, `law_eligible: false` veto, lazy `occurrences_legacy`/`occurrences_v4` migration |
+| `test_injector_v4.sh` | 13 | **(v4.0.0)** `status: draft` never injects, `status: confirmed`/legacy-no-field inject normally, subtopic dedup + domain soft-ceiling at conf>=0.85, JSON-fragment + prompt-injection action guards, degenerate-trigger static validation, live `reflexes.json` polling conditions |
 | `test_install_ps1.ps1` | 10 | PowerShell syntax, version consistency, security features, backup categories, hook config, v3.26-v3.28 source files present, **CI on windows-latest** |
 | `test_impact.sh` | 32 | **Sprint 0/1 funnel** — schema v1, JS↔Python compat, concurrent writes (10 parallel → 0 loss), rotation, gate GO/NO-GO, formulas, input validation, **v3.17.0 source split** (user/agent ratios, gate input, legacy default), **v3.18.0 auto-eval** (3 evaluator types, no-evaluator default, reflex iid prefix) |
 | `test_cross_day_tracker.sh` | 10 | Roundtrip, boost tiers (1/2/4/8 days), confidence cap 0.95, Jaccard match, single-token guard, prune >365d, concurrent append |
@@ -425,18 +448,19 @@ Deterministic rules via hooks — not probabilistic instructions. Triggers are r
 ├── reflexes.json                 # 10 deterministic rules
 ├── proposals.json                # Pending proposals from learner + cx-analyze
 ├── instinct-tracking.json        # Operational source of truth (v3.15.0): {count, sessions[20], projects_seen[], first_seen, last_seen}
-├── instinct-tracking.json.pre-v4.0  # Backup created by migrate-tracking-v4.py
+├── instinct-tracking.json.pre-v4.0  # Backup created by migrate-tracking-v4.py (tracking-schema v4, unrelated to product v4.0.0)
+├── .review-digest.json           # (v4.0.0) written by /cx-maintain, consumed by /cx-review — human-gated proposals, law candidates, deprecation candidate
 ├── impact.jsonl                  # Sprint 0 funnel — inject/follow/reject/feedback/outcome events (v3.14.0+)
 ├── feedback.jsonl                # /cx-feedback mirror (sampled view of feedback events)
 ├── impact.archive/               # Archived impact events older than 30 days
 ├── .session-token-budget         # Per-session token counter
 ├── .obs-count                    # Observation counter (triggers at 50)
-├── .learn-pending                # Marker: run /cx-analyze
-├── .last-distill                 # Timestamp of last cx-distill
-├── .last-audit                   # Timestamp of last cx-audit
+├── .learn-pending                # Marker: pending detection work (v4: absorbed into /cx-maintain)
+├── .last-distill                 # Timestamp of last distill pass (v4: touched by /cx-maintain for compat)
+├── .last-audit                   # Timestamp of last audit pass (v4: workflow `cortex-audit`, no longer a command)
 ├── .last-session-date            # Last session date
 ├── .last-storage-rotate          # 24h gate for Step 5f storage rotation (v3.35.1)
-├── .last-instinct                # IDs of last batch injected (used by /cx-downvote and /cx-feedback)
+├── .last-instinct                # IDs of last batch injected (v4: read by /cx-review's feedback flow)
 ├── .eod-last-read                # EOD read-once guard
 ├── .project-domains-cache        # Domain pre-filter cache (v3.15.0, 5-min TTL)
 ├── .fire-once/                   # fire_once markers (v3.15.0): name-sid24 files
@@ -641,3 +665,4 @@ locally (not installed to `~/.claude/`):
 | v3.38.2 | 2026-06-22 | **Installer no longer cancels silently when non-interactive.** Over an existing install, `install.sh`/`install.ps1` prompt `Update cortex installation?` (default yes); a piped/empty stdin from cron/CI was read literally and a stray `n` aborted at exit 0, masking a no-op deploy (hit during the v3.38.1 deploy). `ask_yes_no`/`Ask-YesNo` now assume the default when stdin is not a TTY or `-y`/`--yes`/`--non-interactive` is passed. New regression tests in `test_install.sh`. |
 | v3.38.1 | 2026-06-22 | **`/cx-eod --auto` made fully deterministic (no model call).** Added `--write` mode to `core/_cx-eod-gather.sh`: it composes the daily summary markdown itself (project sections + `## Ejecuciones hoy` intraday trace with exact-dup dedup + `## Quick Resume`/`### For tomorrow` for `session-start.py` reinjection) and writes it atomically. Schedulers call `bash _cx-eod-gather.sh --write` directly instead of `claude -p` → zero subscription/API quota, no auth-token/Keychain friction, no risk of a stray `ANTHROPIC_API_KEY` silently billing pay-as-you-go. `examples/launchd/` + cron docs rewritten to bash-direct; `commands/cx-eod.md` documents the deterministic path. Adversarial review hardening: write-mode sanitizes untrusted strings (names/branches/files) at the source against reinjection prompt-injection, serializes read-merge-write with an O_EXCL lockfile, and cleans the temp file on failure. `test_cx_eod_gather.sh` 11 → 17. Interactive `/cx-eod` still composes with Claude. |
 | v3.38.0 | 2026-06-19 | **`/cx-eod` deterministic gather + intraday cron support.** New `core/_cx-eod-gather.sh` (pure Node, no LLM) scans all registered projects' last-24h observations + git per root and emits structured JSON — previously Claude scanned projects by hand at token cost. Adapted to the Cortex obs schema (`ts/ev/tool/err/pid/pname/input`, distinct from Sinapsis), cross-OS safe (basename splits `/` and `\`, foreign roots skipped, projects merged by name). `commands/cx-eod.md` Step 1 invokes it with legacy fallback. Intraday idempotency: re-runs REGENERATE the day file (24h window → no dupes) and accumulate a `## Ejecuciones hoy` trace; new `--auto` flag (and non-TTY detection) skips the overwrite prompt for cron/launchd. `examples/launchd/` ships a generic plist + install helper + README (defaults 15/19/22, Linux cron snippet). `install.sh`/`install.ps1` deploy `core/*.sh` to `~/.claude/cortex/core/`. New `tests/test_cx_eod_gather.sh` (9/9 PASS). |
+| v4.0.0 | 2026-07-02 | **"Signal-first, zero-decision" — full redesign of capture and command set.** `docs/DESIGN-V4.md` + `docs/SPEC-PORT-SINAPSIS.md` (port of Sinapsis v4.6.1, MIT, Luis Salgado). **BREAKING:** 17 of 24 commands deprecated to notice-only stubs (mapping in `docs/MIGRATION-V4.md`); 7 remain active (`cx-status`, `cx-maintain`, `cx-review`, `cx-eod`, `cx-gotcha`, `cx-backup`, `cx-restore`). New `/cx-maintain` (deterministic, cron-able: decay+purge+auto-validate+deterministic law-promotion+Jaccard dedup-by-subtopic+storage rotation+proposals↔instincts reconciliation+health check, writes `.review-digest.json`). New `/cx-review` (the only command with human judgment, weekly, fuses old validate+evolve-confirm+downvote+distill-swap into one shorthand pass). `hooks/observe.py`: per-line capture guards before trusting an error match (`[codex]`/npm-log prefixes, version listings, grep headers, `0 errors`, bare `warning:`), `output` cap 8000→10000, `err_msg` now the first non-guarded matching line. New `status: draft`/`confirmed` instinct lifecycle (`session-learner.js`, `injector-engine.js`) — drafts track silently, auto-promote at `occurrences>=5 AND sessions_seen>=3`; legacy instincts default `confirmed`. Law promotion gate replaced with a fully deterministic one (`conf>=0.95`, `projects_seen>=3`, `occurrences_v4>=10` via lazy `occurrences_legacy` migration, 0 noise 14d) — `auto-distill-candidates.md` buzón removed. Injector: JSON-fragment + prompt-injection guards at load, degenerate-trigger static validation, dedup switched from per-domain to per-subtopic (2 first words of id) with a soft 2-per-domain ceiling at conf>=0.85. `core/_cx-eod-gather.sh`: per-project `context` field, `[eod-eisenhower]` Q1-Q4 keyword classification of "for tomorrow" bullets, review-digest pending count surfaced. New test suites `test_distill_v4.sh` (6/6 PASS), `test_injector_v4.sh` (13/13 PASS). |

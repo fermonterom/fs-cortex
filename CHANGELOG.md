@@ -4,6 +4,138 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [4.0.0] — 2026-07-02
+
+**"Signal-first, zero-decision."** Full design rationale in `docs/DESIGN-V4.md`
+(gitignored, not shipped — public summary lives here and in
+`docs/MIGRATION-V4.md`). Diagnosis that motivated this release: capture was
+silently starving every downstream detector (output/err_msg rarely populated
+→ gotcha-basura → 88.5% historical rejection rate), and 20+ mostly-interactive
+commands could not be automated with cron/schedule, so maintenance never ran
+on its own. v4 fixes both at the root instead of adding more gates.
+
+### BREAKING CHANGES
+
+- **17 commands deprecated to stubs.** Each prints a one-line notice + its
+  replacement and executes no legacy logic. Full command set drops from 24 to
+  7 active + 17 stubs (see `INDICE`/README for the count source: `ls commands/*.md`).
+
+  | Deprecated | Replacement |
+  |---|---|
+  | `/cx-analyze` | `/cx-maintain` (deterministic detection, no Opus 1M) |
+  | `/cx-distill` | `/cx-maintain` |
+  | `/cx-dream` | `/cx-maintain` |
+  | `/cx-promote` | `/cx-maintain` |
+  | `/cx-backfill` | `/cx-maintain` |
+  | `/cx-validate` | `/cx-review` (weekly human digest) |
+  | `/cx-evolve` | `/cx-review` |
+  | `/cx-downvote` | `/cx-review` |
+  | `/cx-retro` | `/cx-review` |
+  | `/cx-timeline` | `/cx-status` |
+  | `/cx-dashboard` | `/cx-status` |
+  | `/cx-export` | `/cx-status` |
+  | `/cx-audit` | workflow `cortex-audit` (no longer a slash command) |
+  | `/cx-feedback` | eliminado sin sustituto |
+  | `/cx-feedback-auto` | eliminado sin sustituto |
+  | `/cx-router` | eliminado sin sustituto |
+  | `/cx-stop` | eliminado sin sustituto |
+
+- **Gate de promoción a law reemplazado por uno determinista.** `auto_promote_to_law`
+  ya no depende de flags manuales (`law_eligible` como gate positivo, criterio 8
+  manual): promueve solo cuando TODAS se cumplen — `confidence >= 0.95`, visto
+  en `projects_seen >= 3`, `occurrences_v4 >= 10` (contador post-fix; el legacy
+  se preserva en `occurrences_legacy` vía migración perezosa, ver Fixed), sin
+  feedback de ruido en 14 días. `law_eligible: false` se sigue respetando como
+  veto explícito.
+- **Buzón `auto-distill-candidates.md` eliminado.** Nadie lo leía. Lo que no
+  cumple la regla de promoción determinista simplemente no es candidato — sin
+  cola intermedia.
+- **Dominio `error-recovery` deja de auto-aceptarse en validación.** Pasa a
+  `VALIDATE_HUMAN_DOMAINS`; requiere paso por `/cx-review`.
+
+### Added
+
+- **Captura output+err_msg con guards anti-falso-positivo** (`hooks/observe.py`,
+  port de Sinapsis `observe_v3.py`, spec en `docs/SPEC-PORT-SINAPSIS.md` §1).
+  `output` truncado ahora a 10.000 chars (antes 8.000). Antes de marcar
+  `is_error=true`, cada línea pasa por guards que descartan ruido de log de
+  subproceso (`[codex]`, `npm warn/notice/info`), listados de versión de
+  dependencias (`+ pkg@1.2.3`), cabeceras ASCII (`===== file =====` de
+  grep/awk), resúmenes `0 errors` y líneas `warning:` sin la palabra "error".
+  `err_msg` pasa a ser la primera línea NO guardada que matchea
+  `ERROR_PATTERNS` (antes: cabeza cruda del output).
+- **Estados `draft`/`confirmed` para instincts** (`hooks/session-learner.js`,
+  `hooks/lib/injector-engine.js`; spec `docs/SPEC-PORT-SINAPSIS.md` §2). Los
+  instincts nuevos nacen `draft` — se trackean occurrences/sessions en
+  silencio pero nunca se inyectan. Auto-promoción `draft → confirmed`
+  determinista: `occurrences >= 5 AND sessions_seen (dedupeadas) >= 3`.
+  Instincts legacy sin el campo `status` se tratan como `confirmed` (compat,
+  cero migración destructiva).
+- **`/cx-maintain`** (`commands/cx-maintain.md`) — el único pase de
+  mantenimiento determinista, cron-able, cero preguntas. Reemplaza las partes
+  deterministas de distill/dream/promote/backfill: decay + purga de
+  decaídos + auto-validación + promoción a law (regla nueva arriba) +
+  auto-evolve draft detection + dedup Jaccard por subtopic + rotación de
+  storage + reconciliación proposals↔instincts (ver Fixed) + health check.
+  Idempotente (cada sub-paso guarda su propio marcador). Escribe
+  `.review-digest.json`, el insumo de `/cx-review`. Cron sugerido semanal:
+  `claude -p "/cx-maintain"`.
+- **`/cx-review`** (`commands/cx-review.md`) — el único comando con juicio
+  humano en v4. Presenta en UNA lista shorthand acumulativa: proposals
+  pending human-gated, drafts de evolve sin instalar, y la law con peor
+  ratio útil/ruido en 14 días como candidata a deprecar. Fusiona
+  `cx-validate` + `cx-evolve` (confirmación) + `cx-downvote` + `cx-distill --swap`.
+  Objetivo: 2 minutos, no veinte.
+- **EOD acumulativo + matriz Eisenhower** (`core/_cx-eod-gather.sh`,
+  `hooks/session-start.py`). El gather relee TODO `observations.jsonl` del
+  día en cada invocación (estructuralmente acumulativo, sin acción especial);
+  cada proyecto ahora incluye un campo `context` (extracto de su
+  `context.md`, cap 300 chars). Al recargar el EOD de ayer en SessionStart,
+  las bullets de "For tomorrow" se clasifican en Q1–Q4 con heurística de
+  keywords determinista (sin llamada a modelo), semántica alineada con la
+  regla `04-priorizar-eisenhower.md` de fersora — bloque etiquetado
+  `[eod-eisenhower]`. `--write` también asoma una línea "Review digest
+  pendiente: N item(s)" cuando `/cx-maintain` dejó items sin revisar.
+- **Guards en el injector** (`hooks/lib/injector-engine.js`,
+  `docs/DESIGN-V4.md` §4): rechazo de acciones con JSON crudo
+  (`{"`, `file_path"`, `old_string"`); guard anti prompt-injection en carga
+  (`ignore previous instructions`, `</system>`, `system: you are...`) que
+  descarta el instinct entero en vez de neutrear una versión redactada;
+  validación estática de triggers degenerados (alternación de nombres de
+  tool anclada al inicio, ej. `^Bash|Read|Edit|...`) → skip con warning.
+
+### Fixed
+
+- **Trigger truncado en laws.** El derive de la línea de law nunca vuelve a
+  incrustar el regex del trigger crudo — se parafrasea o se corta por
+  palabra completa (evita el corte a 40 chars en mitad de una expresión).
+- **Zombies proposals→instincts vía reconciliación en `/cx-maintain`.** Si el
+  último estado conocido de una proposal es `rejected` (cruzando
+  `proposals-history.jsonl` y cualquier resto vivo en `proposals.json`) pero
+  existe un instinct YAML activo con ese id, se archiva automáticamente.
+  Cierra el hueco que dejaba el `/cx-downvote` deprecado (ya no archivaba) y
+  cualquier edición manual de `proposals.json`.
+- **Dedup por subtopic, no por domain genérico** (`injector-engine.js`).
+  Antes: 1 instinct por `domain` por inyección, demasiado grueso — un
+  domain como `workflow-general` descartaba instincts sin relación real
+  entre sí. Ahora: dedup por subtopic (2 primeras palabras del id); se
+  permite un 2º instinct del mismo domain solo si ambos tienen
+  `confidence >= 0.85`.
+- **Atribución de `project_id`/`project_name` por proposal**, no por
+  ejecución del learner — cada proposal deriva su proyecto de la
+  observación concreta que la respalda, evitando que todo un batch se
+  atribuya al último proyecto tocado en la sesión.
+
+### Credits
+
+Los mecanismos de captura, estados draft/confirmed, EOD acumulativo y
+umbrales de este release están inspirados en
+[Sinapsis](https://github.com/Luispitik/sinapsis-3.2/) v4.6.1 de Luis Salgado
+(MIT), portados y adaptados al esquema de observación propio de Cortex
+(`ts/ev/tool/err/pid/pname/input`, distinto del de Sinapsis) — ver
+`docs/SPEC-PORT-SINAPSIS.md` para el detalle exacto de qué se portó literal y
+qué se adaptó.
+
 ## [3.38.2] — 2026-06-22
 
 ### Fixed

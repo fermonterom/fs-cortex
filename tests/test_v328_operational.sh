@@ -111,12 +111,15 @@ mod2.write_daily_snapshot('2026-05-06')  # Should not raise
 "
 
 # ── cx-analyze --deep (archive directory handling) ──────────────────────────
+# retired in v4: cx-analyze (and its --deep / observations.archive spec) was
+# absorbed into the deterministic /cx-maintain per DESIGN-V4.md §5 — the
+# command file is now a deprecation stub that only prints the successor
+# command, it no longer carries the --deep spec this assert used to check.
 
-run_test "cx-analyze --deep: archive dir spec is readable" "
-# Verify the --deep section exists in cx-analyze.md
+run_test "cx-analyze: v4 deprecation stub points to /cx-maintain" "
 content = open('$REPO_ROOT/commands/cx-analyze.md').read()
-assert '--deep' in content, '--deep flag missing from cx-analyze.md'
-assert 'observations.archive' in content, 'observations.archive missing from spec'
+assert 'DEPRECATED' in content, 'cx-analyze.md no longer marked DEPRECATED'
+assert '/cx-maintain' in content, '/cx-maintain successor missing from cx-analyze.md'
 "
 
 echo ""
