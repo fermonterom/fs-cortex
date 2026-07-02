@@ -248,6 +248,44 @@ function sanitizeProposalAction(text) {
 }
 
 // -------------------------------------------------------------------
+// v4 (DESIGN-V4.md §2) — action-quality guard at GENERATION time.
+// observe.py's origin guards (DESIGN-V4.md §1) are the primary defense
+// against JSON blobs and header/listing noise reaching err_msg/output; this
+// is belt-and-braces so a proposal never persists with unteachable content
+// even if an upstream guard regresses.
+// -------------------------------------------------------------------
+
+function isLowQualityAction(action) {
+  const s = String(action || '');
+  if (!s) return true;
+  if (s.includes('{"')) return true;
+  if (/file_path"/.test(s)) return true;
+  if (/old_string"/.test(s)) return true;
+  // Concatenated shell commands with no separator: a long run (>200 chars)
+  // with no newline, no `;`, but with shell-chaining/substitution operators
+  // (&&, ||, |, $(...), backticks) is a raw multi-command blob rather than a
+  // single teachable fix summary.
+  if (s.length > 200 && !s.includes('\n') && !s.includes(';') && /(?:&&|\|\||\$\(|`|\|(?!\|))/.test(s)) {
+    return true;
+  }
+  return false;
+}
+
+// Guards against err_msg that is actually a header/listing line rather than
+// a real error (belt-and-braces on top of observe.py's ERROR_PATTERNS
+// guards per DESIGN-V4.md §1: grep `===== file =====` headers, `ls -l`
+// rows, `total N` directory listing headers).
+function isHeaderOrListingErrMsg(errMsg) {
+  const s = String(errMsg || '').trim();
+  if (!s) return false;
+  if (/^={2,}.*={2,}$/.test(s)) return true;           // ===== file.js =====
+  if (/^-{2,}.*-{2,}$/.test(s)) return true;            // ----- file.js -----
+  if (/^total\s+\d+/.test(s)) return true;              // `ls -l` header
+  if (/^[dl-][rwx-]{9}[+.]?\s/.test(s)) return true;    // `ls -l` row
+  return false;
+}
+
+// -------------------------------------------------------------------
 // Step 2: Detect error-resolution pairs
 // -------------------------------------------------------------------
 
@@ -292,6 +330,13 @@ const TRIGGER_STOPWORDS = new Set([
   'this', 'that', 'with', 'from', 'into', 'file', 'files', 'test', 'tests',
   'true', 'false', 'null', 'command', 'description', 'prompt', 'path',
   'content', 'input', 'output', 'string', 'value', 'data', 'json', 'type',
+  // v4 (DESIGN-V4.md §2) — tool names must never be chosen as the
+  // "distinctive" trigger token: a token equal to the tool itself
+  // degenerates the alternation back into "match every call of this tool",
+  // the exact spam-trigger failure mode v3.37.0 already fixed for raw error
+  // text. Matched case-insensitively via .toLowerCase() below.
+  'read', 'write', 'edit', 'bash', 'grep', 'glob', 'agent',
+  'askuserquestion', 'skill', 'webfetch', 'websearch', 'todowrite',
 ]);
 
 function deriveTriggerFromInput(tool, failingInputStr) {
@@ -302,7 +347,11 @@ function deriveTriggerFromInput(tool, failingInputStr) {
     .map((t) => t.replace(/^[.-]+|[.-]+$/g, ''))
     .filter((t) => t.length >= 4 && t.length <= 40)
     .filter((t) => !/^\d+$/.test(t))
-    .filter((t) => !TRIGGER_STOPWORDS.has(t.toLowerCase()));
+    .filter((t) => !TRIGGER_STOPWORDS.has(t.toLowerCase()))
+    // v4 — MCP tool names (mcp__<server>__<tool>) are as bare-invocation-prone
+    // as the built-in tool names above; the server/tool slug varies per
+    // installation so it cannot live in a fixed Set, hence a prefix filter.
+    .filter((t) => !t.toLowerCase().startsWith('mcp__'));
   if (tokens.length === 0) return null;
   // Longest tokens are the most distinctive (binary names, flags, slugs).
   tokens.sort((a, b) => b.length - a.length);
@@ -332,6 +381,43 @@ function deriveTriggerFromInput(tool, failingInputStr) {
 // 2026-06 corpus audit.
 function isProjectSpecificText(text) {
   return /\/Users\/|\/home\/|https?:\/\//i.test(String(text || ''));
+}
+
+// v4 (DESIGN-V4.md §2) — project_id/project_name PER PROPOSAL, derived from
+// the observation that actually backs it, never from a single id computed
+// once per learner execution. `_projectId` is the primary source (every
+// observation returned by resolveProjectAndObservations() carries it,
+// tagged from the projects/<id>/observations.jsonl path it was read from);
+// `pid` (written by observe.py at capture time) is the fallback for
+// observations that reach a detector without that tag.
+let _registryCache; // lazy, read once per process
+function resolveProjectName(pid) {
+  if (!pid) return null;
+  if (_registryCache === undefined) {
+    _registryCache = readJsonFile(REGISTRY_PATH) || {};
+  }
+  const entry = _registryCache[pid];
+  return (entry && entry.name) || pid;
+}
+
+function projectIdOf(obs) {
+  return (obs && (obs._projectId || obs.pid)) || null;
+}
+
+// v4 (DESIGN-V4.md §2) — last-resort fallback applied once, at combine time
+// in main(), for the rare proposal a detector genuinely never annotated. A
+// detector that DID set project_id (even explicitly to `null`, meaning
+// "deliberately global scope" — see detectErrorResolutions) must survive
+// unchanged: pre-v4 this used `p.project_id || projectId`, which silently
+// overwrote an explicit `null` with the single execution-wide id and
+// defeated `scope: 'global'` on those proposals. `hasOwnProperty` tells the
+// two cases apart.
+function attachProjectFallback(proposals, fallbackId, fallbackName) {
+  return proposals.map((p) => ({
+    ...p,
+    project_id: Object.prototype.hasOwnProperty.call(p, 'project_id') ? p.project_id : fallbackId,
+    project_name: Object.prototype.hasOwnProperty.call(p, 'project_name') ? p.project_name : fallbackName,
+  }));
 }
 
 function detectErrorResolutions(observations) {
@@ -405,7 +491,11 @@ function detectErrorResolutions(observations) {
           detected: TODAY,
           session_id: obs._resolvedSession || obs.sid || '',
           scope: projectSpecific ? 'project' : 'global',
-          project_id: projectSpecific ? (obs.pid || null) : null,
+          // v4 — derived from THIS incident's observation, not a blanket
+          // execution-wide id (DESIGN-V4.md §2). obs.pid stays as fallback
+          // for observations without the _projectId tag.
+          project_id: projectSpecific ? projectIdOf(obs) : null,
+          project_name: projectSpecific ? resolveProjectName(projectIdOf(obs)) : null,
           // Sinapsis-style evidence samples so /cx-validate shows context.
           sample_input: failingInput.slice(0, 200),
           sample_output: String(obs.output || '').slice(0, 200),
@@ -498,13 +588,16 @@ function detectUserCorrections(observations) {
     fileEdits[file].push(obs);
   }
 
-  const projectId = (observations[0] && observations[0]._projectId) || 'global';
-
   for (const [file, edits] of Object.entries(fileEdits)) {
     // Require 3+ edits AND overlapping regions to reduce false positives
     if (edits.length >= 3 && hasOverlappingEdits(edits)) {
       const baseName = path.basename(file);
       const hash = shortHash(file);
+      // v4 (DESIGN-V4.md §2) — project_id derived from the observation that
+      // backs THIS correction group, not a single id for the whole run: a
+      // session touching two different repos must attribute each correction
+      // to its own project.
+      const pid = projectIdOf(edits[0]);
       corrections.push({
         id: `correction-${hash}`,
         trigger: `Edit.*${escapeRegex(baseName)}`,
@@ -514,7 +607,8 @@ function detectUserCorrections(observations) {
         confidence: 0.55,
         domain: 'correction',
         scope: 'project',          // v3.29.0 §4.3
-        project_id: projectId,
+        project_id: pid || 'global',
+        project_name: pid ? resolveProjectName(pid) : null,
         source: 'session-learner:correction',
         status: 'pending',
         detected: TODAY,
@@ -591,6 +685,9 @@ function detectAgentPatterns(observations) {
       // needs injecting mid-session.
       const trigger = deriveTriggerFromInput('Agent', JSON.stringify({ description: desc }))
         || 'Agent\\b(?!)';
+      // v4 (DESIGN-V4.md §2) — project_id/name from the observation backing
+      // THIS group, not a single id for the whole learner execution.
+      const pid = projectIdOf(items[0].obs);
       return {
         id: `agent-pattern-${hash}`,
         trigger,
@@ -601,6 +698,8 @@ function detectAgentPatterns(observations) {
         status: 'pending',
         detected: TODAY,
         session_id: items[0].obs._resolvedSession || items[0].obs.sid || '',
+        project_id: pid,
+        project_name: pid ? resolveProjectName(pid) : null,
       };
     });
 }
@@ -636,6 +735,9 @@ function detectAgentSubtypes(observations, resolvedSessionId) {
 
   const bySubtype = {};
   const subtypeRaw = {};  // remember the original for the action message
+  // v4 (DESIGN-V4.md §2) — one supporting observation per subtype, so the
+  // emitted proposal can derive project_id from real evidence.
+  const subtypeFirstObs = {};
   for (const obs of agentObs) {
     let subtype = 'unknown';
     let raw = 'unknown';
@@ -648,6 +750,7 @@ function detectAgentSubtypes(observations, resolvedSessionId) {
     } catch {}
     if (!bySubtype[subtype]) bySubtype[subtype] = { total: 0, errors: 0 };
     if (!subtypeRaw[subtype]) subtypeRaw[subtype] = raw;
+    if (!subtypeFirstObs[subtype]) subtypeFirstObs[subtype] = obs;
     bySubtype[subtype].total++;
     if (isError(obs)) bySubtype[subtype].errors++;
   }
@@ -661,6 +764,9 @@ function detectAgentSubtypes(observations, resolvedSessionId) {
 
     const ratePercent = Math.round(rate * 100);
     const rawDisplay = subtypeRaw[subtype] || subtype;
+    // v4 (DESIGN-V4.md §2) — project_id/name from the observation backing
+    // THIS subtype's error rate, not a single id for the whole run.
+    const pid = projectIdOf(subtypeFirstObs[subtype]);
     // v3.29.0 (Sprint 8 §4.4): imperative action + conf 0.45 → 0.50.
     // Domain 'agent-quality' was already correct; pre-v3.29 it was an orphan
     // (not in any whitelist), now registered HUMAN-gated in §4.1. Confidence
@@ -680,6 +786,8 @@ function detectAgentSubtypes(observations, resolvedSessionId) {
       session_id: resolvedSessionId || agentObs[0]._resolvedSession || agentObs[0].sid || '',
       tags: ['agent-quality', `subtype-${subtype}`],
       occurrences: total,
+      project_id: pid,
+      project_name: pid ? resolveProjectName(pid) : null,
     });
   }
   return proposals;
@@ -705,6 +813,10 @@ function detectFileCoupling(observations, resolvedSessionId) {
   if (editObs.length < FILE_COUPLING_MIN_COUNT * 2) return [];
 
   const bySession = {};
+  // v4 (DESIGN-V4.md §2) — remember one observation per (session, file) so
+  // each coupling proposal can derive project_id from the evidence that
+  // actually formed it, instead of a single execution-wide default.
+  const fileObsBySession = {};
   for (const obs of editObs) {
     let filePath = '';
     try {
@@ -715,24 +827,24 @@ function detectFileCoupling(observations, resolvedSessionId) {
     const sid = obs.sid || 'unknown';
     if (!bySession[sid]) bySession[sid] = new Set();
     bySession[sid].add(filePath);
+    if (!fileObsBySession[sid]) fileObsBySession[sid] = {};
+    if (!fileObsBySession[sid][filePath]) fileObsBySession[sid][filePath] = obs;
   }
 
   const pairCounts = {};
+  const pairObs = {}; // v4 — one supporting observation per pair
   for (const sid of Object.keys(bySession)) {
     const files = [...bySession[sid]].sort();
     for (let i = 0; i < files.length; i++) {
       for (let j = i + 1; j < files.length; j++) {
         const key = files[i] + '\x00' + files[j];
         pairCounts[key] = (pairCounts[key] || 0) + 1;
+        if (!pairObs[key]) {
+          pairObs[key] = fileObsBySession[sid][files[i]] || fileObsBySession[sid][files[j]];
+        }
       }
     }
   }
-
-  // Per-detector project pin: the project_id we attach below is what makes
-  // scope:'project' meaningful at injection time. Fall back to 'global' only
-  // when the observation chain doesn't carry one (legacy data); injector
-  // still filters by scope so this is safe.
-  const projectId = (observations[0] && observations[0]._projectId) || 'global';
 
   const proposals = [];
   for (const key of Object.keys(pairCounts)) {
@@ -745,6 +857,11 @@ function detectFileCoupling(observations, resolvedSessionId) {
     const baseB = path.basename(b);
     const triggerRegex = `Edit.*(?:${escapeRegex(baseA)}|${escapeRegex(baseB)})`;
     const hash = shortHash(key);
+    // Per-detector project pin: the project_id we attach below is what makes
+    // scope:'project' meaningful at injection time. Fall back to 'global'
+    // only when the pair's own evidence carries no project tag (legacy
+    // data); injector still filters by scope so this is safe.
+    const pid = projectIdOf(pairObs[key]);
     proposals.push({
       id: `coupling-${hash}`,
       trigger: triggerRegex,
@@ -754,7 +871,8 @@ function detectFileCoupling(observations, resolvedSessionId) {
       confidence: 0.55,
       domain: 'coupling',
       scope: 'project',          // v3.29.0 §4.2: must NOT be global
-      project_id: projectId,
+      project_id: pid || 'global',
+      project_name: pid ? resolveProjectName(pid) : null,
       source: 'session-learner:file-coupling',
       status: 'pending',
       detected: TODAY,
@@ -1022,18 +1140,38 @@ function updateInstincts(observations) {
       if (matched) {
         let newContent = updateYamlField(content, 'last_seen', TODAY);
         const currentOccurrences = parseInt(parsed.fields.occurrences, 10) || 0;
-        newContent = updateYamlField(newContent, 'occurrences', currentOccurrences + 1);
-        const tmp = yamlPath + '.tmp.' + process.pid;
-        fs.writeFileSync(tmp, newContent, { mode: 0o600 });
-        fs.renameSync(tmp, yamlPath);
-        updated++;
+        const newOccurrences = currentOccurrences + 1;
+        newContent = updateYamlField(newContent, 'occurrences', newOccurrences);
 
         // v3.15.0 · 1.3 — also mirror to tracking.json so injector's inline
         // staleness filter sees every instinct, not just the 1 it seeds.
         // (YAML keeps its fields for human readability + backups; the JSON
         // file becomes the operational source of truth for staleness.)
-        _mirrorToTrackingMem(loadTrackingLazy(), parsed.fields.id, TODAY, currentOccurrences + 1, matchedSessionId);
+        // v4: done BEFORE the write so a draft→confirmed promotion (if the
+        // criteria below are met) can be folded into the same write.
+        const trackedEntry = _mirrorToTrackingMem(loadTrackingLazy(), parsed.fields.id, TODAY, newOccurrences, matchedSessionId);
         trackingDirty = true;
+
+        // v4 (DESIGN-V4.md §2 / SPEC-PORT-SINAPSIS.md §2) — draft→confirmed
+        // auto-promotion: occurrences >= 5 AND seen in >= 3 distinct
+        // sessions. `status` is a plain scalar YAML field written by
+        // whichever module creates the instinct (draft) or curates it
+        // (legacy instincts default to confirmed by never carrying the
+        // field) — this hook ONLY reads/writes the field; the injector's
+        // filter-by-status gate lands in a separate PR-module.
+        const status = String(parsed.fields.status || '').toLowerCase();
+        if (status === 'draft') {
+          const sessionsSeenCount = (trackedEntry && trackedEntry.sessions_seen || []).length;
+          if (newOccurrences >= 5 && sessionsSeenCount >= 3) {
+            newContent = updateYamlField(newContent, 'status', 'confirmed');
+            log(`Auto-promoted instinct ${parsed.fields.id || yamlPath} draft -> confirmed (occurrences=${newOccurrences}, sessions_seen=${sessionsSeenCount})`);
+          }
+        }
+
+        const tmp = yamlPath + '.tmp.' + process.pid;
+        fs.writeFileSync(tmp, newContent, { mode: 0o600 });
+        fs.renameSync(tmp, yamlPath);
+        updated++;
       }
     } catch (e) {
       log(`Failed to update instinct ${yamlPath}: ${e.message}`);
@@ -1053,25 +1191,42 @@ function updateInstincts(observations) {
 const TRACKING_FILE_PATH = path.join(CORTEX_DIR, 'instinct-tracking.json');
 
 function _mirrorToTrackingMem(tracking, instinctId, isoDate, count, sessionId) {
-  if (!instinctId || !tracking) return;
+  if (!instinctId || !tracking) return null;
   const entry = tracking[instinctId] || {
     count: 0,
     sessions: [],
+    sessions_seen: [], // v4 — explicit name used by the draft->confirmed
+                        // promotion gate (DESIGN-V4.md §2). Tracked in
+                        // lockstep with the legacy `sessions` field (also
+                        // written independently by injector-engine.js at
+                        // PreToolUse time) so neither consumer regresses.
     projects_seen: [],
     first_seen: isoDate,
   };
+  if (!Array.isArray(entry.sessions_seen)) {
+    entry.sessions_seen = [...(entry.sessions || [])];
+  }
   // Never regress the count (injector may have higher value from live PreToolUse)
   if (count > (entry.count || 0)) entry.count = count;
   const sid = String(sessionId || '').trim();
-  if (sid && sid.toLowerCase() !== 'unknown' && !entry.sessions.includes(sid)) {
-    entry.sessions.push(sid);
-    if (entry.sessions.length > 20) {
-      entry.sessions = entry.sessions.slice(-20);
+  if (sid && sid.toLowerCase() !== 'unknown') {
+    if (!entry.sessions.includes(sid)) {
+      entry.sessions.push(sid);
+      if (entry.sessions.length > 20) {
+        entry.sessions = entry.sessions.slice(-20);
+      }
+    }
+    if (!entry.sessions_seen.includes(sid)) {
+      entry.sessions_seen.push(sid);
+      if (entry.sessions_seen.length > 20) {
+        entry.sessions_seen = entry.sessions_seen.slice(-20);
+      }
     }
   }
   entry.last_seen = new Date().toISOString();
   if (!entry.first_seen) entry.first_seen = entry.last_seen;
   tracking[instinctId] = entry;
+  return entry;
 }
 
 function _flushTracking(tracking) {
@@ -1199,11 +1354,18 @@ function writeProposals(newProposals) {
   // hollow action ("... try: " with nothing after, or under 40 chars) is
   // data corruption, not knowledge; it can never inject anything useful.
   // Reject before persisting so proposals.json stops accumulating them.
+  // v4 (DESIGN-V4.md §2) — belt-and-braces action-quality guard: raw JSON
+  // blobs, concatenated shell commands and header/listing err_msg lines are
+  // not teachable content. observe.py's origin guards (§1) are the primary
+  // defense; this rejects anything that slips through before it persists.
   const rejected = newProposals.filter(
-    (p) => String(p.action || '').trim().length < 40 || /try:\s*$/.test(String(p.action || '').trim())
+    (p) => String(p.action || '').trim().length < 40
+      || /try:\s*$/.test(String(p.action || '').trim())
+      || isLowQualityAction(p.action)
+      || isHeaderOrListingErrMsg(p.err_msg)
   );
   if (rejected.length > 0) {
-    log(`Quality gate rejected ${rejected.length} hollow proposal(s): ${rejected.map((p) => p.id).join(', ')}`);
+    log(`Quality gate rejected ${rejected.length} hollow/low-quality proposal(s): ${rejected.map((p) => p.id).join(', ')}`);
     newProposals = newProposals.filter((p) => !rejected.includes(p));
   }
 
@@ -1902,7 +2064,21 @@ async function main() {
       return;
     }
 
-    // Resolve project for all proposals
+    // v4 (DESIGN-V4.md §2) — the observation pool backing a single Stop hook
+    // run can span more than one project (cross-project Agent calls, or the
+    // orphan-sid fallback to the last 200 cross-project lines in
+    // resolveProjectAndObservations). Detectors now derive project_id
+    // per-proposal from their own supporting observation, but flag the
+    // spanning case so an operator auditing proposals.json/context.md knows
+    // to expect mixed attribution rather than a single project.
+    const distinctProjectIds = new Set(observations.map((o) => o._projectId).filter(Boolean));
+    if (distinctProjectIds.size > 1) {
+      log(`Warning: observation pool spans ${distinctProjectIds.size} projects (${[...distinctProjectIds].slice(0, 10).join(', ')}) — proposals/context.md attribute project_id per-observation where possible`);
+    }
+
+    // Resolve project for all proposals — used ONLY as the last-resort
+    // fallback below when a detector genuinely never set project_id/name
+    // (see the combine step), and for writeContextFile's single summary.
     const projectId = observations[0]._projectId || 'global';
     let projectName = projectId;
     const registry = readJsonFile(REGISTRY_PATH);
@@ -2026,18 +2202,17 @@ async function main() {
     // Step 6: Combine all proposals with session_date for cross-day tracking
     // (v3.29.0 §4.6: repetitionProposals + workflowProposals lists removed
     // along with their source detectors.)
-    const rawProposals = [
-      ...errorProposals,
-      ...correctionProposals,
-      ...agentProposals,
-      ...agentSubtypeProposals,   // v3.27.0
-      ...couplingProposals,        // v3.27.0
-    ].map((p) => ({
-      ...p,
-      session_date: TODAY,
-      project_id: p.project_id || projectId,
-      project_name: p.project_name || projectName,
-    }));
+    const rawProposals = attachProjectFallback(
+      [
+        ...errorProposals,
+        ...correctionProposals,
+        ...agentProposals,
+        ...agentSubtypeProposals,   // v3.27.0
+        ...couplingProposals,        // v3.27.0
+      ].map((p) => ({ ...p, session_date: TODAY })),
+      projectId,
+      projectName
+    );
 
     // v3.15.0 · Step 6b — cross-detector dedup by incident
     const dedupedProposals = dedupProposalsByIncident(rawProposals);
@@ -2087,5 +2262,9 @@ if (require.main === module) {
     // v3.18.0 — reflex auto-evaluation
     evalToolSubstitution, evalPreconditionCheck, evalErrorMonitor,
     evaluateReflex, correlateReflexFeedback,
+    // v4 (DESIGN-V4.md §2) — trigger stopwords/guard, action-quality guard,
+    // per-proposal project_id derivation, draft->confirmed promotion.
+    deriveTriggerFromInput, isLowQualityAction, isHeaderOrListingErrMsg,
+    projectIdOf, resolveProjectName, attachProjectFallback, updateInstincts,
   };
 }

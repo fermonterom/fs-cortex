@@ -229,6 +229,104 @@ else
 fi
 rm -rf "$SANDBOX_SUB"
 
+# --- Test 9: v4 Sinapsis port — anti-false-positive guards + err_msg line (SPEC-PORT-SINAPSIS.md §1) ---
+echo "--- v4 Guards + err_msg line extraction ---"
+python3 -c "
+from observe import detect_is_error, _find_error_line
+
+# npm install-style output with a 'failed' word inside an npm warn line and
+# a dependency version listing — none of it is a real tool failure.
+npm_normal = '''npm warn deprecated request@2.88.2: request has failed to keep up with security patches
++ react@18.2.0
++ next@14.0.0
+added 128 packages in 5s'''
+assert detect_is_error(npm_normal) == False, 'npm warn/version-listing guard failed'
+assert _find_error_line(npm_normal) is None, 'npm warn/version-listing guard failed (err line)'
+
+# grep/awk-style section header containing the word Error — guarded as a header, not a failure.
+header_output = '===== Error Log =====\nfile contents unrelated to any failure'
+assert detect_is_error(header_output) == False, 'header guard failed'
+assert _find_error_line(header_output) is None, 'header guard failed (err line)'
+
+# [codex] subprocess log prefix — guarded even though the line mentions failed.
+codex_output = '[codex] task failed to reach quorum, retrying'
+assert detect_is_error(codex_output) == False, 'codex prefix guard failed'
+
+# 0 errors summary line — guarded.
+zero_errors = 'eslint summary: 0 errors, 3 warnings'
+assert detect_is_error(zero_errors) == False, '0 errors guard failed'
+
+# bare warning: with no error mention anywhere in the line — guarded.
+bare_warning = 'warning: unused variable foo'
+assert detect_is_error(bare_warning) == False, 'bare warning guard failed'
+
+# real error — SÍ marca, and err_msg is exactly the matching line (not the head of the whole blob).
+real_error = 'Reading config...\nSome unrelated log line\nError: ENOENT: no such file or directory\nmore trailing noise'
+assert detect_is_error(real_error) == True, 'ENOENT real error not detected'
+assert _find_error_line(real_error) == 'Error: ENOENT: no such file or directory', _find_error_line(real_error)
+print('OK')
+" | grep -q "OK" && pass "v4 guards: npm/header/codex/0-errors/bare-warning ignored, real ENOENT error line extracted" || fail "v4 guards + err_msg line extraction"
+
+# --- Test 10: output cap raised to 10.000 chars (v4 — SPEC-PORT-SINAPSIS.md §1) ---
+echo "--- Output cap (10k) ---"
+SANDBOX_CAP=$(mktemp -d)
+mkdir -p "$SANDBOX_CAP/.claude/cortex"
+CAP_SID="cap-$(date +%s)-$$"
+rm -f "$DEDUP_DIR/dedup-$CAP_SID" 2>/dev/null || true
+# Realistic multi-word text, not a base64-looking blob (that would hit the
+# separate _looks_binary guard and short-circuit to "[binary output omitted]").
+python3 -c "
+import json
+print(json.dumps({
+    'tool_name': 'Bash',
+    'session_id': '$CAP_SID',
+    'cwd': '$SANDBOX_CAP',
+    'tool_input': {'command': 'echo big'},
+    'tool_response': 'line of normal output text\n' * 600,
+}))
+" | HOME="$SANDBOX_CAP" python3 "$PROJECT_ROOT/hooks/observe.py" post 2>/dev/null
+OBS_FILE="$SANDBOX_CAP/.claude/cortex/observations.jsonl"
+if [ -f "$OBS_FILE" ]; then
+    OUT_LEN=$(python3 -c "
+import json
+with open('$OBS_FILE') as f:
+    obs = json.loads(f.readlines()[-1])
+print(len(obs.get('output', '')))
+")
+    [ "$OUT_LEN" = "10000" ] && pass "output truncated to 10000 chars (got $OUT_LEN)" || fail "output cap: got $OUT_LEN chars, expected 10000"
+else
+    fail "output cap: no observation file"
+fi
+rm -rf "$SANDBOX_CAP"
+
+# --- Test 11: secret in output gets scrubbed (v4 — output scrubbing already existed, verify it stays wired) ---
+echo "--- Output scrubbing ---"
+SANDBOX_SCRUB=$(mktemp -d)
+mkdir -p "$SANDBOX_SCRUB/.claude/cortex"
+SCRUB_SID="scrub-$(date +%s)-$$"
+rm -f "$DEDUP_DIR/dedup-$SCRUB_SID" 2>/dev/null || true
+python3 -c "
+import json
+print(json.dumps({
+    'tool_name': 'Bash',
+    'session_id': '$SCRUB_SID',
+    'cwd': '$SANDBOX_SCRUB',
+    'tool_input': {'command': 'env'},
+    'tool_response': 'api_key: sk-ant-abc123def456ghi789jklmno',
+}))
+" | HOME="$SANDBOX_SCRUB" python3 "$PROJECT_ROOT/hooks/observe.py" post 2>/dev/null
+OBS_FILE_SCRUB="$SANDBOX_SCRUB/.claude/cortex/observations.jsonl"
+if [ -f "$OBS_FILE_SCRUB" ]; then
+    if grep -q "REDACTED" "$OBS_FILE_SCRUB" && ! grep -q "sk-ant-abc123" "$OBS_FILE_SCRUB"; then
+        pass "secret in output scrubbed before persisting"
+    else
+        fail "secret in output NOT scrubbed"
+    fi
+else
+    fail "output scrubbing: no observation file"
+fi
+rm -rf "$SANDBOX_SCRUB"
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

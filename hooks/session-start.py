@@ -190,29 +190,28 @@ def check_learn_pending():
 
 
 def check_maintenance():
-    """Check distill (7d), audit (30d), validate (pending proposals)."""
+    """Check maintain (7d), audit (30d), validate (pending proposals).
+
+    v4 (docs/DESIGN-V4.md §5/§6): the `auto-distill-candidates.md` mailbox is
+    gone — nobody read it (candidates now flow into `.review-digest.json`,
+    surfaced separately via check_review_digest()/[REVIEW]). This function no
+    longer reads that file at all, and does not error if it is still present
+    from a pre-v4 install (simply ignored)."""
     reminders = []
 
-    # Distill: only surface when there are pending candidates (Sprint 6).
-    # Auto-distill now handles decay/archive/promotion automatically; the
-    # manual /cx-distill reminder fires only when candidates need human review.
-    candidates_file = CORTEX_DIR / 'auto-distill-candidates.md'
-    has_candidates = False
-    if candidates_file.exists():
-        try:
-            content = candidates_file.read_text(encoding='utf-8').strip()
-            has_candidates = bool(content)
-        except Exception:
-            pass
-    if has_candidates:
-        reminders.append("[MAINT] Run /cx-distill — promotion candidates pending review.")
+    # Maintain: weekly. /cx-maintain replaces the old distill/dream/promote/
+    # backfill deterministic passes (docs/DESIGN-V4.md §5). `.last-distill` is
+    # kept as the compat marker /cx-maintain touches on every run.
+    maintain_file = CORTEX_DIR / '.last-distill'
+    if not maintain_file.exists() or _file_older_than(maintain_file, 7):
+        reminders.append("[MAINT] Run /cx-maintain — 7+ days since last maintenance pass (decay, dedup, promotion, storage rotation).")
 
     # Audit: monthly
     audit_file = CORTEX_DIR / '.last-audit'
     if not audit_file.exists() or _file_older_than(audit_file, 30):
-        reminders.append("[MAINT] Run /cx-audit — 30+ days since last audit (duplicates, token overhead, cleanup).")
+        reminders.append("[MAINT] 30+ days since last audit — run the `cortex-audit` workflow (duplicates, token overhead, cleanup).")
 
-    # Validate: pending proposals.
+    # Auto-validate backlog: pending proposals.
     # v3.29.0 (Sprint 8 §4.10): the [ACTION] banner counts ONLY proposals in
     # the auto-validate whitelist (domains that distill_engine would actually
     # promote without human review). Human-gated domains (`correction`,
@@ -242,11 +241,31 @@ def check_maintenance():
                 and p.get('domain') in _AUTO
             )
             if pending_auto > 0:
-                reminders.append(f"[ACTION] {pending_auto} pending proposals. Run /cx-validate to review.")
+                reminders.append(f"[ACTION] {pending_auto} pending proposals. Run /cx-maintain to auto-process (AUTO domains, no human judgment needed).")
         except Exception:
             pass
 
     return reminders
+
+
+def check_review_digest():
+    """v4 item (b) — cheap read of `.review-digest.json`, written by
+    /cx-maintain and consumed interactively by /cx-review. Returns a one-line
+    `[REVIEW] N items pendientes -> /cx-review` reminder, or None when the
+    digest is missing, unreadable, or already empty (total_items <= 0).
+    Deliberately does NOT recompute anything — SessionStart must stay cheap;
+    /cx-maintain is the only place that does the actual counting work."""
+    digest_file = CORTEX_DIR / '.review-digest.json'
+    if not digest_file.exists():
+        return None
+    try:
+        data = json.loads(digest_file.read_text(encoding='utf-8'))
+        n = int(data.get('total_items', 0) or 0)
+    except Exception:
+        return None
+    if n <= 0:
+        return None
+    return f'[REVIEW] {n} items pendientes -> /cx-review'
 
 
 def _file_older_than(filepath, days):
@@ -367,6 +386,102 @@ def inject_eod_resume():
     return tagged, priorities, eod_date
 
 
+# v4 item (c) — docs/SPEC-PORT-SINAPSIS.md §3: "Eisenhower NO existe en
+# Sinapsis — diseño nuevo para Cortex." Deterministic keyword classification
+# of yesterday's "For tomorrow" bullets into Q1-Q4, per the semantics of
+# fersora's .claude/rules/04-priorizar-eisenhower.md (urgent = external
+# deadline/blocker; important = moves a real goal/client/relationship
+# forward). Independent of inject_eod_resume()'s own idempotency
+# (.eod-last-read tracks the Quick Resume block, which can legitimately be
+# re-read across compacts within the same day) — this fires exactly once,
+# on the FIRST SessionStart of a NEW day, gated by its own marker.
+_EOD_Q1_KEYWORDS = ('deadline', 'hoy', 'today', 'urgente', 'urgent', 'bloque',
+                    'blocker', 'asap', 'vence', 'vencimiento')
+_EOD_Q2_KEYWORDS = ('cliente', 'client', 'objetivo', 'goal', 'importante',
+                    'important', 'estrateg', 'salud', 'relacion')
+_EOD_Q3_KEYWORDS = ('mensaje', 'message', 'whatsapp', 'email', 'correo',
+                    'admin', 'responder', 'reply', 'factura')
+_EOD_QUADRANT_LABELS = {
+    'Q1': 'Q1 urgente+importante',
+    'Q2': 'Q2 importante (no urgente)',
+    'Q3': 'Q3 delegar/admin',
+    'Q4': 'Q4 backlog',
+}
+
+
+def _classify_eisenhower(bullets):
+    """Bucket each bullet string into Q1-Q4 by keyword match. Deterministic,
+    no model call — a bullet with no matching keyword falls to Q4 (backlog),
+    never silently dropped."""
+    buckets = {'Q1': [], 'Q2': [], 'Q3': [], 'Q4': []}
+    for b in bullets:
+        lb = b.lower()
+        if any(k in lb for k in _EOD_Q1_KEYWORDS):
+            buckets['Q1'].append(b)
+        elif any(k in lb for k in _EOD_Q2_KEYWORDS):
+            buckets['Q2'].append(b)
+        elif any(k in lb for k in _EOD_Q3_KEYWORDS):
+            buckets['Q3'].append(b)
+        else:
+            buckets['Q4'].append(b)
+    return buckets
+
+
+def build_eod_eisenhower():
+    """Returns a compact `[eod-eisenhower]`-tagged block (<=15 lines) when
+    yesterday's daily summary exists and today's does not exist YET (i.e.
+    this is the first session of a new day), or None otherwise."""
+    today = datetime.now().strftime('%Y-%m-%d')
+    yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+    today_file = EOD_DIR / f'{today}.md'
+    yesterday_file = EOD_DIR / f'{yesterday}.md'
+
+    if today_file.exists() or not yesterday_file.exists():
+        return None
+
+    marker = CORTEX_DIR / '.eod-eisenhower-last-shown'
+    try:
+        if marker.exists() and marker.read_text(encoding='utf-8').strip() == today:
+            return None
+    except Exception:
+        pass
+
+    try:
+        content = yesterday_file.read_text(encoding='utf-8')
+    except Exception:
+        return None
+
+    tomorrow_match = re.search(
+        r'^### For tomorrow\s*\n(.*?)(?=^###|^##|^---|\Z)',
+        content, re.MULTILINE | re.DOTALL
+    )
+    if not tomorrow_match:
+        return None
+    bullets = re.findall(r'^- (.+)$', tomorrow_match.group(1), re.MULTILINE)[:20]
+    if not bullets:
+        return None
+
+    buckets = _classify_eisenhower(bullets)
+
+    lines = [f'[eod-eisenhower] Pendientes de {yesterday} (heuristica determinista, revisar):']
+    for q in ('Q1', 'Q2', 'Q3', 'Q4'):
+        items = buckets[q]
+        if not items or len(lines) >= 15:
+            continue
+        lines.append(f'{_EOD_QUADRANT_LABELS[q]} ({len(items)}):')
+        for it in items[:3]:
+            if len(lines) >= 15:
+                break
+            lines.append(f'  - {sanitize_injection(it, 150)}')
+
+    try:
+        marker.write_text(today, encoding='utf-8')
+    except Exception:
+        pass
+
+    return '\n'.join(lines[:15])
+
+
 def _parse_semver(s):
     nums = re.findall(r'\d+', s or '')
     return tuple(int(x) for x in nums[:3]) if nums else (0, 0, 0)
@@ -450,29 +565,27 @@ def main():
     else:
         parts.append('CORTEX: No laws configured yet. Add .txt files to ~/.claude/cortex/laws/')
 
-    # 1b. Commands hint — keep this list in sync with commands/cx-*.md and
-    # commands/cx-router.md. v3.25.0 added the four that were silently
-    # missing: /cx-dashboard /cx-feedback /cx-feedback-auto /cx-timeline.
+    # 1b. Commands hint — v4 active set (docs/DESIGN-V4.md §5): 7 commands,
+    # the rest are deprecated stubs that print their v4 replacement and stop
+    # (commands/cx-*.md — see each file's "Mapeo:" line for the full table).
     parts.append(
-        'Cortex commands: /cx-status /cx-dashboard /cx-analyze /cx-distill '
-        '/cx-validate /cx-evolve /cx-dream /cx-timeline /cx-audit /cx-eod '
-        '/cx-gotcha /cx-feedback /cx-feedback-auto /cx-downvote /cx-retro '
-        '/cx-export /cx-backup /cx-restore /cx-router /cx-promote. '
-        'Use /cx-status for system state.'
+        'Cortex commands (v4): /cx-status /cx-maintain /cx-review /cx-eod '
+        '/cx-gotcha /cx-backup /cx-restore. Legacy cx-* commands print a '
+        'deprecation notice and their replacement. Use /cx-status for system state.'
     )
 
     # 2. New day check
     is_new, last_date, today = check_new_day()
     if is_new and last_date:
         write_daily_snapshot(last_date)  # v3.28.0
-        parts.append(f'\nNEW DAY (last session: {last_date}). Consider running /cx-analyze to detect patterns.')
+        parts.append(f'\nNEW DAY (last session: {last_date}).')
     elif is_new:
         parts.append('\nNEW DAY (first session). Welcome to Cortex.')
 
     # 3. Learn-pending
     has_pending, count = check_learn_pending()
     if has_pending:
-        msg = f'You have {count}+ new observations. Run /cx-analyze to detect patterns.'
+        msg = f'You have {count}+ new observations since the last maintenance pass. Run /cx-maintain.'
         parts.append(f'\n{msg}')
         user_actionable.append(f'• {msg}')
 
@@ -482,6 +595,12 @@ def main():
         # [ACTION] and [MAINT] markers signal the user should know about it.
         if '[ACTION]' in reminder or '[MAINT]' in reminder:
             user_actionable.append(f'• {reminder.strip()}')
+
+    # 3b-bis2. v4 item (b) — /cx-review digest badge (written by /cx-maintain).
+    review_line = check_review_digest()
+    if review_line:
+        parts.append(f'\n{review_line}')
+        user_actionable.append(f'• {review_line}')
 
     # 3b-bis. Deploy drift guard (v3.34.1) — root-cause fix for "Cortex a
     # medias": surface loudly when the live system is behind the repo source
@@ -505,8 +624,8 @@ def main():
         if s.get("archived"):  lines.append(f"  · Archived: {s['archived']} stale instincts")
         if s.get("promoted"):  lines.append(f"  ✓ Promoted: {s['promoted']} instinct(s) → laws")
         if s.get("evolve_drafts"): lines.append(f"  ✓ Evolve drafts: {s['evolve_drafts']} skill(s) at evolved/skills/")
-        if s.get("candidates"): lines.append(f"  ⚠ Pending review: {s['candidates']} law candidate(s) — run /cx-distill")
-        if s.get("skipped_validate"): lines.append(f"  ⚠ Pending review: {s['skipped_validate']} proposal(s) need judgment — run /cx-validate")
+        if s.get("candidates"): lines.append(f"  ⚠ Pending review: {s['candidates']} law candidate(s) — see /cx-review")
+        if s.get("skipped_validate"): lines.append(f"  ⚠ Pending review: {s['skipped_validate']} proposal(s) need judgment — see /cx-review")
         if lines:
             parts.append("\n[CORTEX KNOWLEDGE PIPELINE]\n" + "\n".join(lines))
             # Pipeline lines that move state (validated/promoted/evolve_drafts)
@@ -514,9 +633,9 @@ def main():
             for key, label in (
                 ("validated",        "instincts auto-promoted"),
                 ("promoted",         "laws auto-promoted"),
-                ("evolve_drafts",    "skills ready to review at evolved/skills/ (run /cx-evolve)"),
-                ("candidates",       "law candidates pending — run /cx-distill"),
-                ("skipped_validate", "proposals need judgment — run /cx-validate"),
+                ("evolve_drafts",    "skills ready to review at evolved/skills/ (run /cx-review)"),
+                ("candidates",       "law candidates pending — run /cx-review"),
+                ("skipped_validate", "proposals need judgment — run /cx-review"),
             ):
                 v = s.get(key)
                 if v:
@@ -543,6 +662,15 @@ def main():
             'FIRST response. Do NOT wait for the user to ask. Greet, summarize '
             'yesterday, list priorities, ask where to start.'
         )
+
+    # 4b. v4 item (c) — EOD-next-day Eisenhower matrix (SPEC-PORT-SINAPSIS.md
+    # §3). Fires once, only on the first SessionStart of a new day when
+    # yesterday's summary exists and today's does not yet.
+    eisenhower = build_eod_eisenhower()
+    if eisenhower:
+        parts.append(f'\n{eisenhower}')
+        user_actionable.append('• [eod-eisenhower] Pendientes de ayer clasificados Q1-Q4 — revisa antes de empezar.')
+
     # Output JSON
     context = '\n'.join(parts)
     output = {

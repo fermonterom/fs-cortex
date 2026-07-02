@@ -74,34 +74,49 @@ else
     pass "T1 HUMAN-only (50 proposals): NO [ACTION] reminder"
 fi
 
-# ── Test 2: 5 AUTO + 50 HUMAN → [ACTION] counts only the 5 AUTO ──────────────
+# ── Test 2: 5 AUTO + 50 HUMAN → [ACTION] counts only the AUTO ones ───────────
+# v4: VALIDATE_AUTO_DOMAINS shrank (error-recovery moved AUTO -> HUMAN, see
+# docs/DESIGN-V4.md §2). Pull the set LIVE from distill_engine instead of
+# hardcoding domain names here, so this test tracks the engine's whitelist
+# instead of silently drifting out of sync with it again.
 echo "--- Test 2: 5 AUTO + 50 HUMAN ---"
 T2="$(mktemp -d -t cortex-sstart-t2-XXXXXX)"
 python3 - <<PYEOF
-import json
+import json, sys
+sys.path.insert(0, '$HOOK_DIR/lib')
+from distill_engine import VALIDATE_AUTO_DOMAINS
+auto_domains = sorted(VALIDATE_AUTO_DOMAINS)
+assert auto_domains, "VALIDATE_AUTO_DOMAINS is empty — test needs at least one AUTO domain"
+
 proposals = []
-# 5 AUTO-domain proposals
+# 5 proposals cycling through the LIVE auto-domain set.
 for i in range(5):
-    domain = ['gotcha', 'pattern', 'error-recovery', 'error-recovery', 'gotcha'][i]
+    domain = auto_domains[i % len(auto_domains)]
     proposals.append({
         'id': f't2-auto-{i}', 'trigger': 'Bash', 'action': 'a', 'confidence': 0.60,
         'domain': domain, 'status': 'pending',
     })
-# 50 HUMAN-domain proposals
+# 50 HUMAN-domain proposals — pick domains guaranteed NOT in the auto set.
+human_pool = [d for d in ['correction', 'coupling', 'agent-quality', 'decision',
+                          'workflow', 'user-preference'] if d not in VALIDATE_AUTO_DOMAINS]
+assert human_pool, "no human domain candidate outside VALIDATE_AUTO_DOMAINS"
 for i in range(50):
-    domain = ['correction', 'coupling', 'agent-quality'][i % 3]
+    domain = human_pool[i % len(human_pool)]
     proposals.append({
         'id': f't2-human-{i}', 'trigger': 'Edit', 'action': 'b', 'confidence': 0.55,
         'domain': domain, 'status': 'pending',
     })
 with open('$T2/proposals.json', 'w') as f:
     json.dump(proposals, f)
+with open('$T2/.expected_auto_count', 'w') as f:
+    f.write('5')
 PYEOF
+EXPECTED=$(cat "$T2/.expected_auto_count")
 out=$(run_check "$T2")
-if echo "$out" | grep -q '\[ACTION\] 5 pending proposals'; then
-    pass "T2 mixed: [ACTION] reports 5 (only AUTO domains counted)"
+if echo "$out" | grep -q "\[ACTION\] $EXPECTED pending proposals"; then
+    pass "T2 mixed: [ACTION] reports $EXPECTED (only live AUTO domains counted)"
 else
-    fail "T2 mixed: expected '[ACTION] 5 pending', got '$(echo "$out" | grep '\[ACTION\]' || echo "(none)")'"
+    fail "T2 mixed: expected '[ACTION] $EXPECTED pending', got '$(echo "$out" | grep '\[ACTION\]' || echo "(none)")'"
 fi
 rm -rf "$T2"
 

@@ -656,5 +656,256 @@ process.exit(0);
 rm -rf "$S_QG"
 
 echo ""
+echo "--- v4 (DESIGN-V4.md §2 / SPEC-PORT-SINAPSIS.md §2) ---"
+
+# writeProposals v4 guard: an action embedding raw JSON (file_path/old_string
+# shape) is discarded even when it clears the pre-existing length/hollow
+# gate; a clean action of similar length still persists.
+V4_QG=$(mktemp -d)
+result=$(CORTEX_DIR="$V4_QG" node -e "
+const fs = require('fs');
+const m = require('$LEARNER');
+m.writeProposals([
+  { id: 'gotcha-json-blob', action: 'Apply {\"file_path\": \"/x/y.ts\", \"old_string\": \"a\", \"new_string\": \"b\"} to fix the layout.', status: 'pending', detected: '2026-07-02' },
+  { id: 'gotcha-clean', action: 'When npm install fails with EACCES, clear the npm cache and retry the install.', status: 'pending', detected: '2026-07-02' },
+]);
+const live = JSON.parse(fs.readFileSync('$V4_QG/proposals.json', 'utf8'));
+const ids = live.map(p => p.id).sort();
+console.log(JSON.stringify(ids) === JSON.stringify(['gotcha-clean']) ? 'OK' : 'FAIL:' + JSON.stringify(ids));
+process.exit(0);
+")
+[ "$result" = "OK" ] && pass "writeProposals v4 guard: raw-JSON action discarded, clean action persisted" || fail "v4-json-guard: $result"
+
+# writeProposals v4 guard: err_msg that is a grep/ls header or listing row is
+# also rejected (belt-and-braces on top of observe.py's origin guards).
+result=$(CORTEX_DIR="$V4_QG" node -e "
+const fs = require('fs');
+const m = require('$LEARNER');
+fs.rmSync('$V4_QG/proposals.json', { force: true });
+m.writeProposals([
+  { id: 'gotcha-header-err', action: 'When grep runs across many files, the header rows are not real failures, treat as noise here for sure.', err_msg: '===== src/app.ts =====', status: 'pending', detected: '2026-07-02' },
+  { id: 'gotcha-real-err', action: 'When npm ci fails with ERESOLVE, delete node_modules and package-lock then reinstall cleanly.', err_msg: 'npm ERR! ERESOLVE unable to resolve dependency tree', status: 'pending', detected: '2026-07-02' },
+]);
+const live = JSON.parse(fs.readFileSync('$V4_QG/proposals.json', 'utf8'));
+console.log(JSON.stringify(live.map(p => p.id).sort()) === JSON.stringify(['gotcha-real-err']) ? 'OK' : 'FAIL:' + JSON.stringify(live.map(p => p.id)));
+process.exit(0);
+")
+[ "$result" = "OK" ] && pass "writeProposals v4 guard: header/listing err_msg discarded, real err_msg persisted" || fail "v4-errmsg-guard: $result"
+rm -rf "$V4_QG"
+
+# deriveTriggerFromInput: TRIGGER_STOPWORDS excludes tool names AND mcp__*
+# tokens from the "distinctive" alternation — only the genuinely distinctive
+# token survives.
+result=$(node -e "
+const { deriveTriggerFromInput } = require('$LEARNER');
+const raw = JSON.stringify({ command: 'Read WebFetch mcp__fs-brain-memory__brain_search --unique-distinctive-flag-zzzz' });
+const t = deriveTriggerFromInput('Bash', raw);
+if (!t) { console.log('FAIL:null-trigger'); process.exit(0); }
+const m = t.match(/\(\?:([^)]*)\)/);
+const alts = m ? m[1].split('|') : [];
+const toolNames = ['read','write','edit','bash','grep','glob','agent','askuserquestion','skill','webfetch','websearch','todowrite'];
+const hasToolName = alts.some(a => toolNames.includes(a.toLowerCase()));
+const hasMcp = alts.some(a => a.toLowerCase().startsWith('mcp__'));
+let compiles = false; try { new RegExp(t); compiles = true; } catch (_) {}
+console.log(JSON.stringify({ hasToolName, hasMcp, compiles, alts }));
+process.exit(0);
+")
+echo "$result" | grep -q '\"hasToolName\":false' && pass "trigger never picks a tool name as the distinctive token" || fail "stopword-tool: $result"
+echo "$result" | grep -q '\"hasMcp\":false' && pass "trigger never picks an mcp__ prefixed token" || fail "stopword-mcp: $result"
+echo "$result" | grep -q '\"compiles\":true' && pass "derived trigger still compiles as RegExp" || fail "stopword-compile: $result"
+
+# attachProjectFallback: this IS the pre-v4 bug. `p.project_id || projectId`
+# turned an explicit `null` (deliberately global-scope, e.g.
+# detectErrorResolutions on non-project-specific evidence) into the single
+# execution-wide project id. hasOwnProperty must distinguish "detector never
+# set the field" (undefined → gets fallback) from "detector explicitly
+# scoped this global" (null → survives), while a detector-set real id always
+# survives untouched.
+result=$(node -e "
+const { attachProjectFallback } = require('$LEARNER');
+const props = [
+  { id: 'a', project_id: null },
+  { id: 'b' },
+  { id: 'c', project_id: 'explicit-proj' },
+];
+const out = attachProjectFallback(props, 'fallback-proj', 'Fallback Project');
+const ok = out[0].project_id === null && out[1].project_id === 'fallback-proj' && out[2].project_id === 'explicit-proj';
+console.log(ok ? 'OK' : 'FAIL:' + JSON.stringify(out));
+")
+[ "$result" = "OK" ] && pass "attachProjectFallback: explicit null survives, undefined gets fallback, explicit id survives" || fail "fallback-null: $result"
+
+# detectUserCorrections: two correction groups from two different projects in
+# the SAME observations pool must each carry their OWN project_id, not a
+# single blanket id derived from observations[0].
+result=$(node -e "
+const { detectUserCorrections } = require('$LEARNER');
+const old = 'YYYYYYYYYYYYYYYYYYYYYYYY';
+const obs = [
+  { tool: 'Edit', input: JSON.stringify({ file_path: '/r1/foo.ts', old_string: old }), sid: 's1', _projectId: 'projOne' },
+  { tool: 'Edit', input: JSON.stringify({ file_path: '/r1/foo.ts', old_string: old }), sid: 's1', _projectId: 'projOne' },
+  { tool: 'Edit', input: JSON.stringify({ file_path: '/r1/foo.ts', old_string: old }), sid: 's1', _projectId: 'projOne' },
+  { tool: 'Edit', input: JSON.stringify({ file_path: '/r2/bar.ts', old_string: old }), sid: 's2', _projectId: 'projTwo' },
+  { tool: 'Edit', input: JSON.stringify({ file_path: '/r2/bar.ts', old_string: old }), sid: 's2', _projectId: 'projTwo' },
+  { tool: 'Edit', input: JSON.stringify({ file_path: '/r2/bar.ts', old_string: old }), sid: 's2', _projectId: 'projTwo' },
+];
+const props = detectUserCorrections(obs);
+const foo = props.find(p => p.trigger.includes('foo'));
+const bar = props.find(p => p.trigger.includes('bar'));
+const ok = props.length === 2 && foo && bar && foo.project_id === 'projOne' && bar.project_id === 'projTwo';
+console.log(ok ? 'OK' : 'FAIL:' + JSON.stringify(props.map(p => ({ trigger: p.trigger, project_id: p.project_id }))));
+")
+[ "$result" = "OK" ] && pass "detectUserCorrections: project_id derived per-proposal, not blanket" || fail "corr-pid: $result"
+
+# detectFileCoupling: same idea — two coupling pairs from two different
+# projects must each carry their own project_id.
+result=$(node -e "
+const { detectFileCoupling } = require('$LEARNER');
+const { escapeRegex } = require('$PROJECT_ROOT/hooks/lib/regex-utils.js');
+const obs = [];
+for (let s = 0; s < 5; s++) {
+  obs.push({ tool: 'Edit', input: JSON.stringify({ file_path: '/p1/a.ts' }), ts: 't' + s + 'a', sid: 'p1s' + s, _projectId: 'projA' });
+  obs.push({ tool: 'Edit', input: JSON.stringify({ file_path: '/p1/b.ts' }), ts: 't' + s + 'b', sid: 'p1s' + s, _projectId: 'projA' });
+}
+for (let s = 0; s < 5; s++) {
+  obs.push({ tool: 'Edit', input: JSON.stringify({ file_path: '/p2/c.ts' }), ts: 'u' + s + 'a', sid: 'p2s' + s, _projectId: 'projB' });
+  obs.push({ tool: 'Edit', input: JSON.stringify({ file_path: '/p2/d.ts' }), ts: 'u' + s + 'b', sid: 'p2s' + s, _projectId: 'projB' });
+}
+const props = detectFileCoupling(obs);
+const ab = props.find(p => p.trigger.includes(escapeRegex('a.ts')) && p.trigger.includes(escapeRegex('b.ts')));
+const cd = props.find(p => p.trigger.includes(escapeRegex('c.ts')) && p.trigger.includes(escapeRegex('d.ts')));
+const ok = props.length === 2 && ab && cd && ab.project_id === 'projA' && cd.project_id === 'projB';
+console.log(ok ? 'OK' : 'FAIL:' + JSON.stringify(props.map(p => ({ trigger: p.trigger, project_id: p.project_id }))));
+")
+[ "$result" = "OK" ] && pass "detectFileCoupling: project_id derived per-proposal, not blanket" || fail "coupling-pid: $result"
+
+echo ""
+echo "--- updateInstincts: draft/confirmed status (DESIGN-V4.md §2) ---"
+
+# An instinct born `status: draft` stays draft when it has NOT yet cleared
+# the promotion floor (occurrences >= 5 AND >= 3 distinct sessions) — here
+# 2 matches in 1 session.
+D_BELOW=$(mktemp -d)
+mkdir -p "$D_BELOW/instincts/global"
+cat > "$D_BELOW/instincts/global/test-draft-below.yaml" << 'YAMLEOF'
+---
+id: test-draft-below
+trigger: "Bash.*mydistinctivecmd123"
+action: "When Bash runs mydistinctivecmd123, do the thing."
+confidence: 0.40
+domain: pattern
+scope: global
+status: draft
+occurrences: 0
+last_seen: "2026-01-01"
+---
+YAMLEOF
+result=$(CORTEX_DIR="$D_BELOW" node -e "
+const m = require('$LEARNER');
+const fs = require('fs');
+m.updateInstincts([{ tool: 'Bash', input: JSON.stringify({ command: 'run mydistinctivecmd123' }), sid: 's1' }]);
+m.updateInstincts([{ tool: 'Bash', input: JSON.stringify({ command: 'run mydistinctivecmd123' }), sid: 's1' }]);
+const content = fs.readFileSync('$D_BELOW/instincts/global/test-draft-below.yaml', 'utf8');
+const statusMatch = content.match(/^status:\s*\"?([a-z]+)\"?/m);
+console.log(statusMatch ? statusMatch[1] : 'MISSING');
+")
+[ "$result" = "draft" ] && pass "instinct born draft stays draft below occurrences>=5/sessions_seen>=3" || fail "draft-stays: $result"
+rm -rf "$D_BELOW"
+
+# Auto-promotion fires exactly when the floor is cleared: 5 matches across 3
+# distinct sessions (sA, sA, sB, sB, sC) → status flips to confirmed.
+D_PROMOTE=$(mktemp -d)
+mkdir -p "$D_PROMOTE/instincts/global"
+cat > "$D_PROMOTE/instincts/global/test-draft-promote.yaml" << 'YAMLEOF'
+---
+id: test-draft-promote
+trigger: "Bash.*promoteme456"
+action: "When Bash runs promoteme456, do the thing."
+confidence: 0.40
+domain: pattern
+scope: global
+status: draft
+occurrences: 0
+last_seen: "2026-01-01"
+---
+YAMLEOF
+result=$(CORTEX_DIR="$D_PROMOTE" node -e "
+const m = require('$LEARNER');
+const fs = require('fs');
+const sessions = ['sA', 'sA', 'sB', 'sB', 'sC'];
+for (const sid of sessions) {
+  m.updateInstincts([{ tool: 'Bash', input: JSON.stringify({ command: 'run promoteme456' }), sid }]);
+}
+const content = fs.readFileSync('$D_PROMOTE/instincts/global/test-draft-promote.yaml', 'utf8');
+const statusMatch = content.match(/^status:\s*\"?([a-z]+)\"?/m);
+const occMatch = content.match(/^occurrences:\s*(\d+)/m);
+console.log(JSON.stringify({ status: statusMatch ? statusMatch[1] : null, occurrences: occMatch ? occMatch[1] : null }));
+")
+echo "$result" | grep -q '\"status\":\"confirmed\"' && pass "draft->confirmed promotion fires at occurrences=5, sessions_seen=3" || fail "promote-5-3: $result"
+echo "$result" | grep -q '\"occurrences\":\"5\"' && pass "occurrences counted correctly through the promotion run" || fail "promote-occ: $result"
+rm -rf "$D_PROMOTE"
+
+# Below-floor on sessions alone (5 occurrences, only 2 distinct sessions)
+# must NOT promote — both conditions are required, not just occurrences.
+D_SESSFLOOR=$(mktemp -d)
+mkdir -p "$D_SESSFLOOR/instincts/global"
+cat > "$D_SESSFLOOR/instincts/global/test-draft-sessfloor.yaml" << 'YAMLEOF'
+---
+id: test-draft-sessfloor
+trigger: "Bash.*sessfloor789"
+action: "When Bash runs sessfloor789, do the thing."
+confidence: 0.40
+domain: pattern
+scope: global
+status: draft
+occurrences: 0
+last_seen: "2026-01-01"
+---
+YAMLEOF
+result=$(CORTEX_DIR="$D_SESSFLOOR" node -e "
+const m = require('$LEARNER');
+const fs = require('fs');
+const sessions = ['sX', 'sX', 'sX', 'sX', 'sY'];
+for (const sid of sessions) {
+  m.updateInstincts([{ tool: 'Bash', input: JSON.stringify({ command: 'run sessfloor789' }), sid }]);
+}
+const content = fs.readFileSync('$D_SESSFLOOR/instincts/global/test-draft-sessfloor.yaml', 'utf8');
+const statusMatch = content.match(/^status:\s*\"?([a-z]+)\"?/m);
+console.log(statusMatch ? statusMatch[1] : 'MISSING');
+")
+[ "$result" = "draft" ] && pass "5 occurrences but only 2 distinct sessions → stays draft" || fail "sessfloor: $result"
+rm -rf "$D_SESSFLOOR"
+
+# A confirmed (or legacy, no status field) instinct is never touched by the
+# promotion gate — status is untouched either way.
+D_CONFIRMED=$(mktemp -d)
+mkdir -p "$D_CONFIRMED/instincts/global"
+cat > "$D_CONFIRMED/instincts/global/test-already-confirmed.yaml" << 'YAMLEOF'
+---
+id: test-already-confirmed
+trigger: "Bash.*alreadyconfirmed999"
+action: "When Bash runs alreadyconfirmed999, do the thing."
+confidence: 0.60
+domain: pattern
+scope: global
+status: confirmed
+occurrences: 0
+last_seen: "2026-01-01"
+---
+YAMLEOF
+result=$(CORTEX_DIR="$D_CONFIRMED" node -e "
+const m = require('$LEARNER');
+const fs = require('fs');
+const sessions = ['sA', 'sB', 'sC', 'sD', 'sE'];
+for (const sid of sessions) {
+  m.updateInstincts([{ tool: 'Bash', input: JSON.stringify({ command: 'run alreadyconfirmed999' }), sid }]);
+}
+const content = fs.readFileSync('$D_CONFIRMED/instincts/global/test-already-confirmed.yaml', 'utf8');
+const statusMatch = content.match(/^status:\s*\"?([a-z]+)\"?/m);
+console.log(statusMatch ? statusMatch[1] : 'MISSING');
+")
+[ "$result" = "confirmed" ] && pass "already-confirmed instinct is left untouched by the promotion gate" || fail "confirmed-noop: $result"
+rm -rf "$D_CONFIRMED"
+
+echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

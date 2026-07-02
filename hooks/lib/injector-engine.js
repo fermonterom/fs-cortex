@@ -36,6 +36,20 @@ const { isSafeRegex, safeRegexTest, unsafeReason } = require('./regex-guard');
 // Import shared YAML utilities
 const yamlUtils = require(path.join(__dirname, 'yaml-utils'));
 
+// v4 (DESIGN-V4.md §4 / SPEC-PORT-SINAPSIS.md §2): reject actions that carry
+// raw JSON fragments — the learner sometimes serializes tool_input verbatim
+// into the action field (e.g. an Edit/Write payload), producing garbage that
+// "parses" fine but injects `{"file_path": "...", "old_string": "..."}` into
+// context. Any of these substrings means the action is not prose.
+const HOLLOW_JSON_RE = /\{"|file_path"|old_string"/;
+
+// v4 (SPEC-PORT-SINAPSIS.md §4): guard anti prompt-injection at load time —
+// distinct from sanitizeInjection()'s runtime [BLOCKED] neutering below.
+// An instinct whose action itself tries to smuggle an instruction override
+// is not "safe to neuter", it is not inyectable at all — skip the whole
+// instinct instead of injecting a redacted version of an attack.
+const PROMPT_INJECTION_RE = /ignore\s+(previous|above|all)\s+instructions|<\/?system>|system:\s*you\s+are/i;
+
 /** Parse instinct YAML using shared yaml-utils module */
 function parseInstinctYaml(content) {
   const r = yamlUtils.parseYamlFrontmatter(content);
@@ -44,8 +58,10 @@ function parseInstinctYaml(content) {
   // learner's old raw-input slice when the fix observation had no input —
   // parse fine but inject garbage ("When Bash fails with similar pattern,
   // try: "). Treat them as unparseable so the instinct is skipped.
+  // v4: extended to also reject raw JSON fragments (see HOLLOW_JSON_RE).
   const actionStr = String(r.fields.action).trim();
-  if (actionStr.length < 30 || /try:\s*$/.test(actionStr)) return null;
+  if (actionStr.length < 30 || /try:\s*$/.test(actionStr) || HOLLOW_JSON_RE.test(actionStr)) return null;
+  if (PROMPT_INJECTION_RE.test(actionStr)) return null;
   const conf = typeof r.fields.confidence === 'number' ? r.fields.confidence : parseFloat(r.fields.confidence || '0');
   return {
     id: r.fields.id,
@@ -55,6 +71,10 @@ function parseInstinctYaml(content) {
     domain: r.fields.domain || 'general',
     scope: r.fields.scope || 'global',
     project_id: r.fields.project_id || null,
+    // v4 (SPEC-PORT-SINAPSIS.md §2): draft → tracked but not inyectable;
+    // confirmed → inyectable. Legacy instincts without the field are
+    // treated as confirmed (compat).
+    status: r.fields.status || 'confirmed',
   };
 }
 
@@ -325,11 +345,26 @@ function main() {
     "correction", "coupling", "meta", "reflex",
   ]);
 
+  // v4 (DESIGN-V4.md §4): degenerate trigger = a bare alternation of tool
+  // names anchored at the start ("^Bash|Read|Edit|..."). Matches virtually
+  // every tool call, so it is never a useful trigger — always a learner bug.
+  const DEGENERATE_TRIGGER_RE = /^(Bash|Read|Edit|Write|Grep|Glob|Agent|Skill|WebFetch|WebSearch)\|/;
+
   for (const file of instinctFiles) {
     try {
       const content = fs.readFileSync(file, "utf8");
       const inst = parseInstinctYaml(content);
       if (!inst) continue;
+      // v4 (DESIGN-V4.md §4): static validation at load — a trigger that is
+      // just a bare tool-name alternation ("Bash|Read|Edit|...") matches
+      // almost every tool call and drowns the injection budget. Skip with a
+      // warning instead of silently degrading every other instinct's odds.
+      if (DEGENERATE_TRIGGER_RE.test(inst.trigger)) {
+        if (process.env.CORTEX_DEBUG) {
+          try { process.stderr.write(`[cortex:injector] skip ${inst.id} — degenerate trigger (bare tool-name alternation): ${inst.trigger}\n`); } catch {}
+        }
+        continue;
+      }
       // Category domains always pass. Tech-stack domains only filter when
       // the project actually has detected stacks beyond "general".
       if (inst.domain && !CATEGORY_DOMAINS.has(inst.domain)) {
@@ -351,7 +386,10 @@ function main() {
         }
       }
       if (!safeRegexTest(inst.trigger, matchTarget, { tag: `instinct:${inst.id}:trigger` })) continue;
-      if (inst.confidence < 0.30) {
+      // v4 (SPEC-PORT-SINAPSIS.md §2): status: draft → trackable (occurrences/
+      // sessions accumulate in silence, see §3b) but never inyectable. Legacy
+      // instincts without a `status` field parsed as 'confirmed' above.
+      if (inst.status === 'draft' || inst.confidence < 0.30) {
         draftMatches.push({ ...inst, _file: file });
       } else {
         candidates.push({ ...inst, _file: file });
@@ -369,24 +407,45 @@ function main() {
   const MAX_INSTINCTS = memoryConfig.max_instincts_per_injection || 3;
   const MAX_TOTAL_CHARS = 1500;
   let totalChars = 0;
-  const seenDomains = new Set();
+  // v4 (DESIGN-V4.md §4 / SPEC-PORT-SINAPSIS.md §4): dedup switches from
+  // "one instinct per domain" (too coarse — domain is a knowledge category,
+  // not a topic) to "one instinct per subtopic" (first 2 words of the id,
+  // e.g. "bash-polling-loop-stuck" → "bash-polling"). A domain-level cap
+  // still applies underneath (max 2 per domain), but only as a soft ceiling:
+  // a 2nd instinct from the same domain is allowed through when BOTH it and
+  // the one already accepted from that domain have confidence >= 0.85.
+  const seenSubtopics = new Set();
+  const domainConfidences = new Map(); // domain -> confidences already accepted
   for (const inst of candidates) {
     if (matchedInstincts.length >= MAX_INSTINCTS) break;
     if ((injectedCounts[inst.id] || 0) >= MAX_REPEAT_INJECTIONS) {
       suppressed.push({ id: inst.id });
       continue;
     }
-    if (seenDomains.has(inst.domain)) {
-      // v3.36.1: make per-domain dedup visible — a high-confidence instinct
-      // dropped here used to disappear without trace.
+    const subtopic = String(inst.id).split('-').slice(0, 2).join('-');
+    if (seenSubtopics.has(subtopic)) {
       if (process.env.CORTEX_DEBUG) {
-        try { process.stderr.write(`[cortex:injector] skip ${inst.id} — duplicate domain ${inst.domain}\n`); } catch {}
+        try { process.stderr.write(`[cortex:injector] skip ${inst.id} — duplicate subtopic ${subtopic}\n`); } catch {}
       }
       continue;
     }
+    const acceptedInDomain = domainConfidences.get(inst.domain) || [];
+    if (acceptedInDomain.length >= 1) {
+      const bothHighConfidence = acceptedInDomain.length === 1 &&
+        inst.confidence >= 0.85 && acceptedInDomain[0] >= 0.85;
+      if (acceptedInDomain.length >= 2 || !bothHighConfidence) {
+        // v3.36.1: make per-domain dedup visible — a high-confidence instinct
+        // dropped here used to disappear without trace.
+        if (process.env.CORTEX_DEBUG) {
+          try { process.stderr.write(`[cortex:injector] skip ${inst.id} — duplicate domain ${inst.domain}\n`); } catch {}
+        }
+        continue;
+      }
+    }
     const safeAction = sanitizeInjection(inst.action, 500);
     if (totalChars + safeAction.length > MAX_TOTAL_CHARS) continue;
-    seenDomains.add(inst.domain);
+    seenSubtopics.add(subtopic);
+    domainConfidences.set(inst.domain, [...acceptedInDomain, inst.confidence]);
     matchedInstincts.push({ ...inst, action: safeAction });
     totalChars += safeAction.length;
   }
