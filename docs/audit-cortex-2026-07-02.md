@@ -6,7 +6,7 @@ Auditoría exhaustiva multi-agente (Workflow `/cortex-audit`, 35 agentes: 7 audi
 
 **Veredicto: deuda técnica seria, rozando crítico en la capa de instincts.** El motor de leyes y el pipeline de aprendizaje siguen operativos, pero un tramo relevante de los instincts activos inyectaba contenido ya invalidado o inútil, y esto se reprodujo en vivo durante la propia auditoría.
 
-25 hallazgos brutos, 25 confirmados por verificación adversarial, 0 refutados. Severidad: P0: 0 · P1: 11 · P2: 8 · P3: 4.
+25 hallazgos brutos, 25 confirmados por verificación adversarial, 0 refutados. Severidad: P0: 0 · P1: 12 · P2: 9 · P3: 4.
 
 ## Inventario (recon)
 
