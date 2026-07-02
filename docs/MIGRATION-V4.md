@@ -117,19 +117,62 @@ SessionStart automatically, so the schedule below is a weekly top-up, not a
 requirement for the system to function — but without it, promotion/dedup
 progress only advances on days you happen to open Claude Code.
 
-**Cron (macOS/Linux)** — Sunday at 4am:
+**Recommended: `bin/cx-maintain.sh`, no LLM, no tokens.** The command's
+Implementation section is also shipped as a standalone bash script that
+calls the exact same `distill_engine.py` / `dream_cycle.py` /
+`storage-rotation.js` functions directly — no `claude -p`, no model call
+involved. It resolves the engine lib from the installed hooks
+(`~/.claude/hooks/cortex/lib`) with a fallback to the repo's `hooks/lib`,
+takes its own mkdir-based lock so overlapping scheduled runs don't race each
+other, and always exits 0 on a clean pass (nonzero only on a real infra
+failure — missing python3, missing engine lib). This is now the default way
+to schedule maintenance; `claude -p "/cx-maintain"` still works for a manual
+or interactive run.
+
+**Cron (macOS/Linux)** — Sunday at 4am, script-based (preferred, zero token cost):
 
 ```cron
-0 4 * * 0 claude -p "/cx-maintain" >> ~/.claude/cortex/log/cx-maintain-cron.log 2>&1
+0 4 * * 0 /path/to/fs-cortex/bin/cx-maintain.sh >> ~/.claude/cortex/log/cx-maintain-cron.log 2>&1
 ```
 
-**Claude Code schedule** — equivalent, if you prefer not to touch crontab
-directly, register the same command through Claude Code's own `schedule`
-feature (routine, weekly cadence, `/cx-maintain` as the prompt).
+**launchd (macOS)** — equivalent as a LaunchAgent, e.g.
+`~/Library/LaunchAgents/com.fscortex.cx-maintain.plist`:
 
-After `/cx-maintain` runs, check `hooks/session-start.py`'s `[REVIEW] N items
-pendientes` badge at your next SessionStart — that's your cue to run
-`/cx-review`.
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.fscortex.cx-maintain</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/path/to/fs-cortex/bin/cx-maintain.sh</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key><integer>0</integer>
+    <key>Hour</key><integer>4</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+  <key>StandardOutPath</key><string>/tmp/cx-maintain-launchd.log</string>
+  <key>StandardErrorPath</key><string>/tmp/cx-maintain-launchd.log</string>
+</dict>
+</plist>
+```
+
+Load it with `launchctl load ~/Library/LaunchAgents/com.fscortex.cx-maintain.plist`.
+Redirect `StandardOutPath`/`StandardErrorPath` to a real log location under
+`~/.claude/cortex/log/` once created — `/tmp` is only illustrative here.
+
+**Claude Code schedule** — if you prefer an LLM-driven trigger instead of
+cron/launchd, register `/cx-maintain` through Claude Code's own `schedule`
+feature (routine, weekly cadence, `/cx-maintain` as the prompt). This costs
+tokens on every run, unlike `bin/cx-maintain.sh`.
+
+After `/cx-maintain` (or `bin/cx-maintain.sh`) runs, check
+`hooks/session-start.py`'s `[REVIEW] N items pendientes` badge at your next
+SessionStart — that's your cue to run `/cx-review`.
 
 ## See also
 

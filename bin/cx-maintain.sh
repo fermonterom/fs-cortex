@@ -1,90 +1,100 @@
----
-name: cx-maintain
-description: Deterministic maintenance pass — decay, dedup, purge, promotion, storage rotation, health check. Zero questions, cron-able.
-command: true
----
+#!/usr/bin/env bash
+# bin/cx-maintain.sh — Deterministic /cx-maintain pass, runnable WITHOUT an LLM.
+#
+# Same contract as commands/cx-maintain.md's Implementation block (Cortex v4,
+# docs/DESIGN-V4.md §5): decay, archive, auto-validate, deterministic
+# law-promotion, evolve-detect (engine pass) → Jaccard dedup by
+# (scope, project_id, domain) → storage rotation → proposals↔instincts
+# reconciliation → health check → .review-digest.json → .last-distill /
+# .last-dream markers. Zero questions, zero LLM calls — safe for cron/launchd.
+#
+# This script MUST stay a byte-for-byte behavioral mirror of the Python
+# heredoc in commands/cx-maintain.md. If that spec changes (new step, engine
+# function rename, gate change), update both in the same commit — see
+# instinct pattern-cortex-commands-md-features-pair.
+#
+# Usage:
+#   bin/cx-maintain.sh              # full pass, writes state, prints report
+#   bin/cx-maintain.sh --dry-run    # same computation, no writes anywhere
+#
+# Env overrides (mainly for tests — see tests/test_cx_maintain_runner.sh):
+#   CORTEX_DIR       data dir, default ~/.claude/cortex
+#   CORTEX_LIB_DIR   engine lib dir, default: installed hooks, falls back to
+#                    the repo's own hooks/lib if not installed
+#   CX_MAINTAIN_LOCK_STALE_SEC   seconds before a stale runner lock is stolen
+#                                 (default 1800 = 30 min)
+#
+# macOS BSD `date`/`mktemp` compatible. No GNU-only flags used anywhere.
 
-# /cx-maintain
+set -euo pipefail
 
-## What it does
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-The single deterministic maintenance pass for Cortex v4 (`docs/DESIGN-V4.md` §5).
-**Zero decisions, zero questions, zero AskUserQuestion.** Either everything below
-runs and prints a report, or a step is skipped with a one-line reason — nothing
-ever waits on the user. Idempotent: running it twice in a row is safe (each
-sub-step guards its own idempotency: `last_decay_at`, the `.last-auto-distill`
-marker, size-gated storage rotation, etc.).
-
-Replaces the manual judgment calls that used to live in `/cx-analyze`,
-`/cx-distill`, `/cx-dream`, `/cx-promote`, `/cx-backfill` (deterministic parts
-only — see stub files for the mapping). This command **invokes the existing
-engine functions** in `hooks/lib/distill_engine.py`, `hooks/lib/dream_cycle.py`
-and `hooks/lib/storage-rotation.js` — it does not reimplement decay, promotion
-criteria, or rotation thresholds. If those engines change their gates, this
-command's output changes with them automatically.
-
-Writes `~/.claude/cortex/.review-digest.json` — the accumulated digest that
-`/cx-review` presents to a human and that `hooks/session-start.py` uses for the
-one-line `[REVIEW] N items pendientes` badge.
-
-## Usage
-
-```
-/cx-maintain             # Full pass, writes state, prints report
-/cx-maintain --dry-run   # Same computation, no writes (still writes nothing,
-                          # including the digest — pure preview)
-```
-
-### Cron / launchd — `bin/cx-maintain.sh`, no LLM needed
-
-**Recommended path for unattended scheduling.** `bin/cx-maintain.sh` is a
-plain bash script — no `claude -p`, no model call, no tokens spent — that
-mirrors this command's Implementation section byte-for-byte against the
-SAME engine functions. It resolves the engine lib dir from the installed
-hooks (`~/.claude/hooks/cortex/lib`) with a fallback to the repo's own
-`hooks/lib` when running from a checkout, guards against overlapping runs
-with its own mkdir-based lock, and exits 0 on a clean pass:
-
-```bash
-bin/cx-maintain.sh              # full pass, writes state, prints report
-bin/cx-maintain.sh --dry-run    # same computation, no writes
-```
-
-```cron
-0 4 * * 0 /path/to/fs-cortex/bin/cx-maintain.sh >> ~/.claude/cortex/log/cx-maintain-cron.log 2>&1
-```
-
-See `docs/MIGRATION-V4.md` §"Scheduling `/cx-maintain` weekly" for the
-launchd plist equivalent. Prefer `bin/cx-maintain.sh` over `claude -p
-"/cx-maintain"` for any unattended schedule — same steps, same output
-contract, zero token cost. `claude -p "/cx-maintain"` remains a valid
-interactive/manual invocation.
-
-Weekly is the suggested cadence (the daily "maintain-lite" — decay + rotation +
-the fast engine pass — already runs automatically at every SessionStart via
-`run_auto_distill()`, see `hooks/session-start.py`). Running `/cx-maintain`
-more often than daily is harmless (idempotent) but wasteful — most sub-steps
-no-op on a same-day rerun.
-
-## Implementation
-
-Run this as a **single Bash call** (Python heredoc). Do not split into multiple
-tool calls — that reintroduces judgment between steps, which this command must
-not have. Report exactly what the script prints; do not editorialize, do not
-ask the user anything, do not add recommendations of your own.
-
-This exact sequence is also packaged as `bin/cx-maintain.sh` — ejecutable sin
-LLM vía `bin/cx-maintain.sh`, es la vía recomendada para cron/launchd (see
-"Cron / launchd" above). The Python heredoc below and that script MUST stay
-in sync; if you change one, change the other in the same commit.
-
-```bash
 CORTEX_DIR="${CORTEX_DIR:-$HOME/.claude/cortex}"
-LIB_DIR="${CORTEX_LIB_DIR:-$HOME/.claude/hooks/cortex/lib}"
-DRY_RUN=0
-[ "$1" = "--dry-run" ] && DRY_RUN=1
 
-CORTEX_DIR="$CORTEX_DIR" LIB_DIR="$LIB_DIR" DRY_RUN="$DRY_RUN" python3 << 'PYEOF'
+INSTALLED_LIB_DIR="$HOME/.claude/hooks/cortex/lib"
+REPO_LIB_DIR="$REPO_ROOT/hooks/lib"
+if [ -n "${CORTEX_LIB_DIR:-}" ]; then
+  LIB_DIR="$CORTEX_LIB_DIR"
+elif [ -f "$INSTALLED_LIB_DIR/distill_engine.py" ]; then
+  LIB_DIR="$INSTALLED_LIB_DIR"
+else
+  LIB_DIR="$REPO_LIB_DIR"
+fi
+
+DRY_RUN=0
+[ "${1:-}" = "--dry-run" ] && DRY_RUN=1
+
+log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
+
+log "cx-maintain runner starting (dry_run=$DRY_RUN)"
+log "CORTEX_DIR=$CORTEX_DIR"
+log "LIB_DIR=$LIB_DIR"
+
+if [ ! -f "$LIB_DIR/distill_engine.py" ]; then
+  log "ERROR: distill_engine.py not found under $LIB_DIR (neither installed nor repo copy) — nothing to run"
+  exit 1
+fi
+if ! command -v python3 >/dev/null 2>&1; then
+  log "ERROR: python3 not found on PATH — cx-maintain requires it"
+  exit 1
+fi
+
+mkdir -p "$CORTEX_DIR"
+
+# ── Runner-level lock ────────────────────────────────────────────────────────
+# Separate from distill_engine's own advisory flock (which only guards the
+# engine-pass step). This one guards the WHOLE script against an overlapping
+# cron/launchd invocation (e.g. a slow storage-rotation run still going when
+# the next scheduled tick fires). Portable mkdir-based lock (atomic on every
+# POSIX fs, no flock(1) needed — flock(1) does not ship on macOS).
+LOCK_DIR="$CORTEX_DIR/.cx-maintain-runner.lock"
+STALE_SEC="${CX_MAINTAIN_LOCK_STALE_SEC:-1800}"
+
+release_lock() { rmdir "$LOCK_DIR" 2>/dev/null || true; }
+
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+  # Someone else holds it. Steal if stale (crashed run left it behind).
+  lock_age=99999
+  if [ -d "$LOCK_DIR" ]; then
+    lock_mtime=$(stat -f %m "$LOCK_DIR" 2>/dev/null || stat -c %Y "$LOCK_DIR" 2>/dev/null || echo 0)
+    now_epoch=$(date +%s)
+    lock_age=$(( now_epoch - lock_mtime ))
+  fi
+  if [ "$lock_age" -ge "$STALE_SEC" ]; then
+    log "Stale runner lock (${lock_age}s old, >= ${STALE_SEC}s) — stealing"
+    rmdir "$LOCK_DIR" 2>/dev/null || true
+    mkdir "$LOCK_DIR" 2>/dev/null || { log "Could not steal lock — another run just started, skipping"; exit 0; }
+  else
+    log "Another cx-maintain runner is active (lock ${lock_age}s old) — skipping this run, safe to rerun later"
+    exit 0
+  fi
+fi
+trap release_lock EXIT
+
+set +e
+CORTEX_DIR="$CORTEX_DIR" LIB_DIR="$LIB_DIR" DRY_RUN="$DRY_RUN" python3 - <<'PYEOF'
 import json, os, re, sys, time
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -383,3 +393,13 @@ else:
     print("  All steps completed cleanly.")
 print("================================================================")
 PYEOF
+PY_RC=$?
+set -e
+
+if [ "$PY_RC" -ne 0 ]; then
+  log "ERROR: python3 engine pass crashed (rc=$PY_RC) — this is an infra failure, not a normal step error"
+  exit "$PY_RC"
+fi
+
+log "cx-maintain runner finished cleanly"
+exit 0
