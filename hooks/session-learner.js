@@ -1139,9 +1139,38 @@ function updateInstincts(observations) {
 
       if (matched) {
         let newContent = updateYamlField(content, 'last_seen', TODAY);
-        const currentOccurrences = parseInt(parsed.fields.occurrences, 10) || 0;
-        const newOccurrences = currentOccurrences + 1;
-        newContent = updateYamlField(newContent, 'occurrences', newOccurrences);
+
+        // AD fix #1 (2026-07-02) — occurrences_v4 is the ONLY counter the
+        // law-promotion gate reads (distill_engine.py:auto_promote_to_law,
+        // Criteria 3: occurrences_v4 >= LAW_MIN_OCCURRENCES_V4). Pre-fix,
+        // this was the single site that bumped an instinct's match counter
+        // and it only ever wrote the legacy `occurrences` field — the gate
+        // was unreachable by design (occurrences_v4 stayed 0 forever).
+        //
+        // Decision (documented per DESIGN-V4.md §3): keep BOTH counters in
+        // lockstep for instincts that have not yet been through
+        // distill_engine.py's lazy migration (_ensure_occurrences_v4) —
+        // identifiable by the ABSENCE of `occurrences_legacy`. Once that
+        // migration has run on a given instinct (occurrences_legacy
+        // present), the legacy `occurrences` field is retired for good —
+        // migration already deleted it from the YAML — so we must not
+        // resurrect/duplicate it here; only occurrences_v4 advances from
+        // that point on. No other code path reads bare `occurrences` for
+        // anything but display, so this keeps cx-status.md's legacy count
+        // display alive pre-migration without breaking the post-migration
+        // contract.
+        const alreadyMigrated = Object.prototype.hasOwnProperty.call(parsed.fields, 'occurrences_legacy');
+        if (!alreadyMigrated) {
+          const currentOccurrences = parseInt(parsed.fields.occurrences, 10) || 0;
+          const newOccurrences = currentOccurrences + 1;
+          newContent = updateYamlField(newContent, 'occurrences', newOccurrences);
+        }
+        const currentOccurrencesV4 = parseInt(parsed.fields.occurrences_v4, 10) || 0;
+        const newOccurrencesV4 = currentOccurrencesV4 + 1;
+        newContent = updateYamlField(newContent, 'occurrences_v4', newOccurrencesV4);
+        // `newOccurrences` below (auto-promotion gate + tracking mirror) now
+        // refers to occurrences_v4 — the v4 contract's maturity signal.
+        const newOccurrences = newOccurrencesV4;
 
         // v3.15.0 · 1.3 — also mirror to tracking.json so injector's inline
         // staleness filter sees every instinct, not just the 1 it seeds.

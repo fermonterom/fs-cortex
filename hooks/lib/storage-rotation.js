@@ -80,21 +80,34 @@ function _rotateProposalsHistory(log) {
   }
 }
 
-// Keep the newest `keep` files in a directory, delete the rest (derived,
-// regenerable artifacts only — snapshots and summaries).
-function _pruneDirByCount(dir, keep, log, label) {
+// Keep the newest `keep` files in a directory. Snapshots are regenerable
+// (derived from live state) and are simply deleted; when `archiveDir` is
+// given (AD fix #5, 2026-07-02 — daily-summaries have no regeneration path,
+// they're the only record of that day's digest) the pruned files are
+// rename-moved there instead of unlinked. `archiveDir` files never come
+// back into the scan: readdirSync's isFile() filter already excludes the
+// archive subdirectory itself from the candidate list.
+function _pruneDirByCount(dir, keep, log, label, archiveDir) {
   let entries;
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true })
       .filter((e) => e.isFile() && !e.name.startsWith('.'))
       .map((e) => {
         const full = path.join(dir, e.name);
-        return { full, mtime: fs.statSync(full).mtimeMs };
+        return { full, name: e.name, mtime: fs.statSync(full).mtimeMs };
       });
   } catch (_) { return; }
   if (entries.length <= keep) return;
   entries.sort((a, b) => b.mtime - a.mtime);
   const doomed = entries.slice(keep);
+  if (archiveDir) {
+    try { fs.mkdirSync(archiveDir, { recursive: true, mode: 0o700 }); } catch (_) {}
+    for (const d of doomed) {
+      try { fs.renameSync(d.full, path.join(archiveDir, d.name)); } catch (_) {}
+    }
+    log(`Storage rotation: ${label} archived ${doomed.length} file(s) → ${path.basename(archiveDir) === 'archive' ? path.basename(dir) + '/archive/' : archiveDir} (keep newest ${keep})`);
+    return;
+  }
   for (const d of doomed) {
     try { fs.unlinkSync(d.full); } catch (_) {}
   }
@@ -181,7 +194,14 @@ function maybeRotateStorage(log) {
   }
   try {
     _pruneDirByCount(path.join(CORTEX_DIR, 'daily-snapshots'), DAILY_KEEP_FILES, log, 'daily-snapshots');
-    _pruneDirByCount(path.join(CORTEX_DIR, 'daily-summaries'), DAILY_KEEP_FILES, log, 'daily-summaries');
+    // AD fix #5 — daily-summaries are the only record of that day's digest
+    // (no regeneration path, unlike daily-snapshots which mirror live
+    // state), so pruning archives them to daily-summaries/archive/ instead
+    // of unlinking.
+    _pruneDirByCount(
+      path.join(CORTEX_DIR, 'daily-summaries'), DAILY_KEEP_FILES, log, 'daily-summaries',
+      path.join(CORTEX_DIR, 'daily-summaries', 'archive')
+    );
   } catch (e) {
     log(`Storage rotation: daily prune error: ${e.message}`);
   }

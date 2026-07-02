@@ -38,7 +38,7 @@ Do NOT make multiple rounds of Bash calls to gather data. Run the collector scri
 
 ```bash
 python3 << 'COLLECTOR'
-import os, re, glob, json, subprocess
+import os, re, glob, json, subprocess, time
 
 CORTEX = os.path.expanduser("~/.claude/cortex")
 HOME   = os.path.expanduser("~")
@@ -127,7 +127,11 @@ for h, meta in registry.items():
         "hash":      h,
         "name":      meta.get("name", h[:8]),
         "root":      root_short,
-        "last_seen": meta.get("lastSeen", "?"),
+        # AD fix #6 (2026-07-02): the registry writer (hooks/observe.py
+        # update_registry, ~line 392) writes snake_case `last_seen`; this
+        # reader looked for camelCase `lastSeen` and always fell through to
+        # "?". Read both, preferring the field the writer actually uses.
+        "last_seen": meta.get("last_seen", meta.get("lastSeen", "?")),
         "obs":       obs,
         "inst":      inst,
         "current":   h == proj_hash,

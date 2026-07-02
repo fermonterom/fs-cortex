@@ -907,5 +907,74 @@ console.log(statusMatch ? statusMatch[1] : 'MISSING');
 rm -rf "$D_CONFIRMED"
 
 echo ""
+echo "--- updateInstincts: occurrences_v4 counter (AD fix #1, 2026-07-02) ---"
+
+# Pre-migration instinct (no occurrences_legacy) — legacy `occurrences` and
+# the new `occurrences_v4` counter must advance in lockstep. Pre-fix,
+# occurrences_v4 never existed and the law-promotion gate
+# (distill_engine.py:auto_promote_to_law, Criteria 3) was unreachable.
+D_OCCV4=$(mktemp -d)
+mkdir -p "$D_OCCV4/instincts/global"
+cat > "$D_OCCV4/instincts/global/test-occ-v4-lockstep.yaml" << 'YAMLEOF'
+---
+id: test-occ-v4-lockstep
+trigger: "Bash.*occv4lockstep321"
+action: "When Bash runs occv4lockstep321, do the thing."
+confidence: 0.60
+domain: pattern
+scope: global
+status: confirmed
+occurrences: 2
+last_seen: "2026-01-01"
+---
+YAMLEOF
+result=$(CORTEX_DIR="$D_OCCV4" node -e "
+const m = require('$LEARNER');
+const fs = require('fs');
+m.updateInstincts([{ tool: 'Bash', input: JSON.stringify({ command: 'run occv4lockstep321' }), sid: 's1' }]);
+const content = fs.readFileSync('$D_OCCV4/instincts/global/test-occ-v4-lockstep.yaml', 'utf8');
+const occMatch = content.match(/^occurrences:\s*(\d+)/m);
+const occV4Match = content.match(/^occurrences_v4:\s*(\d+)/m);
+console.log(JSON.stringify({ occurrences: occMatch ? occMatch[1] : null, occurrences_v4: occV4Match ? occV4Match[1] : null }));
+")
+echo "$result" | grep -q '\"occurrences\":\"3\"' && pass "pre-migration: legacy occurrences still advances (2 -> 3)" || fail "pre-migration occurrences: $result"
+echo "$result" | grep -q '\"occurrences_v4\":\"1\"' && pass "pre-migration: occurrences_v4 created and incremented (0 -> 1)" || fail "pre-migration occurrences_v4: $result"
+rm -rf "$D_OCCV4"
+
+# Post-migration instinct (occurrences_legacy present, distill_engine.py's
+# _ensure_occurrences_v4 already ran and removed the `occurrences` field) —
+# only occurrences_v4 must advance; `occurrences` must NOT be resurrected.
+D_OCCV4_MIGRATED=$(mktemp -d)
+mkdir -p "$D_OCCV4_MIGRATED/instincts/global"
+cat > "$D_OCCV4_MIGRATED/instincts/global/test-occ-v4-migrated.yaml" << 'YAMLEOF'
+---
+id: test-occ-v4-migrated
+trigger: "Bash.*occv4migrated654"
+action: "When Bash runs occv4migrated654, do the thing."
+confidence: 0.60
+domain: pattern
+scope: global
+status: confirmed
+occurrences_legacy: 42
+occurrences_v4: 3
+last_seen: "2026-01-01"
+---
+YAMLEOF
+result=$(CORTEX_DIR="$D_OCCV4_MIGRATED" node -e "
+const m = require('$LEARNER');
+const fs = require('fs');
+m.updateInstincts([{ tool: 'Bash', input: JSON.stringify({ command: 'run occv4migrated654' }), sid: 's1' }]);
+const content = fs.readFileSync('$D_OCCV4_MIGRATED/instincts/global/test-occ-v4-migrated.yaml', 'utf8');
+const occMatch = content.match(/^occurrences:\s*(\d+)/m);
+const occV4Match = content.match(/^occurrences_v4:\s*(\d+)/m);
+const legacyMatch = content.match(/^occurrences_legacy:\s*(\d+)/m);
+console.log(JSON.stringify({ occurrences: occMatch ? occMatch[1] : null, occurrences_v4: occV4Match ? occV4Match[1] : null, occurrences_legacy: legacyMatch ? legacyMatch[1] : null }));
+")
+echo "$result" | grep -q '\"occurrences\":null' && pass "post-migration: bare occurrences field never resurrected" || fail "post-migration occurrences: $result"
+echo "$result" | grep -q '\"occurrences_v4\":\"4\"' && pass "post-migration: occurrences_v4 advances alone (3 -> 4)" || fail "post-migration occurrences_v4: $result"
+echo "$result" | grep -q '\"occurrences_legacy\":\"42\"' && pass "post-migration: occurrences_legacy left untouched" || fail "post-migration occurrences_legacy: $result"
+rm -rf "$D_OCCV4_MIGRATED"
+
+echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1
