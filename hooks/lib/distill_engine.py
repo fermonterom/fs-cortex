@@ -80,11 +80,27 @@ SKILLS_DIR = Path(os.environ.get("SKILLS_DIR", str(Path.home() / ".claude" / "sk
 # injector-engine.js writes here on every PreToolUse match — dedup'd, cap 20
 # entries per instinct.
 INSTINCT_TRACKING_FILE = CORTEX_DIR / "instinct-tracking.json"
+# Written by impact_log.py's apply_outcome_nudges (schema v2, see that
+# module's _load_nudge_state docstring). Read/pruned here too (reap_stale_
+# nudge_state) via its own path constant rather than importing impact_log,
+# to keep this module's write surface self-contained.
+NUDGE_STATE_FILE = CORTEX_DIR / "nudge-state.json"
 
 RATE_LIMIT_HOURS = 24
 DECAY_PER_30_DAYS = 0.05
 DECAY_PERIOD_DAYS = 30
 ARCHIVE_THRESHOLD = 0.10
+# nudge-state.json reaper (P2 audit 2026-07-04): a saturated instinct
+# (last_direction == "saturated", i.e. it hit NUDGE_MAX_CONF and stopped
+# receiving nudges) with no fresh outcome cohort for NUDGE_STALE_DAYS is
+# stuck at ceiling confidence forever, since apply_outcome_nudges only
+# advances it when a new cohort arrives. reap_stale_nudge_state() applies
+# a one-off decay so it re-enters the normal decay/nudge cycle instead of
+# being cemented at 0.99. Entries whose last_event_ts itself is older than
+# NUDGE_STALE_DAYS (stale regardless of saturation) get the same treatment.
+NUDGE_STALE_DAYS = 60
+NUDGE_SATURATED_STALE_DAYS = 7
+NUDGE_REAP_DECAY = 0.10
 LAW_THRESHOLD_CONF = 0.95
 LAW_SUSTAINED_DAYS = 14
 LAW_MIN_PROJECTS = 3  # v4 (2026-07-02, DESIGN-V4.md §3): restored 1 → 3.
@@ -2332,6 +2348,163 @@ def _write_marker() -> None:
     MARKER_FILE.write_text(_dt.datetime.now(_dt.timezone.utc).isoformat(), encoding="utf-8")
 
 
+def prune_instinct_tracking(dry_run: bool = False) -> dict:
+    """Drop instinct-tracking.json entries whose instinct no longer exists.
+
+    injector-engine.js appends to this file on every PreToolUse match but
+    never removes an entry when the backing YAML is archived, promoted to
+    a law, or manually deleted — so the file grows with dead tracking data
+    forever (P2 audit 2026-07-04). An id counts as "alive" if an active
+    (non-archived) instinct YAML with that id exists in global/ or any
+    projects/*/instincts/ — same definition _all_instinct_paths() already
+    uses everywhere else in this module.
+
+    Returns {"before": int, "after": int, "pruned": int}.
+    """
+    tracking = _load_instinct_tracking()
+    if not tracking:
+        return {"before": 0, "after": 0, "pruned": 0}
+
+    alive_ids = {p.stem for p in _all_instinct_paths()}
+    before = len(tracking)
+    kept = {iid: rec for iid, rec in tracking.items() if iid in alive_ids}
+    pruned = before - len(kept)
+
+    if pruned and not dry_run:
+        _atomic_write(INSTINCT_TRACKING_FILE, json.dumps(kept, indent=2, ensure_ascii=False) + "\n")
+        _log_knowledge(
+            "pruned-tracking", "-",
+            f"removed {pruned} dead instinct-tracking.json entries (no backing yaml)",
+            source="cx-auto-distill",
+        )
+
+    return {"before": before, "after": len(kept), "pruned": pruned}
+
+
+def reap_stale_nudge_state(dry_run: bool = False) -> dict:
+    """Un-cement saturated instincts stuck at NUDGE_MAX_CONF (0.99) forever.
+
+    apply_outcome_nudges() (hooks/lib/impact_log.py) only advances an iid's
+    nudge-state entry when a NEW outcome cohort arrives; a high-confidence
+    instinct that stops generating fresh outcome feedback stays saturated
+    at conf 0.99 with a frozen `last_direction: "saturated"` marker
+    indefinitely (P2 audit 2026-07-04). This reaper, meant to be invoked
+    from maintain alongside the rest of the auto-distill pipeline, applies
+    a one-off -NUDGE_REAP_DECAY (0.10) to the backing instinct YAML's
+    confidence and resets the nudge-state entry's direction so the
+    instinct re-enters the normal decay/nudge cycle instead of being
+    cemented, for any entry where:
+      - last_event_ts is older than NUDGE_STALE_DAYS (60d), regardless of
+        saturation, OR
+      - last_direction == "saturated" AND last_nudge_ts is older than
+        NUDGE_SATURATED_STALE_DAYS (7d)
+
+    Reads/writes ~/.claude/cortex/nudge-state.json directly (own path
+    constant, no import of impact_log) to keep this module's write
+    surface self-contained; the schema (version 2, `iids: {<iid>: {...}}`)
+    is impact_log.py's, treated here as a stable on-disk contract.
+
+    Returns {"before": int, "reaped": int} where "before" is the number of
+    entries considered saturated/stale-eligible before reaping.
+    """
+    if not NUDGE_STATE_FILE.exists():
+        return {"before": 0, "reaped": 0}
+    try:
+        state = json.loads(NUDGE_STATE_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"before": 0, "reaped": 0}
+    if not isinstance(state, dict):
+        return {"before": 0, "reaped": 0}
+    iids_state = state.get("iids")
+    if not isinstance(iids_state, dict) or not iids_state:
+        return {"before": 0, "reaped": 0}
+
+    now = _dt.datetime.now(_dt.timezone.utc)
+    stale_cutoff = now - _dt.timedelta(days=NUDGE_STALE_DAYS)
+    saturated_cutoff = now - _dt.timedelta(days=NUDGE_SATURATED_STALE_DAYS)
+
+    def _parse_ts(raw: str) -> _dt.datetime | None:
+        try:
+            return _dt.datetime.strptime(raw[:19], "%Y-%m-%dT%H:%M:%S").replace(
+                tzinfo=_dt.timezone.utc
+            )
+        except (ValueError, TypeError):
+            return None
+
+    eligible: list[str] = []
+    for iid, rec in iids_state.items():
+        if not isinstance(rec, dict):
+            continue
+        last_event = _parse_ts(str(rec.get("last_event_ts", "")))
+        last_nudge = _parse_ts(str(rec.get("last_nudge_ts", "")))
+        is_stale_event = last_event is not None and last_event < stale_cutoff
+        is_stale_saturated = (
+            str(rec.get("last_direction", "")) == "saturated"
+            and last_nudge is not None
+            and last_nudge < saturated_cutoff
+        )
+        if is_stale_event or is_stale_saturated:
+            eligible.append(iid)
+
+    before = len(eligible)
+    if not eligible:
+        return {"before": 0, "reaped": 0}
+
+    reaped = 0
+    if dry_run:
+        return {"before": before, "reaped": 0}
+
+    # Build an id → path index once, reusing the same discovery already
+    # used for tracking/decay elsewhere in this module.
+    path_by_id = {p.stem: p for p in _all_instinct_paths()}
+    today_iso = now.isoformat()
+
+    for iid in eligible:
+        path = path_by_id.get(iid)
+        if path is None:
+            # No backing YAML (already archived/promoted) — just drop the
+            # stale nudge-state entry, nothing to decay.
+            iids_state.pop(iid, None)
+            reaped += 1
+            continue
+        result = _read_instinct(path)
+        if result is None:
+            continue
+        fields, text = result
+        conf = fields.get("confidence")
+        try:
+            conf = float(conf)
+        except (TypeError, ValueError):
+            continue
+        new_conf = max(0.0, round(conf - NUDGE_REAP_DECAY, 4))
+        new_text = re.sub(
+            r'^(confidence\s*:\s*)["\']?[\d.]+["\']?\s*$',
+            lambda m: f"confidence: {new_conf:.4f}",
+            text,
+            count=1,
+            flags=re.MULTILINE,
+        )
+        _atomic_write(path, new_text)
+        iids_state[iid] = {
+            **iids_state.get(iid, {}),
+            "last_direction": "reaped",
+            "last_nudge_ts": today_iso,
+            "conf_at_last_nudge": new_conf,
+        }
+        _log_knowledge(
+            "reaped-nudge", iid,
+            f"conf {conf:.4f} → {new_conf:.4f} (stale nudge-state, -{NUDGE_REAP_DECAY:.2f})",
+            source="cx-auto-distill",
+        )
+        reaped += 1
+
+    if reaped:
+        _save = json.dumps(state, indent=2, ensure_ascii=False) + "\n"
+        _atomic_write(NUDGE_STATE_FILE, _save)
+
+    return {"before": before, "reaped": reaped}
+
+
 def _prune_cross_day_tracker():
     """Prune entries older than 365 days from cross-day-tracker.jsonl."""
     tracker_path = CORTEX_DIR / "cross-day-tracker.jsonl"
@@ -2450,6 +2623,12 @@ def run_auto_distill(dry_run: bool = False) -> dict:
             prune_result = _prune_cross_day_tracker()
             if prune_result["pruned"] > 0:
                 print(f"Pruned {prune_result['pruned']} cross-day-tracker entries (>365d)")
+            tracking_prune_result = prune_instinct_tracking()
+            if tracking_prune_result["pruned"] > 0:
+                print(f"Pruned {tracking_prune_result['pruned']} dead instinct-tracking.json entries")
+            reap_result = reap_stale_nudge_state()
+            if reap_result["reaped"] > 0:
+                print(f"Reaped {reap_result['reaped']} stale/saturated nudge-state entries")
             _write_marker()
 
         return {
@@ -2758,6 +2937,21 @@ def _cmd_decay(dry_run: bool) -> None:
         print(f"  {c['id']}: {c['old_conf']:.4f} → {c['new_conf']:.4f} ({c['days_unused']}d unused)")
 
 
+def _cmd_prune_tracking(dry_run: bool) -> None:
+    result = prune_instinct_tracking(dry_run=dry_run)
+    prefix = "[DRY-RUN] " if dry_run else ""
+    print(f"{prefix}instinct-tracking.json: {result['before']} → {result['after']} "
+          f"({result['pruned']} pruned, no backing instinct)")
+
+
+def _cmd_reap_nudges(dry_run: bool) -> None:
+    result = reap_stale_nudge_state(dry_run=dry_run)
+    prefix = "[DRY-RUN] " if dry_run else ""
+    print(f"{prefix}nudge-state.json: {result['before']} stale/saturated entr"
+          f"{'y' if result['before'] == 1 else 'ies'} found, {result['reaped']} reaped "
+          f"(-{NUDGE_REAP_DECAY:.2f} conf, direction reset)")
+
+
 def _cmd_promote(dry_run: bool) -> None:
     promoted, candidates = auto_promote_to_law(dry_run=dry_run)
     prefix = "[DRY-RUN] " if dry_run else ""
@@ -3059,6 +3253,18 @@ def main(argv: list[str] | None = None) -> int:
     p_promote = sub.add_parser("promote", help="Check promotion candidates")
     p_promote.add_argument("--dry-run", action="store_true")
 
+    p_prune_tracking = sub.add_parser(
+        "prune-tracking",
+        help="Remove instinct-tracking.json entries with no backing instinct YAML",
+    )
+    p_prune_tracking.add_argument("--dry-run", action="store_true")
+
+    p_reap_nudges = sub.add_parser(
+        "reap-nudges",
+        help="Decay stale/saturated nudge-state.json entries so they re-enter the nudge cycle",
+    )
+    p_reap_nudges.add_argument("--dry-run", action="store_true")
+
     p_backfill = sub.add_parser("backfill", help="Recover legacy session_id/session fields and rebuild tracking sessions (preview by default; --apply writes)")
     p_backfill.add_argument("--apply", action="store_true", help="Write changes (atomically + cross-runtime locked since v3.35.0 / issue #49)")
 
@@ -3085,6 +3291,10 @@ def main(argv: list[str] | None = None) -> int:
         _cmd_decay(args.dry_run)
     elif args.cmd == "promote":
         _cmd_promote(args.dry_run)
+    elif args.cmd == "prune-tracking":
+        _cmd_prune_tracking(args.dry_run)
+    elif args.cmd == "reap-nudges":
+        _cmd_reap_nudges(args.dry_run)
     elif args.cmd == "backfill":
         _cmd_backfill(args.apply)
     elif args.cmd == "status":

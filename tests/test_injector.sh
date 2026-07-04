@@ -213,8 +213,9 @@ domain: workflow
 ---
 YAML
 # Pre-fill the session budget so only ONE instinct fits. Pre-v3.37.0 the
-# killswitch zeroed the whole batch here.
-printf '7920' > "$S14/cortex/.session-token-budget"
+# killswitch zeroed the whole batch here. Value tracks MAX_SESSION_TOKENS
+# (12000 since v4.1.0) minus a one-instinct headroom.
+printf '11920' > "$S14/cortex/.session-token-budget"
 printf '{"tool_name": "Bash", "tool_input": {"command": "npm install"}, "cwd": "%s", "session_id": "t14"}\n' "$S14/project" > "$S14/input.json"
 out14=$(CORTEX_DIR="$S14/cortex" _CX_CORTEX_DIR="$S14/cortex" _CX_INPUT_FILE="$S14/input.json" \
   _CX_GLOBAL_INSTINCTS_DIR="$S14/cortex/instincts/global" node "$ENGINE" 2>/dev/null || true)

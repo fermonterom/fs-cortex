@@ -241,7 +241,16 @@ function resolveProjectAndObservations(stdinData) {
 // Sanitize text used in proposal actions against prompt injection
 function sanitizeProposalAction(text) {
   const BLOCKED = /\b(ignore|forget|override|disregard|bypass|system\s*:|you\s+are|all\s+previous|new\s+instructions|do\s+not\s+follow)\b/gi;
-  return String(text)
+  // v4 (audit P2) — collapse this machine's $HOME prefix to `~` so an action
+  // like "cd /Users/fer/github/LinkedIn/app && ..." doesn't hardcode an
+  // operator-specific absolute path into a proposal meant to be reusable
+  // across machines/projects. Only the known HOME prefix is touched; a full
+  // repo-root→{PROJECT_ROOT} placeholder is out of scope here (no reliable
+  // way to know the project root from this string alone).
+  const homeNormalized = HOME
+    ? String(text).split(HOME).join('~')
+    : String(text);
+  return homeNormalized
     .replace(/[\x00-\x1f\x7f]/g, '')
     .replace(BLOCKED, '[BLOCKED]')
     .slice(0, 300);
@@ -269,6 +278,23 @@ function isLowQualityAction(action) {
     return true;
   }
   return false;
+}
+
+// v4 (audit P2) — sample_input/sample_output used to be a hard cut to 200
+// chars, which for multi-line commands/output kept only the beginning and
+// silently dropped the tail where the actual failure/result often lives.
+// Keep the first line plus the last 3 lines (Sinapsis-style head+tail); if
+// the content is short (<=200 chars) or single-line, return it unchanged.
+const SAMPLE_MAX_CHARS = 200;
+function headTailSample(text) {
+  const s = String(text || '');
+  if (s.length <= SAMPLE_MAX_CHARS) return s;
+  const lines = s.split('\n');
+  if (lines.length === 1) return s.slice(0, SAMPLE_MAX_CHARS);
+  const head = lines[0];
+  const tail = lines.slice(-3);
+  const combined = [head, '…', ...tail].join('\n');
+  return combined;
 }
 
 // Guards against err_msg that is actually a header/listing line rather than
@@ -497,8 +523,8 @@ function detectErrorResolutions(observations) {
           project_id: projectSpecific ? projectIdOf(obs) : null,
           project_name: projectSpecific ? resolveProjectName(projectIdOf(obs)) : null,
           // Sinapsis-style evidence samples so /cx-validate shows context.
-          sample_input: failingInput.slice(0, 200),
-          sample_output: String(obs.output || '').slice(0, 200),
+          sample_input: headTailSample(failingInput),
+          sample_output: headTailSample(obs.output),
           err_msg: String(obs.err_msg).slice(0, 200),
           _incident: {
             sid: obs._resolvedSession || obs.sid || null,
@@ -1362,20 +1388,25 @@ const TOMBSTONE_REJECTERS = new Set(['cx-validate', 'cx-auto-validate', 'cx-clea
 
 function loadRejectedTombstones() {
   const ids = new Set();
+  // v4 (audit P1-6) — id alone missed re-detections of the same rejected
+  // pattern under a fresh hash (new incident, same trigger regex). Index
+  // rejected triggers too so writeProposals can tombstone on either match.
+  const triggers = new Set();
   try {
     const lines = fs.readFileSync(HISTORY_PATH, 'utf8').split('\n');
     for (const line of lines) {
       if (!line.trim()) continue;
       try {
         const p = JSON.parse(line);
-        if (p && p.status === 'rejected' && p.id &&
+        if (p && p.status === 'rejected' &&
             TOMBSTONE_REJECTERS.has(p.rejected_by === undefined ? 'cx-validate' : p.rejected_by)) {
-          ids.add(p.id);
+          if (p.id) ids.add(p.id);
+          if (p.trigger) triggers.add(p.trigger);
         }
       } catch (_) { /* malformed line — skip */ }
     }
   } catch (_) { /* no history yet */ }
-  return ids;
+  return { ids, triggers };
 }
 
 function writeProposals(newProposals) {
@@ -1399,15 +1430,38 @@ function writeProposals(newProposals) {
   }
 
   // v3.37.1 — drop proposals whose id was already rejected (tombstone).
-  const tombstones = loadRejectedTombstones();
-  if (tombstones.size > 0) {
-    const resurrected = newProposals.filter((p) => tombstones.has(p.id));
+  // v4 (audit P1-6) — also tombstone on identical trigger, so a rejected
+  // pattern re-detected under a fresh id/hash doesn't resurrect.
+  const { ids: tombstoneIds, triggers: tombstoneTriggers } = loadRejectedTombstones();
+  if (tombstoneIds.size > 0 || tombstoneTriggers.size > 0) {
+    const isTombstoned = (p) => tombstoneIds.has(p.id) || (p.trigger && tombstoneTriggers.has(p.trigger));
+    const resurrected = newProposals.filter(isTombstoned);
     if (resurrected.length > 0) {
       log(`Tombstone gate dropped ${resurrected.length} previously-rejected proposal(s): ${resurrected.map((p) => p.id).slice(0, 10).join(', ')}`);
-      newProposals = newProposals.filter((p) => !tombstones.has(p.id));
+      newProposals = newProposals.filter((p) => !isTombstoned(p));
     }
   }
   if (newProposals.length === 0) return;
+
+  // v4 (audit P2) — dedup exact-trigger duplicates within this batch before
+  // merging with existing pending proposals, keeping the highest-confidence
+  // survivor (ties broken by first-seen order).
+  {
+    const byTrigger = new Map();
+    for (const p of newProposals) {
+      if (!p.trigger) continue;
+      const prev = byTrigger.get(p.trigger);
+      if (!prev || (p.confidence || 0) > (prev.confidence || 0)) byTrigger.set(p.trigger, p);
+    }
+    const withTrigger = newProposals.filter((p) => p.trigger);
+    const withoutTrigger = newProposals.filter((p) => !p.trigger);
+    const keptTriggerProposals = new Set(byTrigger.values());
+    const droppedCount = withTrigger.length - keptTriggerProposals.size;
+    if (droppedCount > 0) {
+      log(`Trigger-dedup dropped ${droppedCount} duplicate-trigger proposal(s) in this batch`);
+    }
+    newProposals = [...withoutTrigger, ...keptTriggerProposals];
+  }
 
   // v3.29.5 §F5 — one-shot migration: split historical accepted+rejected
   // entries to proposals-history.jsonl so proposals.json only carries the
@@ -1437,7 +1491,27 @@ function writeProposals(newProposals) {
     }
     byId.set(p.id, p);
   }
-  const deduped = Array.from(byId.values());
+  let deduped = Array.from(byId.values());
+
+  // v4 (audit P2) — dedup pending proposals against the existing pending set
+  // by identical trigger (not just id): two detector runs on the same
+  // pattern can mint different hashes for the same regex trigger, and the
+  // per-id dedup above lets both survive as separate pending entries. Keep
+  // only the highest-confidence pending proposal per trigger; non-pending
+  // (held/accepted/rejected) entries are left untouched.
+  {
+    const pendingByTrigger = new Map();
+    const nonPending = [];
+    for (const p of deduped) {
+      if (p.status !== 'pending' || !p.trigger) {
+        nonPending.push(p);
+        continue;
+      }
+      const prev = pendingByTrigger.get(p.trigger);
+      if (!prev || (p.confidence || 0) > (prev.confidence || 0)) pendingByTrigger.set(p.trigger, p);
+    }
+    deduped = [...nonPending, ...pendingByTrigger.values()];
+  }
 
   // v3.29.5 §F5 — route terminal-state proposals (accepted, rejected) to
   // history.jsonl and persist only pending + held to proposals.json.
