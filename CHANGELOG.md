@@ -4,6 +4,59 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [4.1.0] — 2026-07-04
+
+**Audit hardening.** Fixes and hygiene from a multi-agent read-only audit of the
+live system (laws, instincts, proposals, storage, hooks, reflexes, injection
+overhead). Adversarial verification kept 34 findings and refuted 6; three more
+were rejected here as misdiagnoses (see Notes).
+
+### Fixed
+- **SessionStart injected only the first line of each law** (`session-start.py`
+  `load_laws`): now reads the full law text (cap 1000 chars) so multi-line
+  checklists and exclusions actually reach context. (P1)
+- **Truncated laws restored**: five laws that ended mid-sentence with `…`
+  rewritten to complete text from their backing instinct action;
+  `meta-broad-trigger-instinct-noise` moved out of `laws/` (engine
+  meta-diagnosis, not an operating law) — active law count 15 → 14. (P1)
+- **Rejected proposals re-entering the backlog** (`session-learner.js`):
+  the tombstone gate now matches by trigger (not just id) against
+  `proposals-history.jsonl`; the live backlog was purged of 8 already-rejected
+  entries. (P1)
+- **`python3-bypass-write-tool` reflex re-enabled** — a high-severity safety
+  reflex was disabled, leaving a known Write/Edit bypass unguarded. (P1)
+- **`bash-cat-use-read` reflex noise** (`core/reflexes.default.json`): condition
+  and `evaluator.anti_pattern` hardened with a negative lookahead so piped and
+  heredoc `cat` no longer false-positive. (P1)
+- **`cross-day-tracker.jsonl` never pruned** (`storage-rotation.js`): a file past
+  1.5× its threshold now prunes regardless of the 24h rotation gate. (P1)
+
+### Added
+- `storage-rotation.js`: stale `.lock` and `.bak`/`.backup` cleanup (>30d),
+  `impact.archive/` retention (keep 5), and `log/timeline.jsonl` rotation
+  (keep last 1000, archive the rest). (P2)
+- `distill_engine.py`: `prune_instinct_tracking()` (drops tracking entries with
+  no backing instinct) and `reap_stale_nudge_state()` (decays stale/saturated
+  nudge entries by 0.10), both wired into the maintain pipeline and exposed as
+  `prune-tracking` / `reap-nudges` CLI subcommands. (P1/P2)
+- `session-learner.js`: duplicate-trigger dedup for proposals, `$HOME`→`~`
+  normalization of hardcoded paths in `action`, and head+tail sampling instead
+  of a hard 200-char cut. (P2)
+- `injector-engine.js`: session token budget raised 8000 → 12000 with a visible
+  suppression warning (was silent, debug-gated), plus optional per-reflex
+  `domains` filtering (no-op when the field is absent). (P2)
+
+### Notes
+- **Audit recommendations rejected as misdiagnoses:** (1) moving five
+  `scope: global` instincts into project dirs — conflated provenance
+  (`project_id`) with injection targeting (`scope`); they are trigger-gated
+  cross-project patterns and stay global. (2) Lowering `NUDGE_MAX_CONF`
+  0.99 → 0.80 — would make law auto-promotion's `conf >= 0.95` unreachable via
+  nudging; the real staleness problem is handled by `reap_stale_nudge_state`.
+  (3) Tightening per-domain instinct dedup — the proposed gap>0.10 exception
+  produced inconsistent behavior (kept a low-confidence second instinct when the
+  gap was large); reverted to the original max-2-per-domain-if-both-≥0.85 rule.
+
 ## [4.0.0] — 2026-07-02
 
 **"Signal-first, zero-decision."** Full design rationale in `docs/DESIGN-V4.md`

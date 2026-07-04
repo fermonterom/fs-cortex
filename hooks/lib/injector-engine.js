@@ -141,6 +141,20 @@ function main() {
   try { injectedCounts = JSON.parse(fs.readFileSync(INJECTED_COUNTS_FILE, "utf8")) || {}; } catch {}
   const suppressed = []; // {id} — repeats + budget drops, logged as suppress events
 
+  // Project + domain detection hoisted above reflex matching (was section 2b)
+  // so reflexes can domain-filter too (audit P2 reflex-no-domain-filter).
+  // detectProjectDomains/_scanDir/etc. are function declarations further
+  // below in this same function body — hoisted, safe to call here. Their
+  // const dependencies (DOMAIN_CACHE_FILE etc.) are NOT hoisted, so those
+  // are hoisted up here too (still declared once, no duplicate below).
+  const DOMAIN_CACHE_FILE = path.join(CORTEX_DIR, ".project-domains-cache");
+  const DOMAIN_CACHE_TTL_MS = 5 * 60 * 1000;
+  const WORKSPACE_MARKERS = ["pnpm-workspace.yaml", "turbo.json", "nx.json", "lerna.json", "rush.json", "workspace.json"];
+  const SKIP_DIRS = new Set(["node_modules", ".git", ".venv", "venv", "target", "dist", "build", ".next", ".nuxt", ".turbo", ".cache", "__pycache__"]);
+
+  const { id: projectId, root: projectRoot } = detectProject(cwd);
+  const projectDomains = detectProjectDomains(projectRoot);
+
   // ── 1. Load and match reflexes ───────────────────────────────────────
 
   const reflexesFile = process.env._CX_REFLEXES_FILE;
@@ -151,6 +165,14 @@ function main() {
       const MAX_REFLEXES = memoryConfig.max_reflexes_per_injection || 2;
       for (const r of reflexes) {
         if (!r.enabled) continue;
+        // v3.37.x (audit P2 reflex-no-domain-filter): optional scope/domains
+        // field on a reflex — skip when it doesn't match the detected
+        // project domain(s). No-op (passes through) when the field is
+        // absent, so existing reflexes without it keep firing globally.
+        if (r.domains && Array.isArray(r.domains) && r.domains.length > 0) {
+          const matchesDomain = r.domains.some(d => projectDomains.has(d));
+          if (!matchesDomain) continue;
+        }
         if (!r.matcher || !safeRegexTest(r.matcher, toolName, { tag: `reflex:${r.id}:matcher` })) continue;
         if (r.condition && !safeRegexTest(r.condition, toolInputStr, { tag: `reflex:${r.id}:condition` })) continue;
         if ((injectedCounts["reflex:" + r.id] || 0) >= MAX_REPEAT_INJECTIONS) {
@@ -174,7 +196,6 @@ function main() {
     instinctFiles.push(...listYamlFiles(globalDir));
   }
 
-  const { id: projectId, root: projectRoot } = detectProject(cwd);
   if (projectId) {
     const projectDir = path.join(CORTEX_DIR, "projects", projectId, "instincts");
     instinctFiles.push(...listYamlFiles(projectDir));
@@ -191,11 +212,8 @@ function main() {
   //   4. Cached 5 min in ~/.claude/cortex/.project-domains-cache (JSON).
   //
   // Always short-circuits at depth 3 to avoid scanning node_modules / .venv.
-
-  const DOMAIN_CACHE_FILE = path.join(CORTEX_DIR, ".project-domains-cache");
-  const DOMAIN_CACHE_TTL_MS = 5 * 60 * 1000;
-  const WORKSPACE_MARKERS = ["pnpm-workspace.yaml", "turbo.json", "nx.json", "lerna.json", "rush.json", "workspace.json"];
-  const SKIP_DIRS = new Set(["node_modules", ".git", ".venv", "venv", "target", "dist", "build", ".next", ".nuxt", ".turbo", ".cache", "__pycache__"]);
+  // DOMAIN_CACHE_FILE / DOMAIN_CACHE_TTL_MS / WORKSPACE_MARKERS / SKIP_DIRS
+  // are declared earlier in this function (hoisted above reflex matching).
 
   function _inspectPackageJson(file, domains) {
     try {
@@ -296,7 +314,7 @@ function main() {
     return domains;
   }
 
-  const projectDomains = detectProjectDomains(projectRoot);
+  // projectDomains already computed above (hoisted ahead of reflex matching).
 
   // ── 3. Parse, filter, match instincts ────────────────────────────────
 
@@ -514,7 +532,11 @@ function main() {
   // ── 4. Token budget cap ──────────────────────────────────────────────
 
   const SESSION_BUDGET_FILE = path.join(CORTEX_DIR, ".session-token-budget");
-  const MAX_SESSION_TOKENS = 8000;
+  // v3.37.x (audit P2 budget-too-low): 8000 was tripping mid-session on
+  // ordinary work, silently dropping instincts with only a debug-gated log
+  // line as evidence. Raised to 12000 and paired with a visible warning
+  // (below) so the suppression is no longer invisible outside CORTEX_DEBUG.
+  const MAX_SESSION_TOKENS = 12000;
   let sessionTokens = 0;
   try { sessionTokens = parseInt(fs.readFileSync(SESSION_BUDGET_FILE, "utf8").trim(), 10) || 0; } catch {}
 
@@ -522,14 +544,16 @@ function main() {
   const reflexTokens = matchedReflexes.reduce((sum, r) => sum + Math.ceil(r.action.length / 4) + 15, 0);
 
   // v3.37.0 — degrade instead of flush. The old killswitch zeroed the whole
-  // instinct batch silently once the session crossed 8000 tokens, which is
-  // one of the reasons "Cortex stopped learning": late-session matches never
-  // reached the context. matchedInstincts is confidence-desc, so pop()
+  // instinct batch silently once the session crossed the token budget, which
+  // is one of the reasons "Cortex stopped learning": late-session matches
+  // never reached the context. matchedInstincts is confidence-desc, so pop()
   // drops the weakest first.
+  let budgetDroppedCount = 0;
   while (matchedInstincts.length > 0 &&
          sessionTokens + reflexTokens + instinctTokens > MAX_SESSION_TOKENS) {
     const droppedInst = matchedInstincts.pop();
     suppressed.push({ id: droppedInst.id });
+    budgetDroppedCount++;
     instinctTokens -= Math.ceil(droppedInst.action.length / 4) + 20;
     if (process.env.CORTEX_DEBUG) {
       process.stderr.write("[cortex:injector] token budget (" + sessionTokens + "/" + MAX_SESSION_TOKENS + "): dropped " + droppedInst.id + "\n");
@@ -637,7 +661,7 @@ function main() {
 
   // ── 5. Build output ──────────────────────────────────────────────────
 
-  if (matchedReflexes.length === 0 && matchedInstincts.length === 0) {
+  if (matchedReflexes.length === 0 && matchedInstincts.length === 0 && budgetDroppedCount === 0) {
     process.exit(0);
   }
 
@@ -649,6 +673,12 @@ function main() {
 
   for (const inst of matchedInstincts) {
     lines.push("[instinct:" + inst.id + "] " + inst.action + " (conf:" + inst.confidence.toFixed(2) + ")");
+  }
+
+  // v3.37.x (audit P2 budget-too-low): make budget suppression visible
+  // outside CORTEX_DEBUG — it used to be a silent .json log entry only.
+  if (budgetDroppedCount > 0) {
+    lines.push("[CORTEX] presupuesto de tokens superado (" + (sessionTokens + reflexTokens + instinctTokens) + "/" + MAX_SESSION_TOKENS + ") — " + budgetDroppedCount + " instinct(s) suprimido(s)");
   }
 
   const output = {

@@ -56,9 +56,13 @@ def load_laws():
     laws = []
     for f in law_files:
         try:
-            first_line = f.read_text().split('\n')[0].strip()
-            if first_line:
-                laws.append(first_line)
+            full_text = f.read_text()[:1000].strip()
+            if full_text:
+                # Indent continuation lines so each law renders as one
+                # readable list item under the '- {law}' join downstream,
+                # instead of breaking the bullet list structure.
+                indented = full_text.replace('\n', '\n  ')
+                laws.append(indented)
         except Exception:
             pass
     return laws

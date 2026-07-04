@@ -38,6 +38,12 @@ const KNOWLEDGE_ROTATE_MB = parseFloat(process.env.CORTEX_KNOWLEDGE_ROTATE_MB ||
 // survives.
 const DAILY_KEEP_FILES = Math.max(1, parseInt(process.env.CORTEX_DAILY_KEEP_FILES || '60', 10) || 60);
 const FIREONCE_MAX_DAYS = Math.max(1, parseInt(process.env.CORTEX_FIREONCE_MAX_DAYS || '30', 10) || 30);
+// v3.37.0 (audit 2026-07-04) — impact.archive/ (rotated impact.jsonl chunks)
+// and log/timeline.jsonl had no prune path: 105MB archive dir, 5.1MB/79k-line
+// timeline observed.
+const IMPACT_ARCHIVE_KEEP_FILES = Math.max(1, parseInt(process.env.CORTEX_IMPACT_ARCHIVE_KEEP_FILES || '5', 10) || 5);
+const TIMELINE_ROTATE_MB = parseFloat(process.env.CORTEX_TIMELINE_ROTATE_MB || '2');
+const TIMELINE_KEEP_LINES = Math.max(1, parseInt(process.env.CORTEX_TIMELINE_KEEP_LINES || '1000', 10) || 1000);
 const MARKER_NAME = '.last-storage-rotate';
 const DAY_MS = 24 * 3600 * 1000;
 
@@ -129,12 +135,86 @@ function _pruneFireOnceMarkers(log) {
   if (removed > 0) log(`Storage rotation: .fire-once pruned ${removed} marker(s) older than ${FIREONCE_MAX_DAYS}d`);
 }
 
+// v3.37.0 (audit 2026-07-04) — stale lock files (writer crashed/killed before
+// release) and .bak/.backup snapshots left by ad-hoc edits. Walk CORTEX_DIR
+// one level plus known subdirectory groups (projects/*) rather than a full
+// recursive scan, matching this file's existing flat-tree assumptions.
+const STALE_FILE_MAX_DAYS = 30;
+
+function _walkFilesShallow(dir, depth) {
+  let out = [];
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return out; }
+  for (const e of entries) {
+    const full = path.join(dir, e.name);
+    if (e.isFile()) { out.push(full); continue; }
+    if (e.isDirectory() && depth > 0) { out = out.concat(_walkFilesShallow(full, depth - 1)); }
+  }
+  return out;
+}
+
+function _pruneStaleLocks(log) {
+  const cutoff = Date.now() - STALE_FILE_MAX_DAYS * DAY_MS;
+  let removed = 0;
+  for (const full of _walkFilesShallow(CORTEX_DIR, 3)) {
+    if (!full.endsWith('.lock')) continue;
+    try {
+      if (fs.statSync(full).mtimeMs < cutoff) { fs.unlinkSync(full); removed++; }
+    } catch (_) {}
+  }
+  if (removed > 0) log(`Storage rotation: stale locks pruned ${removed} .lock file(s) older than ${STALE_FILE_MAX_DAYS}d`);
+}
+
+function _pruneBackupFiles(log) {
+  const cutoff = Date.now() - STALE_FILE_MAX_DAYS * DAY_MS;
+  let removed = 0;
+  for (const full of _walkFilesShallow(CORTEX_DIR, 3)) {
+    if (!/\.(bak|backup)$/.test(full)) continue;
+    try {
+      if (fs.statSync(full).mtimeMs < cutoff) { fs.unlinkSync(full); removed++; }
+    } catch (_) {}
+  }
+  if (removed > 0) log(`Storage rotation: .bak/.backup pruned ${removed} file(s) older than ${STALE_FILE_MAX_DAYS}d`);
+}
+
+// Keep the last `keepLines` JSONL entries, archiving the rest (rename-rotate
+// style: write the trimmed tail to a temp file, rename over the live file,
+// archive the original next to it). No dependency on external tools.
+function _rotateJsonlKeepLast(file, archiveDir, keepLines, maxMb, log, label) {
+  if (fileMb(file) < maxMb) return;
+  let lines;
+  try { lines = fs.readFileSync(file, 'utf8').split('\n'); } catch (_) { return; }
+  if (lines.length && lines[lines.length - 1] === '') lines.pop();
+  if (lines.length <= keepLines) return;
+  try { fs.mkdirSync(archiveDir, { recursive: true, mode: 0o700 }); } catch (_) {}
+  const base = path.basename(file);
+  const dest = path.join(archiveDir, `${base}.${_stamp()}-${process.pid}`);
+  try {
+    fs.renameSync(file, dest);
+    const tail = lines.slice(-keepLines).join('\n') + '\n';
+    fs.writeFileSync(file, tail, { mode: 0o600 });
+    log(`Storage rotation: ${label} kept last ${keepLines} of ${lines.length} lines, rest archived → ${path.basename(archiveDir)}/`);
+  } catch (e) {
+    log(`Storage rotation: ${label} rotate error: ${e.message}`);
+  }
+}
+
 function maybeRotateStorage(log) {
   log = log || (() => {});
   const marker = path.join(CORTEX_DIR, MARKER_NAME);
   try {
-    if (Date.now() - fs.statSync(marker).mtimeMs < DAY_MS) {
-      return { ran: false };
+    const gateAgeMs = Date.now() - fs.statSync(marker).mtimeMs;
+    if (gateAgeMs < DAY_MS) {
+      // P1-7 (audit 2026-07-04): a file that already blew past its own
+      // threshold by 1.5x must not wait out the full 24h gate — sessions
+      // spaced >24h apart let it grow unbounded. Early-trigger on size alone.
+      const trackerMbNow = (() => {
+        try { return fileMb(require(path.join(__dirname, 'cross-day-tracker')).TRACKER_PATH); } catch (_) { return 0; }
+      })();
+      if (trackerMbNow < TRACKER_PRUNE_MB * 1.5) {
+        return { ran: false };
+      }
+      log(`Storage rotation: gate bypassed — cross-day-tracker.jsonl ${trackerMbNow.toFixed(1)}MB ≥ ${(TRACKER_PRUNE_MB * 1.5).toFixed(1)}MB (1.5x threshold)`);
     }
   } catch (_) { /* no marker yet — proceed */ }
 
@@ -163,6 +243,13 @@ function maybeRotateStorage(log) {
     } catch (e) {
       log(`Storage rotation: impact rotate error: ${e.message}`);
     }
+  }
+  // impact.archive/ itself is unbounded (each rotate adds a file, never
+  // removed) — keep only the newest IMPACT_ARCHIVE_KEEP_FILES.
+  try {
+    _pruneDirByCount(path.join(CORTEX_DIR, 'impact.archive'), IMPACT_ARCHIVE_KEEP_FILES, log, 'impact.archive');
+  } catch (e) {
+    log(`Storage rotation: impact.archive prune error: ${e.message}`);
   }
 
   // cross-day-tracker.jsonl — prune >365d + same-day duplicate compaction
@@ -208,6 +295,21 @@ function maybeRotateStorage(log) {
   try { _pruneFireOnceMarkers(log); } catch (e) {
     log(`Storage rotation: fire-once prune error: ${e.message}`);
   }
+  try { _pruneStaleLocks(log); } catch (e) {
+    log(`Storage rotation: stale lock prune error: ${e.message}`);
+  }
+  try { _pruneBackupFiles(log); } catch (e) {
+    log(`Storage rotation: backup prune error: ${e.message}`);
+  }
+  try {
+    _rotateJsonlKeepLast(
+      path.join(CORTEX_DIR, 'log', 'timeline.jsonl'),
+      path.join(CORTEX_DIR, 'log', 'timeline.archive'),
+      TIMELINE_KEEP_LINES, TIMELINE_ROTATE_MB, log, 'log/timeline.jsonl'
+    );
+  } catch (e) {
+    log(`Storage rotation: timeline rotate error: ${e.message}`);
+  }
 
   try { fs.writeFileSync(marker, new Date().toISOString() + '\n', { mode: 0o600 }); } catch (_) {}
   return result;
@@ -216,4 +318,5 @@ function maybeRotateStorage(log) {
 module.exports = {
   maybeRotateStorage, IMPACT_ROTATE_MB, TRACKER_PRUNE_MB, MARKER_NAME,
   HISTORY_ROTATE_MB, KNOWLEDGE_ROTATE_MB, DAILY_KEEP_FILES, FIREONCE_MAX_DAYS,
+  IMPACT_ARCHIVE_KEEP_FILES, TIMELINE_ROTATE_MB, TIMELINE_KEEP_LINES,
 };
