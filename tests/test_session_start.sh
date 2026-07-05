@@ -158,6 +158,74 @@ else
 fi
 rm -rf "$T4"
 
+# ── Test 4b: fresh maintain digest emits informative badge ─────────────────
+echo "--- Test 4b: fresh maintain digest badge ---"
+T4B="$(mktemp -d -t cortex-sstart-t4b-XXXXXX)"
+python3 - <<PYEOF
+import json
+from datetime import datetime
+from pathlib import Path
+Path('$T4B/.review-digest.json').write_text(json.dumps({
+    'generated_at': datetime.utcnow().isoformat(),
+    'proposals_human_gated': 2,
+    'swaps_last_run': [{'in': 'new-law', 'out': 'old-law'}],
+    'expired_last_run': 3,
+    'total_items': 2,
+}), encoding='utf-8')
+PYEOF
+out=$(python3 - <<PYEOF
+import sys, importlib.util
+from pathlib import Path
+sys.path.insert(0, '$HOOK_DIR')
+sys.path.insert(0, '$HOOK_DIR/lib')
+spec = importlib.util.spec_from_file_location('session_start', '$SESSION_START_PY')
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+mod.CORTEX_DIR = Path('$T4B')
+print(mod.check_review_digest() or '')
+PYEOF
+)
+if echo "$out" | grep -q '^\[cx\] maintain:' && echo "$out" | grep -q '+new-law (jubilada old-law)' && echo "$out" | grep -q '3 propuestas caducadas'; then
+    pass "T4b fresh digest: informative [cx] maintain badge"
+else
+    fail "T4b fresh digest: unexpected badge → $out"
+fi
+rm -rf "$T4B"
+
+# ── Test 4c: stale maintain digest (>48h) emits no badge ───────────────────
+echo "--- Test 4c: stale maintain digest ignored ---"
+T4C="$(mktemp -d -t cortex-sstart-t4c-XXXXXX)"
+python3 - <<PYEOF
+import json
+from datetime import datetime, timedelta
+from pathlib import Path
+Path('$T4C/.review-digest.json').write_text(json.dumps({
+    'generated_at': (datetime.utcnow() - timedelta(hours=49)).isoformat(),
+    'proposals_human_gated': 2,
+    'swaps_last_run': [{'in': 'new-law', 'out': 'old-law'}],
+    'expired_last_run': 3,
+    'total_items': 2,
+}), encoding='utf-8')
+PYEOF
+out=$(python3 - <<PYEOF
+import sys, importlib.util
+from pathlib import Path
+sys.path.insert(0, '$HOOK_DIR')
+sys.path.insert(0, '$HOOK_DIR/lib')
+spec = importlib.util.spec_from_file_location('session_start', '$SESSION_START_PY')
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+mod.CORTEX_DIR = Path('$T4C')
+print(mod.check_review_digest() or '')
+PYEOF
+)
+if [ -z "$out" ]; then
+    pass "T4c stale digest: no badge after 48h"
+else
+    fail "T4c stale digest: unexpected badge → $out"
+fi
+rm -rf "$T4C"
+
 echo ""
 
 # ── Test 5: malformed laws-meta.json shapes → no crash, laws still load ──────

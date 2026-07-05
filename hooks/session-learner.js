@@ -1384,7 +1384,7 @@ function updateReflexes(observations) {
 // (live corpus showed the same gotcha id rejected 9 times across weeks —
 // the core of the 6-week noise loop). A proposal id rejected by an
 // authorized rejecter is now a permanent tombstone.
-const TOMBSTONE_REJECTERS = new Set(['cx-validate', 'cx-auto-validate', 'cx-cleanup', 'v3.28.9-cleanup']);
+const TOMBSTONE_REJECTERS = new Set(['cx-validate', 'cx-auto-validate', 'cx-maintain-ttl', 'cx-cleanup', 'v3.28.9-cleanup']);
 
 function loadRejectedTombstones() {
   const ids = new Set();

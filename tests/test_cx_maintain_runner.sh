@@ -82,7 +82,8 @@ RC1=$?
 # ── Test 2: report shows the stale instinct decayed exactly once ────────────
 echo "--- Test 2: first run decays the stale instinct ---"
 echo "$OUT1" | grep -q "engine-pass: decayed=1" \
-  && pass "First run reports decayed=1" \
+  && echo "$OUT1" | grep -q "expired=0" \
+  && pass "First run reports decayed=1 and expired=0" \
   || { fail "Expected decayed=1 in first-run report"; echo "$OUT1" | grep "engine-pass"; }
 
 # ── Test 3: compat markers touched ───────────────────────────────────────────
@@ -112,7 +113,7 @@ if [ -f "$CDIR/.review-digest.json" ]; then
   DIGEST_OK=$(python3 -c "
 import json
 d = json.load(open('$CDIR/.review-digest.json'))
-required = ['generated_at', 'total_items', 'laws_active', 'laws_cap']
+required = ['generated_at', 'total_items', 'laws_active', 'laws_cap', 'swaps_last_run', 'expired_last_run']
 print('ok' if all(k in d for k in required) else 'missing-keys')
 " 2>&1)
   [ "$DIGEST_OK" = "ok" ] && pass "Digest JSON valid with required keys" || fail "Digest malformed: $DIGEST_OK"

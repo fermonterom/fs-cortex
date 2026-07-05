@@ -622,6 +622,25 @@ process.exit(0);
 ")
 [ "$result" = "OK" ] && pass "tombstone gate: rejected id never resurrects (v3.37.1)" || fail "tombstone: $result"
 
+# v4.3.0: TTL-expired proposals rejected by /cx-maintain are tombstones too.
+result=$(CORTEX_DIR="$S_QG" node -e "
+const fs = require('fs');
+fs.rmSync('$S_QG/proposals.json', { force: true });
+fs.writeFileSync('$S_QG/proposals-history.jsonl', JSON.stringify(
+  { id: 'gotcha-ttl-zombie', status: 'rejected', rejected_by: 'cx-maintain-ttl', action: 'expired garbage' }
+) + '\n');
+const m = require('$LEARNER');
+m.writeProposals([
+  { id: 'gotcha-ttl-zombie', action: 'When Bash fails with EACCES on install, retry with the project-local prefix.', status: 'pending', detected: '2026-06-12' },
+  { id: 'gotcha-ttl-fresh', action: 'When pnpm vitest fails with missing snapshot, run with --update to regenerate.', status: 'pending', detected: '2026-06-12' },
+]);
+const live = JSON.parse(fs.readFileSync('$S_QG/proposals.json', 'utf8'));
+const ids = live.map(p => p.id).sort();
+console.log(JSON.stringify(ids) === JSON.stringify(['gotcha-ttl-fresh']) ? 'OK' : 'FAIL:' + JSON.stringify(ids));
+process.exit(0);
+")
+[ "$result" = "OK" ] && pass "tombstone gate: cx-maintain-ttl rejected id never resurrects" || fail "ttl tombstone: $result"
+
 # v3.37.2: isError heuristic guards — WebFetch 200-OK bodies and test-runner
 # output are not errors (real false positives gotcha-WebFetch-c8b45df1 and
 # gotcha-Bash-560c85ee). Explicit err flag always wins.
