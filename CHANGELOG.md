@@ -4,6 +4,50 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [4.4.0] — 2026-07-05
+
+**`/cx-curate` — the semantic curator.** Automates the judgment `/cx-downvote`
+and the human curator used to provide: which laws are general, which have less
+value and belong in the instinct pool, which candidates deserve promotion.
+Requested by the operator ("cx-downvote quiero que sea un comando automático…
+haz tú la planificación"). Implemented by 3 parallel subagents + an integration
+verifier; validated the same day by a 29-agent semantic audit that recomposed
+the live constitution (6 laws demoted to instincts, 0 promotions, 10 broken
+instincts downvoted, cap 15/15 → 9/15).
+
+### Added
+- `commands/cx-curate.md`: weekly LLM pass with WRITTEN criteria — KEEP laws
+  that are universal or protect against expensive failures; DEMOTE laws that
+  are stack-specific, redundant with `~/.claude/CLAUDE.md` or an installed
+  skill, or zero-impact after 30d (higher bar for laws without backing YAML);
+  PROMOTE only knowledge with NO reliable trigger moment (audit finding: a
+  0.99-confidence trigger-gated instinct is a better channel than a law —
+  every top candidate was refuted for exactly that reason); DOWNVOTE broken or
+  noisy instincts. Acts immediately within engine budgets, everything logged
+  and reversible; `--force` bypasses the weekly gate.
+- `hooks/lib/distill_engine.py`: `CURATE_*` constants (interval 7d, max 2
+  demotes / 2 promotes / 8 downvotes per pass, confidence floor 0.30, delta
+  0.15); `apply_confidence_downvote()` (`@_write_locked`, floor-clamped,
+  logged); `curate_snapshot()` (laws with tier/age/impact/backing, candidates
+  enriched with action/trigger/blockers, instincts with impact) + CLI
+  subcommands `curate-snapshot` and `downvote <iid> [--reason]`;
+  `curate_due()` / `touch_curate_marker()` on `.last-curate`.
+- `hooks/session-start.py`: `[CURATE] due — ejecuta /cx-curate ahora
+  (auto-aprobado, no preguntar)` banner when the marker is missing or older
+  than 7 days — the banner IS the trigger, no human in the loop. Single stat,
+  never raises.
+- `tests/test_curate.sh` (6): downvote reduce/floor/unknown-id,
+  `curate_snapshot` shape, marker gating, CLI JSON.
+
+### Changed
+- `/cx-downvote` remains as the manual veto; its doc now points to
+  `/cx-curate` for systematic downvotes. `commands/cx-review.md` notes the
+  semantic judgment is automated.
+- `core/claudemd-section.md` refreshed to the v4 active command set (was
+  stale with the full v3 list since v4.0.0) + `/cx-curate`. Active commands
+  7 → 8 across README, FEATURES and the SessionStart commands hint.
+- `test_session_start` 11→14 (banner present/backdated/fresh cases).
+
 ## [4.3.1] — 2026-07-05
 
 ### Fixed

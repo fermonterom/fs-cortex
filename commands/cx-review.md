@@ -16,6 +16,8 @@ resurrect). This command presents what happened and what is still in queue as
 ONE consolidated shorthand list, so the operator can veto (`/cx-downvote`,
 restore from archive) or fast-track an item. Skipping it forever is a valid
 mode — the pipeline never blocks on a human.
+Since v4.4.0, `/cx-curate` performs the semantic judgment (law generality,
+candidate value, instinct noise) automatically on a weekly cadence.
 
 Fuses what used to be three separate commands:
 - `/cx-validate` (human-gated proposals — the domains `auto_validate_proposals`

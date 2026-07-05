@@ -226,6 +226,59 @@ else
 fi
 rm -rf "$T4C"
 
+# ── Tests 4d-4f: check_curate_due() — weekly /cx-curate banner (v4.4) ───────
+# Same module-import pattern as T4b/T4c; drives check_curate_due() against a
+# sandbox CORTEX_DIR containing (or missing) the `.last-curate` marker.
+run_curate() {
+  # $1 = sandbox dir
+  python3 - <<PYEOF
+import sys, importlib.util
+from pathlib import Path
+sys.path.insert(0, '$HOOK_DIR')
+sys.path.insert(0, '$HOOK_DIR/lib')
+spec = importlib.util.spec_from_file_location('session_start', '$SESSION_START_PY')
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+mod.CORTEX_DIR = Path('$1')
+print(mod.check_curate_due() or '')
+PYEOF
+}
+
+echo "--- Test 4d: missing .last-curate → [CURATE] banner ---"
+T4D="$(mktemp -d -t cortex-sstart-t4d-XXXXXX)"
+out=$(run_curate "$T4D")
+if echo "$out" | grep -qF '[CURATE] due'; then
+    pass "T4d missing marker: [CURATE] banner present"
+else
+    fail "T4d missing marker: banner missing → $out"
+fi
+rm -rf "$T4D"
+
+echo "--- Test 4e: .last-curate backdated 8 days → [CURATE] banner ---"
+T4E="$(mktemp -d -t cortex-sstart-t4e-XXXXXX)"
+touch "$T4E/.last-curate"
+# BSD/GNU-safe backdate: python3 computes the stamp, touch -t applies it.
+STAMP=$(python3 -c "from datetime import datetime, timedelta; print((datetime.now() - timedelta(days=8)).strftime('%Y%m%d%H%M'))")
+touch -t "$STAMP" "$T4E/.last-curate"
+out=$(run_curate "$T4E")
+if echo "$out" | grep -qF '[CURATE] due'; then
+    pass "T4e 8-day-old marker: [CURATE] banner present"
+else
+    fail "T4e 8-day-old marker: banner missing → $out"
+fi
+rm -rf "$T4E"
+
+echo "--- Test 4f: fresh .last-curate → NO [CURATE] banner ---"
+T4F="$(mktemp -d -t cortex-sstart-t4f-XXXXXX)"
+touch "$T4F/.last-curate"
+out=$(run_curate "$T4F")
+if [ -z "$out" ]; then
+    pass "T4f fresh marker: no [CURATE] banner"
+else
+    fail "T4f fresh marker: unexpected banner → $out"
+fi
+rm -rf "$T4F"
+
 echo ""
 
 # ── Test 5: malformed laws-meta.json shapes → no crash, laws still load ──────

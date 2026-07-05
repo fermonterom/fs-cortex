@@ -323,6 +323,20 @@ def check_review_digest():
     return f'[cx] maintain: {", ".join(parts)} — detalle opcional: /cx-review'
 
 
+def check_curate_due():
+    """v4.4 — weekly /cx-curate banner. `.last-curate` is touched by
+    /cx-curate on every run; the pass is due when the marker is missing or
+    older than 7 days. Single stat via _file_older_than (a missing marker
+    reads as older), no engine import — SessionStart must stay cheap. Never
+    raises: any unexpected failure suppresses the banner."""
+    try:
+        if _file_older_than(CORTEX_DIR / '.last-curate', 7):
+            return '[CURATE] due — ejecuta /cx-curate ahora (auto-aprobado, no preguntar)'
+        return None
+    except Exception:
+        return None
+
+
 def _file_older_than(filepath, days):
     """Check if file modification time is older than N days."""
     try:
@@ -633,12 +647,12 @@ def main():
     else:
         parts.append('CORTEX: No laws configured yet. Add .txt files to ~/.claude/cortex/laws/')
 
-    # 1b. Commands hint — v4 active set (docs/DESIGN-V4.md §5): 7 commands,
+    # 1b. Commands hint — v4 active set (docs/DESIGN-V4.md §5): 8 commands,
     # the rest are deprecated stubs that print their v4 replacement and stop
     # (commands/cx-*.md — see each file's "Mapeo:" line for the full table).
     parts.append(
-        'Cortex commands (v4): /cx-status /cx-maintain /cx-review /cx-eod '
-        '/cx-gotcha /cx-backup /cx-restore. Legacy cx-* commands print a '
+        'Cortex commands (v4): /cx-status /cx-maintain /cx-curate /cx-review '
+        '/cx-eod /cx-gotcha /cx-backup /cx-restore. Legacy cx-* commands print a '
         'deprecation notice and their replacement. Use /cx-status for system state.'
     )
 
@@ -669,6 +683,12 @@ def main():
     if review_line:
         parts.append(f'\n{review_line}')
         user_actionable.append(f'• {review_line}')
+
+    # 3b-bis2b. v4.4 — weekly /cx-curate banner (marker touched by /cx-curate).
+    curate_line = check_curate_due()
+    if curate_line:
+        parts.append(f'\n{curate_line}')
+        user_actionable.append(f'• {curate_line}')
 
     # 3b-bis. Deploy drift guard (v3.34.1) — root-cause fix for "Cortex a
     # medias": surface loudly when the live system is behind the repo source
