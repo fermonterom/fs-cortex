@@ -4,6 +4,29 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [4.3.1] — 2026-07-05
+
+### Fixed
+- **Retired laws now cascade to the instinct pool instead of dying in
+  `laws/archive/`** (operator feedback on v4.3.0). The auto-swap retirement
+  and `demote_law_to_domain` share the new `_restore_backing_instinct()`:
+  the victim's backing YAML is restored into `instincts/global/` with
+  `law_eligible: false` (blocks the re-promotion ping-pong), so the knowledge
+  keeps injecting via PreToolUse and decays/archives through the normal
+  instinct lifecycle if it truly stopped mattering. Knowledge-cascade instead
+  of two-layer loss: promotion had archived the source instinct (v4.2.0
+  anti-double-injection), so retiring the law used to remove the knowledge
+  from BOTH layers at once.
+- **`demote_law_to_domain` lookup could never find v4-promoted instincts**:
+  it searched `instincts/archive/<id>.yaml` while every promotion path since
+  v4.0 archives as `instincts/global/archive/<id>.promoted-to-law-<date>.yaml`
+  — different name AND different directory. The shared
+  `_find_backing_instinct_yaml()` checks live global/, the promotion-archive
+  name (newest wins) and the legacy path.
+- Laws with no backing YAML (manually seeded, no trigger) stay archive-only —
+  a trigger is never invented, an instinct without one would silently never
+  inject. Logged as `retired-archive-only`. `test_distill_v4` 10→12.
+
 ## [4.3.0] — 2026-07-05
 
 **Zero-touch mode.** The learning pipeline no longer waits on a human anywhere:

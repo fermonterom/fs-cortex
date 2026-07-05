@@ -845,6 +845,56 @@ def _archive_promoted_instinct_source(
         )
 
 
+def _find_backing_instinct_yaml(iid: str) -> tuple[Path | None, bool]:
+    """Locate the YAML backing a law: live instincts/global/<id>.yaml, the
+    promotion archive (<id>.promoted-to-law-*.yaml, newest wins — the name
+    every promotion path writes since v4.0/v4.2), or the legacy
+    instincts/archive/<id>.yaml location. Returns (path, needs_restore).
+    Pre-v4.3.1 the demote lookup only knew the legacy name, so any law
+    promoted by the v4 paths could never be demoted back."""
+    live = INSTINCTS_DIR / f"{iid}.yaml"
+    if live.exists():
+        return live, False
+    promo = sorted((INSTINCTS_DIR / "archive").glob(f"{iid}.promoted-to-law-*.yaml"))
+    if promo:
+        return promo[-1], True
+    legacy = INSTINCTS_DIR.parent / "archive" / f"{iid}.yaml"
+    if legacy.exists():
+        return legacy, True
+    return None, False
+
+
+def _restore_backing_instinct(iid: str) -> tuple[bool, str]:
+    """Restore a retired law's backing YAML into instincts/global/ with
+    law_eligible:false, so the knowledge keeps injecting via PreToolUse
+    instead of dying in laws/archive/. The flag blocks the re-promotion
+    ping-pong (auto_promote_to_law skips it). Refuses when no backing YAML
+    with a usable trigger exists — a trigger is never invented (an instinct
+    without one would silently never inject). Returns (ok, reason)."""
+    src, needs_restore = _find_backing_instinct_yaml(iid)
+    if src is None:
+        return False, "no backing instinct yaml"
+    result = _read_instinct(src)
+    if result is None:
+        return False, f"backing yaml unreadable: {src.name}"
+    fields, text = result
+    if not str(fields.get("trigger", "")).strip():
+        return False, f"backing yaml {src.name} has no trigger"
+    new_text = _set_frontmatter_field(text, "law_eligible", "false")
+    INSTINCTS_DIR.mkdir(parents=True, exist_ok=True)
+    dest = INSTINCTS_DIR / f"{iid}.yaml"
+    try:
+        _atomic_write(dest, new_text)
+    except OSError as e:
+        return False, f"restore write failed: {e}"
+    if needs_restore and src != dest:
+        try:
+            src.unlink()
+        except OSError:
+            pass  # stale archive copy is harmless
+    return True, f"instinct restored from {src.name} (law_eligible:false)"
+
+
 def _swap_promote_unlocked(
     new_iid: str,
     deprecate_iid: str,
@@ -948,14 +998,24 @@ def _swap_promote_unlocked(
         new_instinct_path, new_iid, today, "cx-distill-swap", "promoted to law via swap"
     )
 
+    # v4.3.1 — cascade instead of kill: the retired law falls back to the
+    # instinct pool (law_eligible:false) so its knowledge keeps injecting via
+    # PreToolUse. Laws with no backing YAML (manually seeded, no trigger)
+    # stay archive-only — a trigger is never invented.
+    demoted_ok, demote_note = _restore_backing_instinct(deprecate_iid)
+    _log_knowledge(
+        "demoted-to-instinct" if demoted_ok else "retired-archive-only",
+        deprecate_iid, demote_note, source="cx-distill-swap",
+    )
+
     _log_knowledge(
         "swap-promoted", new_iid,
         f"archived={deprecate_iid} archive_file={archive_path.name}",
         source="cx-distill-swap",
     )
     return True, (
-        f"swapped: {deprecate_iid} → archive/{archive_path.name}; "
-        f"{new_iid} promoted (conf={conf:.2f})"
+        f"swapped: {deprecate_iid} → archive/{archive_path.name} "
+        f"({demote_note}); {new_iid} promoted (conf={conf:.2f})"
     )
 
 
@@ -993,16 +1053,10 @@ def demote_law_to_domain(
     if not law_path.exists() or "archive" in str(law_path):
         return False, f"law not found: {law_id}.txt"
 
-    instincts_archive = INSTINCTS_DIR.parent / "archive"
-    global_yaml = INSTINCTS_DIR / f"{law_id}.yaml"
-    archive_yaml = instincts_archive / f"{law_id}.yaml"
-    src_yaml: Path | None = None
-    restore_from_archive = False
-    if global_yaml.exists():
-        src_yaml = global_yaml
-    elif archive_yaml.exists():
-        src_yaml = archive_yaml
-        restore_from_archive = True
+    # v4.3.1 — shared lookup that also finds the <id>.promoted-to-law-*.yaml
+    # name the v4 promotion paths write (the old exact-name lookup could never
+    # demote a law promoted after v4.0).
+    src_yaml, _needs_restore = _find_backing_instinct_yaml(law_id)
     if src_yaml is None:
         return False, (
             f"no instinct yaml backing for {law_id}; materialize it (with a "
@@ -1025,18 +1079,11 @@ def demote_law_to_domain(
             f"with law_eligible:false"
         )
 
-    # 1. Ensure the instinct yaml is in global/ flagged law_eligible:false.
-    new_text = _set_frontmatter_field(text, "law_eligible", "false")
-    INSTINCTS_DIR.mkdir(parents=True, exist_ok=True)
-    try:
-        _atomic_write(global_yaml, new_text)
-    except OSError as e:
-        return False, f"write instinct yaml failed: {e}"
-    if restore_from_archive:
-        try:
-            archive_yaml.unlink()
-        except OSError:
-            pass  # archive copy left behind is harmless
+    # 1. Restore the backing instinct into global/ flagged law_eligible:false
+    #    (shared with the auto-swap retirement cascade, v4.3.1).
+    restored_ok, restore_note = _restore_backing_instinct(law_id)
+    if not restored_ok:
+        return False, f"restore instinct failed: {restore_note}"
 
     # 2. Archive the law .txt (reversible — kept in laws/archive/).
     archive_dir = LAWS_DIR / "archive"
