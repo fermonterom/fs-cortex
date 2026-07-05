@@ -16,7 +16,7 @@
 - **Observes** every tool call silently via async hooks (0 tokens overhead), capturing real output + error lines with anti-noise guards
 - **Injects** matched instincts and reflexes per tool use via PreToolUse (~120 tokens max)
 - **Learns** patterns automatically: instincts start as silent `draft`, earn `confirmed` (injectable) at 5+ occurrences across 3+ sessions — no manual analyze/validate step
-- **Maintains** itself: `/cx-maintain` (deterministic, cron-able) promotes proven instincts to Laws — auto-swapping the least-impactful law when the cap is full (v4.3.0) — dedups, decays, expires stale proposals at 30 days, rotates storage. Zero questions
+- **Maintains** itself: `/cx-maintain` (deterministic, cron-able) promotes proven instincts to Laws — auto-swapping the least-impactful law when the cap is full (v4.3.0); the retired law falls back to the instinct pool instead of dying (v4.3.1) — dedups, decays, expires stale proposals at 30 days, rotates storage. Zero questions
 - **Reports** instead of assigning work: the SessionStart badge tells you what the last pass did; `/cx-review` is an optional veto digest — nothing ever waits on you
 - **Protects** with deterministic reflex hooks (not probabilistic instructions)
 
@@ -202,7 +202,8 @@ pass already did (law swaps, expired proposals, queue):
 You work → Cortex captures output+errors (guarded) → instinct born as draft
 → 5+ occurrences across 3+ sessions → status: confirmed → starts injecting
 → /cx-maintain promotes proven instincts to law deterministically
-  (auto-swapping the least-impactful law when the cap is full, v4.3.0)
+  (auto-swapping the least-impactful law when the cap is full, v4.3.0;
+   the retired law falls back to the instinct pool, v4.3.1)
 → stale pending proposals expire on their own after 30 days
 → /cx-review is an optional veto pass — nothing ever waits on you
 ```

@@ -15,7 +15,9 @@ ever waits on the user. Idempotent: running it twice in a row is safe (each
 sub-step guards its own idempotency: `last_decay_at`, the `.last-auto-distill`
 marker, size-gated storage rotation, etc.).
 When the law cap is saturated, promotion now auto-swaps under deterministic
-guards; stale pending proposals expire after 30 days.
+guards; the retired law cascades back to the instinct pool (`law_eligible:
+false`, v4.3.1) instead of dying in archive; stale pending proposals expire
+after 30 days.
 
 Replaces the manual judgment calls that used to live in `/cx-analyze`,
 `/cx-distill`, `/cx-dream`, `/cx-promote`, `/cx-backfill` (deterministic parts

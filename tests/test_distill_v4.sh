@@ -352,6 +352,78 @@ else
   fail "dry-run-no-mutations: got '$result'"
 fi
 
+# ── Test 10: retired law cascades to instinct when a backing YAML exists ────
+# v4.3.1 — the victim of an auto-swap must fall back to the instinct pool
+# (law_eligible:false) instead of dying in laws/archive/. The backing YAML
+# uses the <id>.promoted-to-law-<date>.yaml name every v4 promotion writes.
+echo "--- Test 10: retired-law-demotes-to-instinct ---"
+T10="$SANDBOX/t10"
+mkdir -p "$T10/laws"
+VETERAN_TS=$(python3 -c "import datetime; print((datetime.datetime.now() - datetime.timedelta(days=50)).strftime('%Y%m%d%H%M'))")
+for i in 00 01 02 03 04 05 06 07 08 09 10 11 12 13; do
+  echo "Cascade law $i unique content" > "$T10/laws/law-$i.txt"
+  touch -t "$OLD_TS" "$T10/laws/law-$i.txt"
+done
+echo "Veteran law unique content" > "$T10/laws/law-veteran.txt"
+touch -t "$VETERAN_TS" "$T10/laws/law-veteran.txt"
+make_instinct "$T10/instincts/global/archive" "law-veteran" "0.9500"
+mv "$T10/instincts/global/archive/law-veteran.yaml" \
+   "$T10/instincts/global/archive/law-veteran.promoted-to-law-20260101.yaml"
+make_instinct "$T10/instincts/global" "t10-cascade" "0.9600" \
+  "occurrences_v4: 12
+projects_seen:
+  - proj-alpha
+  - proj-beta
+  - proj-gamma"
+
+result=$(python3 -c "
+$(py_preamble "$T10")
+promoted, candidates = de.auto_promote_to_law()
+p = promoted[0] if promoted else {}
+victim = p.get('swapped_out')
+restored = de.INSTINCTS_DIR / 'law-veteran.yaml'
+fields = de._read_instinct(restored)[0] if restored.exists() else {}
+promo_consumed = not list((de.INSTINCTS_DIR / 'archive').glob('law-veteran.promoted-to-law-*.yaml'))
+print(victim == 'law-veteran', restored.exists(), str(fields.get('law_eligible', '')).strip().lower() == 'false', fields.get('trigger') == 'SomeTool', promo_consumed)
+")
+if echo "$result" | grep -q "^True True True True True$"; then
+  pass "retired-law-demotes-to-instinct: backing YAML restored with law_eligible:false, trigger intact"
+else
+  fail "retired-law-demotes-to-instinct: got '$result'"
+fi
+
+# ── Test 11: victim without backing YAML stays archive-only (no invention) ──
+echo "--- Test 11: retired-law-no-backing-archive-only ---"
+T11="$SANDBOX/t11"
+mkdir -p "$T11/laws"
+for i in 00 01 02 03 04 05 06 07 08 09 10 11 12 13; do
+  echo "Solo law $i unique content" > "$T11/laws/law-$i.txt"
+  touch -t "$OLD_TS" "$T11/laws/law-$i.txt"
+done
+echo "Solo veteran unique content" > "$T11/laws/law-solo.txt"
+touch -t "$VETERAN_TS" "$T11/laws/law-solo.txt"
+make_instinct "$T11/instincts/global" "t11-no-backing" "0.9600" \
+  "occurrences_v4: 12
+projects_seen:
+  - proj-alpha
+  - proj-beta
+  - proj-gamma"
+
+result=$(python3 -c "
+$(py_preamble "$T11")
+promoted, candidates = de.auto_promote_to_law()
+p = promoted[0] if promoted else {}
+victim = p.get('swapped_out')
+archive_hit = victim and list((de.LAWS_DIR / 'archive').glob(f'{victim}.*.txt'))
+no_invented = victim and not (de.INSTINCTS_DIR / f'{victim}.yaml').exists()
+print(victim == 'law-solo', bool(archive_hit), bool(no_invented))
+")
+if echo "$result" | grep -q "^True True True$"; then
+  pass "retired-law-no-backing-archive-only: swap succeeded, no instinct invented"
+else
+  fail "retired-law-no-backing-archive-only: got '$result'"
+fi
+
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 if [ "$FAIL" -gt 0 ]; then
