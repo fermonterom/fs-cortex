@@ -10,3 +10,4 @@ Cortex observes sessions and distills knowledge in 3 levels:
 
 ### Data: ~/.claude/cortex/
 ### Laws inject automatically. Instincts inject per tool use. No action needed.
+<!-- cortex:end -->

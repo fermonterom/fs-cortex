@@ -254,6 +254,72 @@ if ($evalMissing -eq 0) {
     Test-Pass "evaluator.* propagation present (parity with install.sh)"
 }
 
+# ── TEST 11: v4.5 installer reliability contracts ────────────────
+
+Write-Host "--- v4.5 installer reliability contracts ---"
+$contractMissing = 0
+
+if ($content -match 'f"\{python_cmd\} ~/.claude/hooks/cortex/session-start.py"' -and
+    $content -notmatch '"command": "python3 ~/.claude/hooks/cortex/') {
+    Test-Pass "settings hook strings use detected Python interpreter"
+}
+else {
+    Test-Fail "settings hook strings still hardcode python3"
+    $contractMissing++
+}
+
+if (('../evil' -match '(^/|\.\.)') -and ('/abs' -match '(^/|\.\.)') -and -not ('safe/path' -match '(^/|\.\.)')) {
+    Test-Pass "path traversal regex matches ../ and absolute paths only"
+}
+else {
+    Test-Fail "path traversal regex behavior is wrong"
+    $contractMissing++
+}
+
+if ($content -match '\.repo-path') {
+    Test-Pass ".repo-path write present"
+}
+else {
+    Test-Fail ".repo-path write missing"
+    $contractMissing++
+}
+
+if ($content -match "encoding=['""]utf-8['""]" -and $content -match '-Encoding UTF8') {
+    Test-Pass "CLAUDE.md/Python reads and writes use UTF-8"
+}
+else {
+    Test-Fail "UTF-8 encoding contract missing"
+    $contractMissing++
+}
+
+if ($content -match '<!-- cortex:end -->' -and $content -match '### Laws inject automatically') {
+    Test-Pass "CLAUDE.md marker and legacy anchor present"
+}
+else {
+    Test-Fail "CLAUDE.md marker or legacy anchor missing"
+    $contractMissing++
+}
+
+if ($content -match 'Copy-Item \$memSrc \$memDest -Force' -and
+    $content -match 'Copy-Item \$refSrc \$refDest -Force' -and
+    $content -match 'if \(-not \(Test-Path \$regDest\)\) \{ Copy-Item \$regSrc \$regDest \}' -and
+    $content -match 'Copy-Item \$_.FullName \$dest -Recurse' -and
+    $content -match 'if \(-not \(Test-Path \$dest\)\) \{ Copy-Item \$_.FullName \$dest \}') {
+    Test-Pass "backup import overwrite/no-clobber semantics present"
+}
+else {
+    Test-Fail "backup import overwrite/no-clobber semantics incomplete"
+    $contractMissing++
+}
+
+if ($content -match '\.githooks", "pre-push"' -and $content -notmatch '[^.]githooks", "pre-push"') {
+    Test-Pass ".githooks/pre-push source used"
+}
+else {
+    Test-Fail ".githooks/pre-push source contract missing"
+    $contractMissing++
+}
+
 # ── Summary ───────────────────────────────────────────────────────
 
 Write-Host ""

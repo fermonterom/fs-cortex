@@ -92,6 +92,47 @@ touches a given file.
   `agent-evolution`, `error-recovery`) accumulate for `/cx-review`; the rest
   auto-validate inside `/cx-maintain`.
 
+## Automatic v3-data adaptation (v4.5.0)
+
+The installer and runtime were audited end-to-end against a realistic v3.37
+data tree (sandboxed fresh install, v3-data upgrade, v4 re-install). Summary
+of what a v3.x user gets, grouped by outcome:
+
+**Self-heals (no action needed)**
+
+- Legacy instincts without `status` inject as `confirmed`; `occurrences` is
+  preserved as `occurrences_legacy` (see the section above).
+- Missing `laws/laws-meta.json` is tolerated — every law defaults to tier
+  `principle` and SessionStart renders normally (`load_laws` is tolerant of a
+  missing or malformed meta file since v4.2.1).
+- Missing v4 artifacts (`.review-digest.json`, `proposals-history.jsonl`,
+  `instinct-tracking.json`, `.last-curate`) are created lazily by the first
+  `/cx-maintain` / learner run that needs them.
+- **`.last-learn-count` is seeded by the installer** (v4.5.0) from your
+  existing observation count when upgrading from < 4, so the SessionStart
+  "N+ new observations" banner counts since-upgrade instead of your entire
+  v3 history.
+
+**By-design resets (expected, not bugs)**
+
+- Law-promotion maturity clocks restart: the deterministic gate counts
+  `occurrences_v4` from zero and requires 3+ distinct projects again
+  (`LAW_MIN_PROJECTS` was 1 in late v3).
+- Legacy rejected proposals in `proposals-history.jsonl` become permanent
+  tombstones — previously rejected patterns will not resurface as pending.
+
+**Degrades silently / action needed**
+
+- Hollow or corrupt legacy instinct YAMLs (action < 30 chars, raw-JSON
+  fragments, unparseable frontmatter) are skipped at injection with no
+  operator-visible signal. Run a session with `CORTEX_DEBUG=1` to list the
+  skipped files, or delete/fix them.
+- Pending v3 proposals in human-gated domains expire after 30 days
+  (`PROPOSAL_TTL_DAYS`, v4.3.0) unless reviewed via `/cx-review`.
+- v3-era cron/launchd jobs invoking deprecated commands (`/cx-distill`,
+  `/cx-dream`, `/cx-analyze`, `/cx-validate`) exit 0 while doing nothing —
+  reschedule them to `bin/cx-maintain.sh` (see "Scheduling" below).
+
 ## Deterministic law promotion (replaces manual Criteria 8)
 
 A law now promotes automatically, with no `law_eligible: true` flag to set by

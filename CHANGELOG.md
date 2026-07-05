@@ -4,6 +4,68 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [4.5.0] — 2026-07-05
+
+**Installer reliability.** A sandboxed 6-agent audit ran the installer against
+three scenarios — fresh install, upgrade over realistic v3.37 data, v4 refresh
+— and confirmed two real data-loss bugs plus a Windows corruption set. All
+fixed; the v3-data migration path came back clean (v4 code self-heals legacy
+formats lazily) and is now documented. Implementation: Codex (spec-driven),
+verified inline.
+
+### Security
+- `install.ps1`: the backup-archive path-traversal guard regex was
+  over-escaped in a single-quoted string and never matched `../` entries —
+  fixed to match install.sh's semantics (`(^/|\.\.)`), validated at prompt
+  time with `tar -tzf` like the bash installer.
+
+### Fixed
+- **`install.sh`/`install.ps1`: CLAUDE.md user content after the Cortex
+  section was deleted on every rerun** (confirmed twice in the audit — the
+  section-replace regex swallowed to the next heading OR EOF). The section
+  now ships with a `<!-- cortex:end -->` marker and the replace stops there;
+  legacy sections without the marker anchor on the known final section line
+  and never swallow to EOF (explicit warn if neither matches).
+- **`install.sh`/`install.ps1`: a user hook sharing a settings.json handler
+  entry with a cortex hook was silently dropped** — the merge now filters at
+  hook level and only drops entries left empty.
+- `install.sh`: interrupted installs (hooks copied, no `version` file) hit a
+  silent legacy branch that bypassed the downgrade guard — now warned as
+  "proceeding as repair"; Step 11 (CLAUDE.md) failures no longer abort the
+  run under `set -e`, so the version marker is always reached.
+- `install.sh` Step 8b deployed the STALE `githooks/pre-push` (75 lines)
+  instead of `.githooks/pre-push` (149 lines, the real hook used via
+  `core.hooksPath`) — fixed and the stale directory removed.
+- `install.ps1` (Windows corruption set): embedded Python now opens
+  CLAUDE.md/JSON with explicit UTF-8 (locale cp1252 mojibaked every
+  multibyte char); settings hooks written with the DETECTED interpreter
+  (`python` vs hardcoded `python3` — hooks never ran on stock Windows
+  Python); backup import semantics matched to install.sh (memory/reflexes
+  OVERWRITE from backup — was dead code; registry/instincts/evolved/daily
+  no-clobber — was `-Force`; `evolved/` now `-Recurse`); `$LASTEXITCODE`
+  checked after every native call (settings-merge failure no longer prints
+  success); `.repo-path` written so the deploy-drift guard works on Windows;
+  JSON migrations atomic (temp + `Move-Item`); memory version floor no
+  longer rewinds 2-part versions (`'4.0'` → 3.12.0 bug).
+- `install.sh`: `reflexes.json` migration writes atomically (tmp + rename).
+
+### Added
+- **v3→v4 adapter** in both installers: upgrading from < 4 seeds
+  `.last-learn-count` from the existing observation count, so the
+  SessionStart observations banner counts since-upgrade instead of the
+  entire v3 history.
+- `docs/MIGRATION-V4.md` §"Automatic v3-data adaptation (v4.5.0)": what
+  self-heals, what resets by design, what needs action (CORTEX_DEBUG for
+  silently-skipped hollow YAMLs, 30d TTL on legacy pending proposals,
+  v3-era cron jobs on deprecated commands are no-ops).
+- `core/memory.template.json` version 3.12.0 → 4.0.0 (release rule §2b).
+
+### Tests
+- `test_install` 42→49 (user tail survives rerun, mixed-entry user hook
+  survives, v3 upgrade seeds marker, repair warning), `test_install_ps1`
+  10→18 (interpreter, traversal regex, `.repo-path`, UTF-8, import
+  semantics, marker contract — runs on windows-latest CI).
+
 ## [4.4.0] — 2026-07-05
 
 **`/cx-curate` — the semantic curator.** Automates the judgment `/cx-downvote`
