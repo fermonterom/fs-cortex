@@ -366,13 +366,35 @@ if not DRY_RUN:
 else:
     report["steps"].append({"name": "write-digest", "ok": True, "detail": "(dry-run: not written)"})
 
-# ── Step 7: compat markers .last-distill / .last-dream ──
+# ── Step 7: compat markers .last-distill / .last-dream + learn markers ──
+# v4.2.2: also reset the learn markers. observe.py touches .learn-pending
+# every LEARN_THRESHOLD observations, but nothing cleared it after
+# /cx-analyze retired in v4 — so SessionStart's "N+ new observations, run
+# /cx-maintain" banner nagged forever, even right after a pass. Snapshot the
+# current observation total into .last-learn-count, zero .obs-count and drop
+# the flag, so check_learn_pending() measures "since last maintenance" again.
 if not DRY_RUN:
     try:
         now_iso = datetime.now(timezone.utc).isoformat()
         (CORTEX_DIR / ".last-distill").write_text(now_iso + "\n", encoding="utf-8")
         (CORTEX_DIR / ".last-dream").write_text(now_iso + "\n", encoding="utf-8")
-        report["steps"].append({"name": "compat-markers", "ok": True, "detail": "touched .last-distill, .last-dream"})
+        total_obs = 0
+        for obs_file in (CORTEX_DIR / "projects").glob("*/observations.jsonl"):
+            try:
+                with open(obs_file, encoding="utf-8") as f:
+                    total_obs += sum(1 for _ in f)
+            except OSError:
+                pass
+        for name, value in ((".last-learn-count", str(total_obs)), (".obs-count", "0")):
+            tmp = CORTEX_DIR / f"{name}.tmp.{os.getpid()}"
+            tmp.write_text(value, encoding="utf-8")
+            os.replace(tmp, CORTEX_DIR / name)
+        try:
+            (CORTEX_DIR / ".learn-pending").unlink()
+        except FileNotFoundError:
+            pass
+        report["steps"].append({"name": "compat-markers", "ok": True,
+                                 "detail": f"touched .last-distill, .last-dream; .last-learn-count={total_obs}; .obs-count=0; cleared .learn-pending"})
     except Exception as e:
         report["steps"].append({"name": "compat-markers", "ok": False, "detail": str(e)})
         report["errors"].append(f"compat-markers: {e}")
