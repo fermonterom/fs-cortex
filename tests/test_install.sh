@@ -45,11 +45,11 @@ for lib in dream_cycle.py validate_instinct.py cortex_utils.py yaml-utils.js inj
     [ -f "$SANDBOX/.claude/hooks/cortex/lib/$lib" ] && pass "lib: $lib installed" || fail "lib: $lib MISSING"
 done
 
-# 1e: All 24 commands installed (v4 DESIGN-V4.md §5 added /cx-maintain +
-# /cx-review on top of the 22 pre-v4 commands; the other 17 became
-# deprecation stubs rather than being deleted, so the file count grew).
+# 1e: All 25 commands installed (v4 DESIGN-V4.md §5 added /cx-maintain +
+# /cx-review on top of the 22 pre-v4 commands; v4.4.0 added /cx-curate;
+# the other 17 became deprecation stubs rather than being deleted).
 CMD_COUNT=$(ls "$SANDBOX/.claude/commands/cx-"*.md 2>/dev/null | wc -l | tr -d ' ')
-[ "$CMD_COUNT" -eq 24 ] && pass "24 commands installed" || fail "commands: $CMD_COUNT (expected 24)"
+[ "$CMD_COUNT" -eq 25 ] && pass "25 commands installed" || fail "commands: $CMD_COUNT (expected 25)"
 
 # 1f: SKILL.md installed
 [ -f "$SANDBOX/.claude/skills/cortex/SKILL.md" ] && pass "SKILL.md installed" || fail "SKILL.md MISSING"
@@ -57,8 +57,9 @@ CMD_COUNT=$(ls "$SANDBOX/.claude/commands/cx-"*.md 2>/dev/null | wc -l | tr -d '
 # 1g: CLAUDE.md created with Cortex section
 grep -q "## Cortex (Learning System)" "$SANDBOX/.claude/CLAUDE.md" 2>/dev/null && pass "CLAUDE.md has Cortex section" || fail "CLAUDE.md missing Cortex section"
 
-# 1h: cx-dream in CLAUDE.md
-grep -q "cx-dream" "$SANDBOX/.claude/CLAUDE.md" 2>/dev/null && pass "CLAUDE.md lists cx-dream" || fail "CLAUDE.md missing cx-dream"
+# 1h: v4 active set advertised in CLAUDE.md (v4.4.0 — legacy names like
+# cx-dream are deprecation stubs and no longer advertised in the section)
+grep -q "cx-curate" "$SANDBOX/.claude/CLAUDE.md" 2>/dev/null && pass "CLAUDE.md lists cx-curate" || fail "CLAUDE.md missing cx-curate"
 
 # 1i: settings.json has cortex hooks
 grep -q "hooks/cortex/" "$SANDBOX/.claude/settings.json" 2>/dev/null && pass "settings.json has cortex hooks" || fail "settings.json missing hooks"
@@ -167,8 +168,8 @@ grep -q "My Custom Section" "$SANDBOX/.claude/CLAUDE.md" 2>/dev/null && pass "CL
 CORTEX_COUNT=$(grep -c "## Cortex" "$SANDBOX/.claude/CLAUDE.md" 2>/dev/null)
 [ "$CORTEX_COUNT" -eq 1 ] && pass "Cortex section replaced (not duplicated)" || fail "Cortex section count: $CORTEX_COUNT"
 
-# 2k: CLAUDE.md — updated content (cx-dream present, old content gone)
-grep -q "cx-dream" "$SANDBOX/.claude/CLAUDE.md" 2>/dev/null && pass "CLAUDE.md updated with cx-dream" || fail "CLAUDE.md not updated"
+# 2k: CLAUDE.md — updated content (v4 active set present, old content gone)
+grep -q "cx-curate" "$SANDBOX/.claude/CLAUDE.md" 2>/dev/null && pass "CLAUDE.md updated with cx-curate" || fail "CLAUDE.md not updated"
 ! grep -q "11 commands" "$SANDBOX/.claude/CLAUDE.md" 2>/dev/null && pass "old Cortex content removed" || fail "old Cortex content still present"
 
 # 2l: Non-cortex hook in settings.json preserved
