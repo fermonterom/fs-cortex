@@ -20,7 +20,7 @@ $CommandsDir = Join-Path $ClaudeDir "commands"
 $HooksDir = Join-Path (Join-Path $ClaudeDir "hooks") "cortex"
 $SettingsFile = Join-Path $ClaudeDir "settings.json"
 $ClaudeMd = Join-Path $ClaudeDir "CLAUDE.md"
-$NewVersion = "4.1.0"
+$NewVersion = "4.2.0"
 
 # v3.25.1 — explicit downgrade flag (parity with install.sh).
 # A behind-remote repo would silently rewind hooks otherwise.
@@ -210,6 +210,15 @@ else {
     } catch {
         Write-Warning "  memory.json migration skipped: $($_.Exception.Message)"
     }
+}
+
+# v4.2.0: laws-meta.json drives the SessionStart law tier split (principle vs tool).
+# Absent -> laws render as a single block (backward compatible), so this only seeds it.
+$lawsMetaSrc = [IO.Path]::Combine($ScriptDir, "core", "laws-meta.default.json")
+$lawsMetaDest = Join-Path (Join-Path $CortexDir "laws") "laws-meta.json"
+if ((-not (Test-Path $lawsMetaDest)) -and (Test-Path $lawsMetaSrc)) {
+    Copy-Item $lawsMetaSrc $lawsMetaDest
+    Print-Ok "Created laws-meta.json"
 }
 
 $reflexesDest = Join-Path $CortexDir "reflexes.json"

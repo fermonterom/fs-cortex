@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "_comment": "tier drives the SessionStart presentation split (principle vs tool). Absent id -> defaults to 'principle' (never hidden).",
+  "laws": {
+    "advisor-escalation": {"tier": "principle"},
+    "deep-work-to-docs": {"tier": "principle"},
+    "read-instructions-before-executing": {"tier": "principle"},
+    "loop-reorient": {"tier": "principle"},
+    "pref-fix-all-lint-test-issues": {"tier": "principle"},
+    "gotcha-ad-por-fase-no-sustituye-e2e": {"tier": "principle"},
+    "build-output-to-log": {"tier": "tool"},
+    "cat-pipe-head-claudemd-anti": {"tier": "tool"},
+    "gotcha-inline-python-readability": {"tier": "tool"},
+    "macos-downloads-read-tool": {"tier": "tool"},
+    "gotcha-mcp-server-wrong-config-file": {"tier": "tool"},
+    "gotcha-webfetch-fallback-to-websearch": {"tier": "tool"},
+    "gotcha-firecrawl-over-tavily-html": {"tier": "tool"},
+    "e2e-playwright-selectors": {"tier": "tool"},
+    "gotcha-api-route-error-message-leak": {"tier": "tool"}
+  }
+}

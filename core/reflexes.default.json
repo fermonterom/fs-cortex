@@ -140,7 +140,7 @@
     {
       "id": "bash-cat-use-read",
       "matcher": "Bash",
-      "condition": "(?:^|[;&|]\\s*)(cat|head|tail)\\s+(-[0-9]+\\s+)?[\\.\\/~]?\\S*\\.(py|js|jsx|ts|tsx|md|json|jsonl|ya?ml|sh|html|css|toml|cfg|ini|conf|sql|env)\\b(?!\\s*(\\||<<))",
+      "condition": "(?:^|[;&|]\\s*)(cat|head|tail)\\s+(-[0-9]+\\s+)?[\\.\\/~]?\\S*\\.(py|js|jsx|ts|tsx|md|json|jsonl|ya?ml|sh|html|css|toml|cfg|ini|conf|sql|env)\\b",
       "action": "Use Read tool (with limit/offset) instead of cat/head/tail for source files.",
       "severity": "medium",
       "enabled": true,
@@ -152,7 +152,7 @@
         "type": "tool-substitution",
         "expected_tool": "Read",
         "anti_tool": "Bash",
-        "anti_pattern": "(?:^|[;&|]\\s*)(cat|head|tail)\\s+(-[0-9]+\\s+)?[\\.\\/~]?\\S*\\.(py|js|jsx|ts|tsx|md|json|jsonl|ya?ml|sh|html|css|toml|cfg|ini|conf|sql|env)\\b(?!\\s*(\\||<<))",
+        "anti_pattern": "(?:^|[;&|]\\s*)(cat|head|tail)\\s+(-[0-9]+\\s+)?[\\.\\/~]?\\S*\\.(py|js|jsx|ts|tsx|md|json|jsonl|ya?ml|sh|html|css|toml|cfg|ini|conf|sql|env)\\b",
         "window": 3
       }
     },

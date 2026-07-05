@@ -434,8 +434,27 @@ function main() {
   // the one already accepted from that domain have confidence >= 0.85.
   const seenSubtopics = new Set();
   const domainConfidences = new Map(); // domain -> confidences already accepted
+  // v4.2.0 (DESIGN-laws-v4.2.md §C1): skip instincts already inyected as a law
+  // at SessionStart — an instinct whose id has a laws/{id}.txt twin is a
+  // confirmed duplicate (measured: read-instructions-before-executing 41x,
+  // pref-fix-all-lint-test-issues 17x redundant PreToolUse injections).
+  let lawIds = new Set();
+  try {
+    const LAWS_DIR = path.join(CORTEX_DIR, 'laws');
+    lawIds = new Set(
+      fs.readdirSync(LAWS_DIR)
+        .filter((f) => f.endsWith('.txt'))
+        .map((f) => f.slice(0, -4))
+    );
+  } catch {}
   for (const inst of candidates) {
     if (matchedInstincts.length >= MAX_INSTINCTS) break;
+    if (lawIds.has(inst.id)) {
+      if (process.env.CORTEX_DEBUG) {
+        try { process.stderr.write(`[cortex:injector] skip ${inst.id} — already inyected as law\n`); } catch {}
+      }
+      continue;
+    }
     if ((injectedCounts[inst.id] || 0) >= MAX_REPEAT_INJECTIONS) {
       suppressed.push({ id: inst.id });
       continue;
