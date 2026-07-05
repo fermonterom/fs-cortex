@@ -21,7 +21,7 @@ COMMANDS_DIR="$CLAUDE_DIR/commands"
 HOOKS_DIR="$CLAUDE_DIR/hooks/cortex"
 SETTINGS_FILE="$CLAUDE_DIR/settings.json"
 CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
-NEW_VERSION="4.1.0"
+NEW_VERSION="4.2.0"
 
 # v3.25.1 — explicit downgrade flag. The installer is a copy-not-merge of
 # hooks/commands, so running an older `install.sh` over a newer install
@@ -233,6 +233,12 @@ except Exception as e:
     pass
 " 2>/dev/null
     fi
+fi
+# v4.2.0: laws-meta.json drives the SessionStart law tier split (principle vs tool).
+# Absent -> laws render as a single block (backward compatible), so this only seeds it.
+if [ ! -f "$CORTEX_DIR/laws/laws-meta.json" ] && [ -f "$SCRIPT_DIR/core/laws-meta.default.json" ]; then
+    cp "$SCRIPT_DIR/core/laws-meta.default.json" "$CORTEX_DIR/laws/laws-meta.json"
+    print_ok "Created laws-meta.json"
 fi
 if [ ! -f "$CORTEX_DIR/reflexes.json" ]; then
     cp "$SCRIPT_DIR/core/reflexes.default.json" "$CORTEX_DIR/reflexes.json"

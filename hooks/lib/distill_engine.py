@@ -19,12 +19,14 @@ Public API
   auto_validate_proposals(dry_run=False) -> dict
   auto_promote_to_law(dry_run=False) -> tuple[list[dict], list[dict]]
   auto_evolve_detect(dry_run=False) -> dict
+  law_audit() -> dict  # v4.2.0 §C4 — post-promotion legibility audit
 
 CLI
 ---
   python3 distill_engine.py auto [--dry-run]
   python3 distill_engine.py decay [--dry-run]
   python3 distill_engine.py promote [--dry-run]
+  python3 distill_engine.py law-audit [--json]
   python3 distill_engine.py status
 """
 from __future__ import annotations
@@ -85,6 +87,15 @@ INSTINCT_TRACKING_FILE = CORTEX_DIR / "instinct-tracking.json"
 # nudge_state) via its own path constant rather than importing impact_log,
 # to keep this module's write surface self-contained.
 NUDGE_STATE_FILE = CORTEX_DIR / "nudge-state.json"
+# v4.2.0 §C4 (DESIGN-laws-v4.2.md): tier classification for laws, consumed
+# by session-start.py's principle/tool split and read here for law_audit().
+# Absent id -> defaults to "principle" (never hidden), same retrocompat rule
+# session-start.py uses.
+LAWS_META_FILE = LAWS_DIR / "laws-meta.json"
+# v4.2.0 §C4: law_audit() writes its per-run snapshot here so Fernando gets
+# periodic legibility to prune the laws layer by hand with data instead of
+# an unmeasurable auto-feedback signal (see DESIGN-laws-v4.2.md §C4).
+LAW_AUDIT_FILE = CORTEX_DIR / ".law-audit.json"
 
 RATE_LIMIT_HOURS = 24
 DECAY_PER_30_DAYS = 0.05
@@ -896,6 +907,32 @@ def manual_swap_promote(
             pass
         return False, f"write new law failed (rolled back): {e}"
 
+    # v4.2.0 §C1 (DESIGN-laws-v4.2.md): archive the source instinct on every
+    # law-creation path, not just auto_promote_to_law. Pre-fix, manual swap
+    # promotion left the source instinct YAML live in instincts/global/ after
+    # writing the law file, so it kept firing as a PreToolUse instinct AND
+    # injecting at every SessionStart as a law — the exact double-injection
+    # bug DESIGN-laws-v4.2.md §"Contexto y evidencia" measured (41 + 17
+    # redundant injections). Same archive convention auto_promote_to_law uses.
+    if new_instinct_path.exists():
+        archive_dir = new_instinct_path.parent / "archive"
+        ts_date = today.strftime("%Y%m%d")
+        archive_dest = archive_dir / f"{new_iid}.promoted-to-law-{ts_date}.yaml"
+        try:
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            new_instinct_path.rename(archive_dest)
+            _log_knowledge(
+                "archived", new_iid,
+                f"promoted to law via swap; source archived as {archive_dest.name}",
+                source="cx-distill-swap",
+            )
+        except OSError as e:
+            _log_knowledge(
+                "archive-failed", new_iid,
+                f"law promoted via swap but source archive failed: {e}",
+                source="cx-distill-swap",
+            )
+
     _log_knowledge(
         "swap-promoted", new_iid,
         f"archived={deprecate_iid} archive_file={archive_path.name}",
@@ -1004,6 +1041,98 @@ def _law_content_for_jaccard(law_path: Path) -> str:
         return law_path.read_text(encoding="utf-8").split("\n")[0].strip()
     except OSError:
         return ""
+
+
+def _load_laws_meta() -> dict:
+    """Load laws/laws-meta.json. Returns {} on missing/invalid (retrocompat:
+    caller defaults every id's tier to 'principle', same rule session-start.py
+    applies when the meta-file is absent or an id has no entry)."""
+    if not LAWS_META_FILE.exists():
+        return {}
+    try:
+        data = json.loads(LAWS_META_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    laws = data.get("laws")
+    return laws if isinstance(laws, dict) else {}
+
+
+def law_audit() -> dict:
+    """Post-promotion audit of the active laws layer (v4.2.0 §C4).
+
+    DESIGN-laws-v4.2.md §"Contexto y evidencia": promotion TO a law is
+    statistically gated (auto_promote_to_law's 4 criteria), but once a law
+    is written nothing measures its ongoing value — "feedback congelado
+    post-promoción". This gives a human (Fernando) periodic legibility to
+    prune the laws layer with data, rather than an auto-feedback signal that
+    the DESIGN doc's adversarial review confirmed is unmeasurable without a
+    trigger (a law always injects, so "was it followed" can't be attributed).
+
+    For every active (non-archived) law in laws/*.txt, returns:
+      - id:                     law filename stem
+      - tier:                   from laws/laws-meta.json, default "principle"
+                                (retrocompat — never hides an unclassified law)
+      - age_days:               days since the .txt file's mtime
+      - dup_active_instinct:    True if an instinct YAML with the same id is
+                                 still live in instincts/global/ or any
+                                 projects/*/instincts/ (the exact C1 bug this
+                                 module's fix targets — a law with a live
+                                 twin instinct double-injects)
+      - backing_instinct_noise: useful/(1+noise) ratio over the last 14 days
+                                 of impact.jsonl for this id, or None if the
+                                 id has no impact data at all (distinct from
+                                 a real 0.0 ratio)
+
+    Returns {"as_of": <iso date>, "laws": [ ...per-law dicts... ]}. Also
+    writes the same payload to LAW_AUDIT_FILE (~/.claude/cortex/.law-audit.json)
+    as a side effect, mirroring compute_pipeline_stats's read-only shape but
+    persisted so a periodic runner (cx-maintain) can diff runs without
+    recomputing.
+    """
+    today = _dt.date.today()
+    meta = _load_laws_meta()
+    impact = _impact_per_iid(days=14)
+
+    # Same "alive" definition _all_instinct_paths()/prune_instinct_tracking()
+    # use elsewhere in this module: a non-archived instinct YAML with this id
+    # in instincts/global/ or any projects/*/instincts/.
+    alive_instinct_ids = {p.stem for p in _all_instinct_paths()}
+
+    entries: list[dict] = []
+    if LAWS_DIR.is_dir():
+        for law_path in sorted(LAWS_DIR.glob("*.txt")):
+            if "archive" in str(law_path):
+                continue
+            iid = law_path.stem
+            tier = "principle"
+            meta_entry = meta.get(iid)
+            if isinstance(meta_entry, dict) and meta_entry.get("tier"):
+                tier = str(meta_entry["tier"])
+
+            iid_impact = impact.get(iid)
+            if iid_impact is None:
+                noise_ratio = None
+            else:
+                useful = int(iid_impact.get("useful", 0) or 0)
+                noise = int(iid_impact.get("noise", 0) or 0)
+                noise_ratio = round(useful / (1 + noise), 4)
+
+            entries.append({
+                "id": iid,
+                "tier": tier,
+                "age_days": _law_age_days(law_path, today),
+                "dup_active_instinct": iid in alive_instinct_ids,
+                "backing_instinct_noise": noise_ratio,
+            })
+
+    result = {"as_of": today.isoformat(), "laws": entries}
+    try:
+        _atomic_write(LAW_AUDIT_FILE, json.dumps(result, indent=2, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+    return result
 
 
 # v4 (2026-07-02, DESIGN-V4.md §3, audit-cortex-2026-07-02.md follow-up #1):
@@ -2952,6 +3081,21 @@ def _cmd_reap_nudges(dry_run: bool) -> None:
           f"(-{NUDGE_REAP_DECAY:.2f} conf, direction reset)")
 
 
+def _cmd_law_audit(as_json: bool) -> None:
+    result = law_audit()
+    if as_json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return
+    laws = result["laws"]
+    print(f"Law audit ({result['as_of']}) — {len(laws)} active law(s), "
+          f"written to {LAW_AUDIT_FILE}:")
+    for entry in laws:
+        dup = "DUP-INSTINCT" if entry["dup_active_instinct"] else ""
+        noise = "n/a" if entry["backing_instinct_noise"] is None else f"{entry['backing_instinct_noise']:.2f}"
+        print(f"  {entry['id']} [{entry['tier']}] age={entry['age_days']}d "
+              f"noise_ratio={noise} {dup}".rstrip())
+
+
 def _cmd_promote(dry_run: bool) -> None:
     promoted, candidates = auto_promote_to_law(dry_run=dry_run)
     prefix = "[DRY-RUN] " if dry_run else ""
@@ -3265,6 +3409,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_reap_nudges.add_argument("--dry-run", action="store_true")
 
+    p_law_audit = sub.add_parser(
+        "law-audit",
+        help="Post-promotion audit of active laws (tier, age, dup instinct, noise ratio)",
+    )
+    p_law_audit.add_argument(
+        "--json", dest="as_json", action="store_true",
+        help="Machine-readable JSON output",
+    )
+
     p_backfill = sub.add_parser("backfill", help="Recover legacy session_id/session fields and rebuild tracking sessions (preview by default; --apply writes)")
     p_backfill.add_argument("--apply", action="store_true", help="Write changes (atomically + cross-runtime locked since v3.35.0 / issue #49)")
 
@@ -3295,6 +3448,8 @@ def main(argv: list[str] | None = None) -> int:
         _cmd_prune_tracking(args.dry_run)
     elif args.cmd == "reap-nudges":
         _cmd_reap_nudges(args.dry_run)
+    elif args.cmd == "law-audit":
+        _cmd_law_audit(args.as_json)
     elif args.cmd == "backfill":
         _cmd_backfill(args.apply)
     elif args.cmd == "status":

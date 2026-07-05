@@ -4,6 +4,51 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [4.2.0] — 2026-07-05
+
+**Laws layer: de-dup, legibility, post-promotion audit.** Follow-up to the
+question "are laws the right mechanism, or noise?" — investigated with measured
+data + a 3-agent adversarial counter-analysis that refuted the invasive ideas
+(shrinking, demoting gotchas, stopping auto-promotion) and confirmed the
+surgical ones. Full rationale in `docs/DESIGN-laws-v4.2.md`.
+
+### Fixed
+- **Double injection (measured bug)**: `read-instructions-before-executing`
+  (41 redundant PreToolUse injections) and `pref-fix-all-lint-test-issues` (17)
+  existed as both a law AND an active global instinct. `injector-engine.js` now
+  skips any instinct candidate whose id has a `laws/{id}.txt` twin, and the two
+  duplicate instincts were archived. Root cause fixed: `manual_swap_promote`
+  now archives the source instinct on promotion (like `auto_promote_to_law`
+  already did) — seed/manual paths previously left the duplicate behind.
+- **`advisor-escalation` bloat**: trimmed 1505 → 717 chars (kept the 4 triggers
+  and exclusions, dropped the verbose mechanics). It was 26% of the whole law
+  budget; v4.1.0's full-text injection had surfaced it.
+- **`bash-cat-use-read` regression (v4.1.0)**: the noise-reduction negative
+  lookahead `(?!\s*(\|<<))` also excluded legitimate targets — `cat file.py |
+  head`, `tail file.json | grep` — where Read/Grep IS the better tool, breaking
+  the `test_reflex_matchers` contract (piped source-file cat must still fire).
+  Reverted the lookahead in seed + live; the reflex fires on any recognised
+  source extension regardless of pipe, as the contract specifies.
+
+### Added
+- **Law presentation split by tier** (`session-start.py` + `core/laws-meta.default.json`):
+  laws render in two labelled blocks — `[principios]` (behavioural) vs
+  `[herramienta]` (tool gotchas) — so principles don't get diluted by mechanical
+  gotchas. Driven by an optional `laws/laws-meta.json` `{id: {tier}}` map;
+  absent map or entry → single block / `principle` default (backward compatible).
+- **`law_audit()` + `law-audit` CLI** (`distill_engine.py`): per-law
+  `{id, tier, age_days, dup_active_instinct, backing_instinct_noise}`, written to
+  `.law-audit.json`. Gives periodic legibility to prune laws by data — the honest
+  model for a curated constitution (measuring "law followed" is unsolvable without
+  a trigger, per the adversarial pass).
+
+### Notes
+- Deliberately NOT done (adversarial refutation): domain-scoping laws (only 2-3
+  of the "mechanical" laws are project-domain-specific; the rest are universal
+  tooling — new machinery unjustified for the payoff); demoting the 7 tool
+  gotchas to instincts (re-exposes them to trigger-miss); hand-curating laws down
+  to 5-7 (no evidence current content is bad; token cost is <0.5%).
+
 ## [4.1.0] — 2026-07-04
 
 **Audit hardening.** Fixes and hygiene from a multi-agent read-only audit of the

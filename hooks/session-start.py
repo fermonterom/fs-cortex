@@ -49,9 +49,24 @@ LEARN_THRESHOLD = _config.get('learn_threshold', 100)
 
 
 def load_laws():
-    """Read all active law files. Engine caps total at LAW_MAX_ACTIVE=15 (see hooks/lib/distill_engine.py:LAW_MAX_ACTIVE)."""
+    """Read all active law files, tagged with their presentation tier.
+
+    Engine caps total at LAW_MAX_ACTIVE=15 (see hooks/lib/distill_engine.py:LAW_MAX_ACTIVE).
+    Tier comes from laws-meta.json ({laws: {<id>: {tier: "principle"|"tool"}}});
+    an id absent from meta (or a missing meta file) defaults to "principle" —
+    a law is never hidden for lack of metadata. Returns a list of
+    {"text": str, "tier": str} dicts, sorted by filename like before.
+    """
     if not LAWS_DIR.is_dir():
         return []
+
+    meta_tiers = {}
+    try:
+        meta = json.loads((LAWS_DIR / 'laws-meta.json').read_text())
+        meta_tiers = {k: v.get('tier', 'principle') for k, v in meta.get('laws', {}).items()}
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        pass
+
     law_files = sorted(LAWS_DIR.glob('*.txt'))
     laws = []
     for f in law_files:
@@ -62,7 +77,8 @@ def load_laws():
                 # readable list item under the '- {law}' join downstream,
                 # instead of breaking the bullet list structure.
                 indented = full_text.replace('\n', '\n  ')
-                laws.append(indented)
+                tier = meta_tiers.get(f.stem, 'principle')
+                laws.append({'text': indented, 'tier': tier})
         except Exception:
             pass
     return laws
@@ -564,7 +580,20 @@ def main():
     # 1. Laws
     laws = load_laws()
     if laws:
-        law_lines = '\n'.join(f'- {law}' for law in laws)
+        has_meta = (LAWS_DIR / 'laws-meta.json').is_file()
+        if has_meta:
+            # C3: split presentation by tier for legibility. A missing tier
+            # (retrocompat) already defaulted to "principle" in load_laws().
+            principles = [law['text'] for law in laws if law['tier'] != 'tool']
+            tools = [law['text'] for law in laws if law['tier'] == 'tool']
+            sections = []
+            if principles:
+                sections.append('[principios]\n' + '\n'.join(f'- {t}' for t in principles))
+            if tools:
+                sections.append('[herramienta]\n' + '\n'.join(f'- {t}' for t in tools))
+            law_lines = '\n'.join(sections)
+        else:
+            law_lines = '\n'.join(f'- {law["text"]}' for law in laws)
         parts.append(f'CORTEX LAWS (follow always):\n{law_lines}')
     else:
         parts.append('CORTEX: No laws configured yet. Add .txt files to ~/.claude/cortex/laws/')
