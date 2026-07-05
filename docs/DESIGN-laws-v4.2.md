@@ -54,3 +54,14 @@ El contra-análisis refutó las ideas invasivas:
 - Test pair + `run_all.sh` verde.
 - Smoke `echo '{}' | python3 hooks/session-start.py` con los dos bloques.
 - Deploy `install.sh` + verificar dedup (0 instincts gemelos), advisor adelgazada, digest con law_audit.
+
+## v4.2.1 — follow-up AD (Codex GPT-5.5)
+
+Tras mergear v4.2.0 se pasó un AD read-only con Codex GPT-5.5 sobre v4.1 + v4.2 para cazar lo que los enjambres Sonnet y el contra-análisis previo pasaron por alto. Evaluados como reales (no paja) y corregidos:
+
+- **[P1] `load_laws()` crasheaba SessionStart con `laws-meta.json` malformado.** `{k: v.get('tier') for k,v in meta.get('laws',{}).items()}` solo capturaba `FileNotFoundError`/`JSONDecodeError`/`OSError`; un `laws` no-dict o un valor no-dict lanzaba `AttributeError` no capturado → moría toda la inyección de SessionStart. Fix: parseo tolerante (valida dict en cada nivel, `except Exception` de respaldo, degrada a tier `principle`). Test de regresión en `test_session_start.sh` (malformado → exit 0 + bloque presente).
+- **[P1] `impact.archive` violaba el contrato "never deleted".** El `keep=5` por conteo (v4.1.0) podía borrar chunks < 90 días, contradiciendo `impact_log.py`/`session-learner.js`/`FEATURES.md`. Pero `DESIGN-V4 §7` sí decide "techo de retención 90 días" — contradicción interna previa. Fix: poda por EDAD de 90 días (`IMPACT_ARCHIVE_KEEP_DAYS`, `_pruneDirByAge`) que implementa la decisión real del diseño; comentarios "never deleted" reconciliados al 90-día.
+- **[P2] `FEATURES.md` sin filas v4.1/v4.2 + fecha stale.** Actualizado header, fecha y version-history (v4.1.0/v4.2.0/v4.2.1).
+- **[P2] Sin test del split por tier ni de meta corrupto.** Añadidos (Test 5/6/7 en `test_session_start.sh`).
+
+Codex confirmó como correctos (no tocar): el injector no cuela `laws-meta.json` como law-id (filtro `.txt`), el guard no crashea sin `laws/`, ley sin meta → `principle`, `manual_swap_promote` busca instincts de proyecto.

@@ -41,7 +41,12 @@ const FIREONCE_MAX_DAYS = Math.max(1, parseInt(process.env.CORTEX_FIREONCE_MAX_D
 // v3.37.0 (audit 2026-07-04) — impact.archive/ (rotated impact.jsonl chunks)
 // and log/timeline.jsonl had no prune path: 105MB archive dir, 5.1MB/79k-line
 // timeline observed.
-const IMPACT_ARCHIVE_KEEP_FILES = Math.max(1, parseInt(process.env.CORTEX_IMPACT_ARCHIVE_KEEP_FILES || '5', 10) || 5);
+// v4.2.1 (AD P1, 2026-07-05): count-based pruning could delete archive
+// chunks younger than DESIGN-V4.md §7's 90-day retention window (e.g. a
+// burst of small rotations ages out chunk #1 well before day 90). Switched
+// to age-based (mtime) pruning to match the documented contract and the
+// _pruneStaleLocks/_pruneBackupFiles pattern already used in this file.
+const IMPACT_ARCHIVE_KEEP_DAYS = parseInt(process.env.CORTEX_IMPACT_ARCHIVE_KEEP_DAYS || '90', 10) || 90;
 const TIMELINE_ROTATE_MB = parseFloat(process.env.CORTEX_TIMELINE_ROTATE_MB || '2');
 const TIMELINE_KEEP_LINES = Math.max(1, parseInt(process.env.CORTEX_TIMELINE_KEEP_LINES || '1000', 10) || 1000);
 const MARKER_NAME = '.last-storage-rotate';
@@ -118,6 +123,28 @@ function _pruneDirByCount(dir, keep, log, label, archiveDir) {
     try { fs.unlinkSync(d.full); } catch (_) {}
   }
   log(`Storage rotation: ${label} pruned ${doomed.length} file(s) (keep newest ${keep})`);
+}
+
+// Age-based prune (mtime), same walker pattern as _pruneStaleLocks /
+// _pruneBackupFiles below: files are deleted once older than `maxDays`,
+// regardless of how many siblings remain. Used where a retention window is
+// a contractual guarantee (DESIGN-V4.md §7) rather than a storage cap, so a
+// burst of small files can never evict one still inside the window.
+function _pruneDirByAge(dir, maxDays, log, label) {
+  const cutoff = Date.now() - maxDays * DAY_MS;
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true })
+      .filter((e) => e.isFile() && !e.name.startsWith('.'));
+  } catch (_) { return; }
+  let removed = 0;
+  for (const e of entries) {
+    const full = path.join(dir, e.name);
+    try {
+      if (fs.statSync(full).mtimeMs < cutoff) { fs.unlinkSync(full); removed++; }
+    } catch (_) {}
+  }
+  if (removed > 0) log(`Storage rotation: ${label} pruned ${removed} file(s) older than ${maxDays}d`);
 }
 
 function _pruneFireOnceMarkers(log) {
@@ -245,9 +272,11 @@ function maybeRotateStorage(log) {
     }
   }
   // impact.archive/ itself is unbounded (each rotate adds a file, never
-  // removed) — keep only the newest IMPACT_ARCHIVE_KEEP_FILES.
+  // removed) — DESIGN-V4.md §7 sets a 90-day retention window for archived
+  // chunks, so prune by age (IMPACT_ARCHIVE_KEEP_DAYS), not by count: a
+  // count cap could delete a chunk still inside the 90-day window.
   try {
-    _pruneDirByCount(path.join(CORTEX_DIR, 'impact.archive'), IMPACT_ARCHIVE_KEEP_FILES, log, 'impact.archive');
+    _pruneDirByAge(path.join(CORTEX_DIR, 'impact.archive'), IMPACT_ARCHIVE_KEEP_DAYS, log, 'impact.archive');
   } catch (e) {
     log(`Storage rotation: impact.archive prune error: ${e.message}`);
   }
@@ -318,5 +347,5 @@ function maybeRotateStorage(log) {
 module.exports = {
   maybeRotateStorage, IMPACT_ROTATE_MB, TRACKER_PRUNE_MB, MARKER_NAME,
   HISTORY_ROTATE_MB, KNOWLEDGE_ROTATE_MB, DAILY_KEEP_FILES, FIREONCE_MAX_DAYS,
-  IMPACT_ARCHIVE_KEEP_FILES, TIMELINE_ROTATE_MB, TIMELINE_KEEP_LINES,
+  IMPACT_ARCHIVE_KEEP_DAYS, TIMELINE_ROTATE_MB, TIMELINE_KEEP_LINES,
 };

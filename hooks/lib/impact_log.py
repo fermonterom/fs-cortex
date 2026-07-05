@@ -47,8 +47,9 @@ ARCHIVE_DIR = CORTEX_DIR / "impact.archive"
 # outcome-nudge, compute_metrics, /cx-status, /cx-retro) reads at most 14
 # days, but high-volume operators accumulated 60+ MB of live JSONL under
 # the old 30-day window. Events beyond the window are ARCHIVED to
-# impact.archive/, never deleted. Floor of 15 keeps rotation outside the
-# 14-day consumer window.
+# impact.archive/; archived chunks older than 90 days are pruned by
+# storage-rotation.js per DESIGN-V4 §7. Floor of 15 keeps rotation outside
+# the 14-day consumer window.
 try:
     # v3.37.0: floor raised 15 → 18. The widest reader window is 14 days; a
     # 15-day live window left a 1-day margin that clock drift or an early

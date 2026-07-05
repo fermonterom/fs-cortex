@@ -63,9 +63,18 @@ def load_laws():
     meta_tiers = {}
     try:
         meta = json.loads((LAWS_DIR / 'laws-meta.json').read_text())
-        meta_tiers = {k: v.get('tier', 'principle') for k, v in meta.get('laws', {}).items()}
+        meta_laws = meta.get('laws', {}) if isinstance(meta, dict) else {}
+        if isinstance(meta_laws, dict):
+            for k, v in meta_laws.items():
+                tier = v.get('tier', 'principle') if isinstance(v, dict) else 'principle'
+                meta_tiers[k] = tier if isinstance(tier, str) else 'principle'
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         pass
+    except Exception:
+        # Any other malformed shape (meta not dict, .get missing, etc.) must
+        # never crash SessionStart — degrade to "no tiers" (all default
+        # 'principle' below), same as a missing/absent meta file.
+        meta_tiers = {}
 
     law_files = sorted(LAWS_DIR.glob('*.txt'))
     laws = []

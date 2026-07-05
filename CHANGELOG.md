@@ -4,6 +4,43 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [4.2.1] — 2026-07-05
+
+**AD follow-up (Codex GPT-5.5).** After merging v4.2.0, a read-only adversarial
+review with Codex GPT-5.5 was run over v4.1/v4.2 to catch what the Sonnet swarms
+and the earlier adversarial pass missed. All four findings evaluated as real
+(not fluff) and fixed. Detail in `docs/DESIGN-laws-v4.2.md` §v4.2.1.
+
+### Fixed
+- **[P1] `load_laws()` crashed SessionStart on a malformed `laws-meta.json`**
+  (`session-start.py`): `{k: v.get('tier') for k,v in meta.get('laws',{}).items()}`
+  only caught `FileNotFoundError`/`JSONDecodeError`/`OSError` — a non-dict `laws`
+  or a non-dict entry raised an uncaught `AttributeError`, killing the entire
+  SessionStart injection (laws, EOD, reminders). Now tolerant at every level
+  (validates dicts, `except Exception` backstop, defaults to `principle`). A
+  SessionStart hook must never crash. Regression tests added.
+- **[P1] `impact.archive` retention contradicted the append-only contract**
+  (`storage-rotation.js`): the v4.1.0 count-based `keep=5` could delete archive
+  chunks < 90 days old, contradicting the "never deleted" comments in
+  `impact_log.py`/`session-learner.js`. `DESIGN-V4 §7` actually mandates a
+  90-day retention cap — a pre-existing internal contradiction. Fixed to
+  age-based 90-day pruning (`IMPACT_ARCHIVE_KEEP_DAYS`, `_pruneDirByAge`,
+  env `CORTEX_IMPACT_ARCHIVE_KEEP_DAYS`); the stale "never deleted" comments
+  reconciled to the 90-day policy.
+
+### Added / docs
+- **[P2] Laws-meta robustness tests** in `test_session_start.sh` (malformed meta
+  → no crash; tier split renders `[principios]`/`[herramienta]`; no meta → single
+  block).
+- **[P2] `docs/FEATURES.md` caught up**: version-history rows for v4.1.0 / v4.2.0 /
+  v4.2.1, header + "Last updated" refreshed, the impact.archive "never deleted"
+  wording reconciled.
+
+### Confirmed correct by the AD (left untouched)
+- The injector does not treat `laws-meta.json` as a law id (filters `.txt` only);
+  the twin-law guard does not crash when `laws/` is absent; a law with no meta
+  entry defaults to `principle`; `manual_swap_promote` searches project instincts.
+
 ## [4.2.0] — 2026-07-05
 
 **Laws layer: de-dup, legibility, post-promotion audit.** Follow-up to the
