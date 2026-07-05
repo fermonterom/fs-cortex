@@ -14,6 +14,8 @@ runs and prints a report, or a step is skipped with a one-line reason — nothin
 ever waits on the user. Idempotent: running it twice in a row is safe (each
 sub-step guards its own idempotency: `last_decay_at`, the `.last-auto-distill`
 marker, size-gated storage rotation, etc.).
+When the law cap is saturated, promotion now auto-swaps under deterministic
+guards; stale pending proposals expire after 30 days.
 
 Replaces the manual judgment calls that used to live in `/cx-analyze`,
 `/cx-distill`, `/cx-dream`, `/cx-promote`, `/cx-backfill` (deterministic parts
@@ -24,8 +26,9 @@ criteria, or rotation thresholds. If those engines change their gates, this
 command's output changes with them automatically.
 
 Writes `~/.claude/cortex/.review-digest.json` — the accumulated digest that
-`/cx-review` presents to a human and that `hooks/session-start.py` uses for the
-one-line `[REVIEW] N items pendientes` badge.
+`/cx-review` can present on demand and that `hooks/session-start.py` uses for
+the informative one-line `[cx] maintain:` badge (swaps + expiries + queue;
+silenced automatically 48h after the pass — it reports, it never assigns work).
 
 ## Usage
 
@@ -84,7 +87,7 @@ LIB_DIR="${CORTEX_LIB_DIR:-$HOME/.claude/hooks/cortex/lib}"
 DRY_RUN=0
 [ "$1" = "--dry-run" ] && DRY_RUN=1
 
-CORTEX_DIR="$CORTEX_DIR" LIB_DIR="$LIB_DIR" DRY_RUN="$DRY_RUN" python3 << 'PYEOF'
+CORTEX_DIR="$CORTEX_DIR" LIB_DIR="$LIB_DIR" DRY_RUN="$DRY_RUN" python3 - <<'PYEOF'
 import json, os, re, sys, time
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -114,7 +117,7 @@ def step(name):
 # public functions run_auto_distill() calls internally, but bypasses its
 # 24h rate limiter — a deliberate /cx-maintain run should always execute,
 # not silently no-op because SessionStart already ran today.
-decayed = archived = promoted = candidates = []
+decayed = archived = promoted = candidates = expired = []
 validated = skipped_validate = evolve_drafts = 0
 engine_ok = False
 try:
@@ -131,13 +134,16 @@ try:
             validated = len(validate_result.get("accepted", []))
             skipped_validate = len(validate_result.get("skipped", []))
             promoted, candidates = de.auto_promote_to_law(dry_run=DRY_RUN)
+            expired = de.expire_stale_proposals(dry_run=DRY_RUN)
             evolve_result = de.auto_evolve_detect(dry_run=DRY_RUN)
             evolve_drafts = len(evolve_result.get("drafts_generated", []))
+            swapped = sum(1 for p in promoted if p.get("swapped_out"))
             engine_ok = True
             report["steps"].append({"name": "engine-pass", "ok": True, "detail":
                 f"decayed={len(decayed)} archived={len(archived)} validated={validated} "
                 f"skipped_validate={skipped_validate} promoted={len(promoted)} "
-                f"candidates={len(candidates)} evolve_drafts={evolve_drafts}"})
+                f"(swapped={swapped}) candidates={len(candidates)} expired={len(expired)} "
+                f"evolve_drafts={evolve_drafts}"})
         finally:
             de._lock_release(lock_fh)
 except Exception as e:
@@ -338,6 +344,12 @@ if not DRY_RUN:
             "law_deprecation_candidate": health["law_deprecation_candidate"],
             "laws_active": health["laws_active"],
             "laws_cap": health["laws_cap"],
+            "swaps_last_run": [
+                {"in": p.get("id"), "out": p.get("swapped_out")}
+                for p in (promoted or [])
+                if p.get("swapped_out")
+            ],
+            "expired_last_run": len(expired or []),
         }
         digest["total_items"] = (
             digest["proposals_human_gated"]

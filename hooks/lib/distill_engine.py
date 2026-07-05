@@ -149,6 +149,9 @@ LAW_DEPRECATE_MIN_AGE_DAYS = 7  # v3.32.0 §4.5 (AD P1-3): laws younger than
                                 # accumulated impact data would have ratio=0
                                 # and be marked for immediate deprecation
                                 # before getting a chance to be exercised.
+LAW_AUTO_SWAP_MIN_AGE_DAYS = 30
+LAW_AUTO_SWAP_MAX_PER_RUN = 2
+PROPOSAL_TTL_DAYS = 30
 LAW_JACCARD_THRESHOLD = 0.50
 LAW_MAX_CHARS = 200  # v3.35.2 (#56.1): was 120 — mid-sentence cuts shipped laws with incomplete instructions
 # v3.29.0 §4.16: minimum distinct sessions (UUIDs) where an instinct must
@@ -223,6 +226,7 @@ KNOWN_DOMAINS = VALIDATE_AUTO_DOMAINS | VALIDATE_HUMAN_DOMAINS
 VALIDATE_AUTHORIZED_REJECTERS = {
     "cx-validate",         # manual /cx-validate
     "cx-auto-validate",    # auto_validate_proposals (this module)
+    "cx-maintain-ttl",     # expire_stale_proposals (this module)
     "cx-cleanup",          # ops cleanup
     "v3.28.9-cleanup",     # bulk-reject we did in v3.28.9
     None,                  # legacy: pre-Sprint-7 acceptances
@@ -812,8 +816,36 @@ def _find_least_impactful_law(
     return best_iid
 
 
-@_write_locked
-def manual_swap_promote(
+def _archive_promoted_instinct_source(
+    instinct_path: Path,
+    iid: str,
+    today: _dt.date,
+    source: str,
+    detail_prefix: str = "promoted to law",
+) -> None:
+    """Archive the source YAML after a successful law promotion."""
+    if not instinct_path.exists():
+        return
+    archive_dir = instinct_path.parent / "archive"
+    ts_date = today.strftime("%Y%m%d")
+    archive_dest = archive_dir / f"{iid}.promoted-to-law-{ts_date}.yaml"
+    try:
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        instinct_path.rename(archive_dest)
+        _log_knowledge(
+            "archived", iid,
+            f"{detail_prefix}; source archived as {archive_dest.name}",
+            source=source,
+        )
+    except OSError as e:
+        _log_knowledge(
+            "archive-failed", iid,
+            f"law promoted but source archive failed: {e}",
+            source=source,
+        )
+
+
+def _swap_promote_unlocked(
     new_iid: str,
     deprecate_iid: str,
     dry_run: bool = False,
@@ -911,27 +943,10 @@ def manual_swap_promote(
     # law-creation path, not just auto_promote_to_law. Pre-fix, manual swap
     # promotion left the source instinct YAML live in instincts/global/ after
     # writing the law file, so it kept firing as a PreToolUse instinct AND
-    # injecting at every SessionStart as a law — the exact double-injection
-    # bug DESIGN-laws-v4.2.md §"Contexto y evidencia" measured (41 + 17
-    # redundant injections). Same archive convention auto_promote_to_law uses.
-    if new_instinct_path.exists():
-        archive_dir = new_instinct_path.parent / "archive"
-        ts_date = today.strftime("%Y%m%d")
-        archive_dest = archive_dir / f"{new_iid}.promoted-to-law-{ts_date}.yaml"
-        try:
-            archive_dir.mkdir(parents=True, exist_ok=True)
-            new_instinct_path.rename(archive_dest)
-            _log_knowledge(
-                "archived", new_iid,
-                f"promoted to law via swap; source archived as {archive_dest.name}",
-                source="cx-distill-swap",
-            )
-        except OSError as e:
-            _log_knowledge(
-                "archive-failed", new_iid,
-                f"law promoted via swap but source archive failed: {e}",
-                source="cx-distill-swap",
-            )
+    # injecting at every SessionStart as a law.
+    _archive_promoted_instinct_source(
+        new_instinct_path, new_iid, today, "cx-distill-swap", "promoted to law via swap"
+    )
 
     _log_knowledge(
         "swap-promoted", new_iid,
@@ -942,6 +957,17 @@ def manual_swap_promote(
         f"swapped: {deprecate_iid} → archive/{archive_path.name}; "
         f"{new_iid} promoted (conf={conf:.2f})"
     )
+
+
+@_write_locked
+def manual_swap_promote(
+    new_iid: str,
+    deprecate_iid: str,
+    dry_run: bool = False,
+    today: _dt.date | None = None,
+) -> tuple[bool, str]:
+    """Locked public wrapper for atomic law swap promotion."""
+    return _swap_promote_unlocked(new_iid, deprecate_iid, dry_run, today)
 
 
 @_write_locked
@@ -1334,6 +1360,7 @@ def auto_promote_to_law(
     tracking_data = _load_instinct_tracking()
     promoted: list[dict] = []
     candidates: list[dict] = []
+    swaps_this_run = 0
 
     # Pre-load existing law content for Jaccard check
     existing_laws: list[tuple[str, str]] = []  # [(law_id, content)]
@@ -1420,36 +1447,63 @@ def auto_promote_to_law(
                     break
 
         # ── Structural: active law count < LAW_MAX_ACTIVE ─────────────────
-        # v3.32.0 §4.5, kept in v4: when saturated, propose a deprecation
-        # candidate (lowest useful/(1+noise) ratio, age >= 7d) so the
-        # operator knows which law to retire via the existing swap
-        # mechanism. Engine never auto-swaps — only the operator confirms.
+        # v4.3.0: when saturated, auto-swap only after every maturity and
+        # duplicate criterion above passed. This function may run while
+        # /cx-maintain already holds LOCK_FILE, so it must call the unlocked
+        # swap helper, never manual_swap_promote().
         if active_laws >= LAW_MAX_ACTIVE:
-            candidate = _find_least_impactful_law(impact)
-            if candidate:
-                failed_reasons.append(
-                    f"laws == {active_laws}/{LAW_MAX_ACTIVE} saturated; "
-                    f"would deprecate {candidate} via "
-                    f"/cx-distill --swap {candidate} {iid} --confirm"
-                )
-            else:
-                failed_reasons.append(
-                    f"laws == {active_laws}/{LAW_MAX_ACTIVE} saturated; "
+            victim = _find_least_impactful_law(impact)
+            blocked_reason = None
+            if not victim:
+                blocked_reason = (
                     f"no deprecation candidate (all productive OR < "
                     f"{LAW_DEPRECATE_MIN_AGE_DAYS}d age)"
                 )
-                # v3.37.0 — surface the stall in the knowledge timeline (once
-                # per run). Saturated cap + nothing deprecable means the
-                # promotion pipeline is deadlocked until laws age past
-                # LAW_DEPRECATE_MIN_AGE_DAYS; before this entry the operator
-                # had no persistent signal that promotions were being dropped.
-                if not _LAW_CAP_STALL_LOGGED.get("done"):
-                    _log_knowledge(
-                        "law-cap-stall", iid,
-                        f"laws {active_laws}/{LAW_MAX_ACTIVE} saturated, no deprecation candidate",
-                        source="cx-auto-distill",
+            elif failed_reasons:
+                blocked_reason = f"would deprecate {victim} after other gates pass"
+            elif swaps_this_run >= LAW_AUTO_SWAP_MAX_PER_RUN:
+                blocked_reason = f"auto-swap blocked: max {LAW_AUTO_SWAP_MAX_PER_RUN}/run reached"
+            else:
+                victim_path = LAWS_DIR / f"{victim}.txt"
+                victim_age = _law_age_days(victim_path, today)
+                if victim_age < LAW_AUTO_SWAP_MIN_AGE_DAYS:
+                    blocked_reason = (
+                        f"auto-swap blocked: {victim} age {victim_age}d < "
+                        f"{LAW_AUTO_SWAP_MIN_AGE_DAYS}d"
                     )
-                    _LAW_CAP_STALL_LOGGED["done"] = True
+                else:
+                    ok, reason = _swap_promote_unlocked(iid, victim, dry_run=dry_run, today=today)
+                    if ok:
+                        promoted.append({
+                            "id": iid,
+                            "confidence": round(conf, 4),
+                            "swapped_out": victim,
+                        })
+                        swaps_this_run += 1
+                        existing_laws = [
+                            (law_id, content) for law_id, content in existing_laws
+                            if law_id != victim
+                        ]
+                        existing_laws.append((iid, _derive_law_line(fields)))
+                        if not dry_run:
+                            _log_knowledge(
+                                "auto-swap", iid,
+                                f"promoted, retired {victim} (ratio-based)",
+                                source="cx-maintain",
+                            )
+                        continue
+                    blocked_reason = f"auto-swap failed for {victim}: {reason}"
+
+            failed_reasons.append(
+                f"laws == {active_laws}/{LAW_MAX_ACTIVE} saturated; {blocked_reason}"
+            )
+            if not victim and not _LAW_CAP_STALL_LOGGED.get("done"):
+                _log_knowledge(
+                    "law-cap-stall", iid,
+                    f"laws {active_laws}/{LAW_MAX_ACTIVE} saturated, no deprecation candidate",
+                    source="cx-auto-distill",
+                )
+                _LAW_CAP_STALL_LOGGED["done"] = True
 
         if failed_reasons:
             candidates.append({
@@ -1475,23 +1529,7 @@ def auto_promote_to_law(
                 # instinct after a successful promotion, same convention
                 # the 2026-07-02 manual cleanup used
                 # (`<id>.promoted-to-law-<YYYYMMDD>.yaml`).
-                archive_dir = path.parent / "archive"
-                ts = today.strftime("%Y%m%d")
-                archive_dest = archive_dir / f"{iid}.promoted-to-law-{ts}.yaml"
-                try:
-                    archive_dir.mkdir(parents=True, exist_ok=True)
-                    path.rename(archive_dest)
-                    _log_knowledge(
-                        "archived", iid,
-                        f"promoted to law; source archived as {archive_dest.name}",
-                        source="cx-auto-promote",
-                    )
-                except OSError as e:
-                    _log_knowledge(
-                        "archive-failed", iid,
-                        f"law promoted but source archive failed: {e}",
-                        source="cx-auto-promote",
-                    )
+                _archive_promoted_instinct_source(path, iid, today, "cx-auto-promote")
 
     return promoted, candidates
 
@@ -1519,6 +1557,53 @@ def _save_proposals(proposals: list[dict]) -> None:
     """Atomically write proposals.json."""
     content = json.dumps(proposals, indent=2, ensure_ascii=False) + "\n"
     _atomic_write(PROPOSALS_FILE, content)
+
+
+def expire_stale_proposals(
+    dry_run: bool = False,
+    ttl_days: int = PROPOSAL_TTL_DAYS,
+) -> list[dict]:
+    """Reject pending proposals whose detected date exceeded the TTL."""
+    proposals = _load_proposals()
+    if not proposals:
+        return []
+
+    today = _dt.datetime.now(_dt.timezone.utc).date()
+    expired: list[dict] = []
+    mutated = False
+    for entry in proposals:
+        if not isinstance(entry, dict) or entry.get("status") != "pending":
+            continue
+        detected_raw = entry.get("detected")
+        if not isinstance(detected_raw, str):
+            continue
+        try:
+            detected = _dt.date.fromisoformat(detected_raw[:10])
+        except ValueError:
+            continue
+        age_days = (today - detected).days
+        if age_days <= ttl_days:
+            continue
+
+        iid = str(entry.get("id") or "")
+        expired.append({"id": iid, "detected": detected_raw})
+        if dry_run:
+            continue
+        entry["status"] = "rejected"
+        entry["rejected_by"] = "cx-maintain-ttl"
+        entry["rejected_at"] = today.isoformat()
+        entry["reject_reason"] = f"TTL: pending > {ttl_days}d without review"
+        entry["rejected_reason"] = entry["reject_reason"]
+        mutated = True
+        _log_knowledge(
+            "ttl-expired", iid,
+            f"detected={detected_raw} age_days={age_days} ttl_days={ttl_days}",
+            source="cx-maintain",
+        )
+
+    if mutated:
+        _save_proposals(proposals)
+    return expired
 
 
 def _instinct_exists(iid: str) -> bool:

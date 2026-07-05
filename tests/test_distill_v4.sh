@@ -220,6 +220,138 @@ else
   fail "lazy-occurrences-migration: got '$result'"
 fi
 
+# ── Test 6: saturated law cap auto-swaps a mature zero-impact victim ────────
+echo "--- Test 6: saturated-cap-auto-swap ---"
+T6="$SANDBOX/t6"
+mkdir -p "$T6/laws"
+OLD_TS=$(python3 -c "import datetime; print((datetime.datetime.now() - datetime.timedelta(days=40)).strftime('%Y%m%d%H%M'))")
+for i in 00 01 02 03 04 05 06 07 08 09 10 11 12 13 14; do
+  echo "Existing law $i unique content" > "$T6/laws/law-$i.txt"
+  touch -t "$OLD_TS" "$T6/laws/law-$i.txt"
+done
+make_instinct "$T6/instincts/global" "t6-auto-swap" "0.9600" \
+  "occurrences_v4: 12
+projects_seen:
+  - proj-alpha
+  - proj-beta
+  - proj-gamma"
+
+result=$(python3 -c "
+$(py_preamble "$T6")
+promoted, candidates = de.auto_promote_to_law()
+p = promoted[0] if promoted else {}
+victim = p.get('swapped_out')
+new_law = (de.LAWS_DIR / 't6-auto-swap.txt').exists()
+victim_gone = victim and not (de.LAWS_DIR / f'{victim}.txt').exists()
+archive_hit = victim and list((de.LAWS_DIR / 'archive').glob(f'{victim}.*.txt'))
+print(p.get('id') == 't6-auto-swap', bool(victim), new_law, bool(victim_gone), bool(archive_hit))
+")
+if echo "$result" | grep -q "^True True True True True$"; then
+  pass "saturated-cap-auto-swap: new law written, victim archived, swapped_out reported"
+else
+  fail "saturated-cap-auto-swap: got '$result'"
+fi
+
+# ── Test 7: victim younger than 30d blocks auto-swap and surfaces candidate ──
+echo "--- Test 7: saturated-cap-young-victim-blocked ---"
+T7="$SANDBOX/t7"
+mkdir -p "$T7/laws"
+YOUNG_TS=$(python3 -c "import datetime; print((datetime.datetime.now() - datetime.timedelta(days=10)).strftime('%Y%m%d%H%M'))")
+for i in 00 01 02 03 04 05 06 07 08 09 10 11 12 13 14; do
+  echo "Young law $i unique content" > "$T7/laws/law-$i.txt"
+  touch -t "$YOUNG_TS" "$T7/laws/law-$i.txt"
+done
+make_instinct "$T7/instincts/global" "t7-young-blocked" "0.9700" \
+  "occurrences_v4: 12
+projects_seen:
+  - proj-alpha
+  - proj-beta
+  - proj-gamma"
+
+result=$(python3 -c "
+$(py_preamble "$T7")
+promoted, candidates = de.auto_promote_to_law()
+cand = next((c for c in candidates if c['id'] == 't7-young-blocked'), None)
+reason = ' '.join(cand.get('reasons', [])) if cand else ''
+print(not promoted, cand is not None, 'age' in reason and '< 30d' in reason, not (de.LAWS_DIR / 't7-young-blocked.txt').exists())
+")
+if echo "$result" | grep -q "^True True True True$"; then
+  pass "saturated-cap-young-victim-blocked: no swap, candidate reason mentions age < 30d"
+else
+  fail "saturated-cap-young-victim-blocked: got '$result'"
+fi
+
+# ── Test 8: expire_stale_proposals rejects only old pending proposals ───────
+echo "--- Test 8: expire-stale-proposals ---"
+T8="$SANDBOX/t8"
+mkdir -p "$T8"
+OLD_DETECTED=$(python3 -c "import datetime; print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=40)).strftime('%Y-%m-%d'))")
+TODAY_DETECTED=$(python3 -c "import datetime; print(datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d'))")
+python3 - <<PYEOF
+import json
+from pathlib import Path
+Path('$T8/proposals.json').write_text(json.dumps([
+  {'id': 'old-pending', 'status': 'pending', 'detected': '$OLD_DETECTED'},
+  {'id': 'fresh-pending', 'status': 'pending', 'detected': '$TODAY_DETECTED'},
+], indent=2), encoding='utf-8')
+PYEOF
+
+result=$(python3 -c "
+$(py_preamble "$T8")
+de.PROPOSALS_FILE = de.CORTEX_DIR / 'proposals.json'
+expired = de.expire_stale_proposals()
+props = de._load_proposals()
+old = next(p for p in props if p['id'] == 'old-pending')
+fresh = next(p for p in props if p['id'] == 'fresh-pending')
+print(expired == [{'id': 'old-pending', 'detected': '$OLD_DETECTED'}], old.get('status') == 'rejected', old.get('rejected_by') == 'cx-maintain-ttl', fresh.get('status') == 'pending')
+")
+if echo "$result" | grep -q "^True True True True$"; then
+  pass "expire-stale-proposals: old pending rejected, fresh pending untouched"
+else
+  fail "expire-stale-proposals: got '$result'"
+fi
+
+# ── Test 9: dry-run mutates neither swap files nor proposal statuses ────────
+echo "--- Test 9: dry-run-no-mutations ---"
+T9="$SANDBOX/t9"
+mkdir -p "$T9/laws"
+for i in 00 01 02 03 04 05 06 07 08 09 10 11 12 13 14; do
+  echo "Dry run law $i unique content" > "$T9/laws/law-$i.txt"
+  touch -t "$OLD_TS" "$T9/laws/law-$i.txt"
+done
+make_instinct "$T9/instincts/global" "t9-dry-swap" "0.9800" \
+  "occurrences_v4: 12
+projects_seen:
+  - proj-alpha
+  - proj-beta
+  - proj-gamma"
+python3 - <<PYEOF
+import json
+from pathlib import Path
+Path('$T9/proposals.json').write_text(json.dumps([
+  {'id': 'old-dry', 'status': 'pending', 'detected': '$OLD_DETECTED'},
+], indent=2), encoding='utf-8')
+PYEOF
+
+result=$(python3 -c "
+$(py_preamble "$T9")
+de.PROPOSALS_FILE = de.CORTEX_DIR / 'proposals.json'
+de.auto_promote_to_law(dry_run=True)
+de.expire_stale_proposals(dry_run=True)
+props = de._load_proposals()
+print(
+  not (de.LAWS_DIR / 't9-dry-swap.txt').exists(),
+  (de.LAWS_DIR / 'law-00.txt').exists(),
+  not (de.LAWS_DIR / 'archive').exists(),
+  props[0].get('status') == 'pending'
+)
+")
+if echo "$result" | grep -q "^True True True True$"; then
+  pass "dry-run-no-mutations: no law/archive/proposal mutations"
+else
+  fail "dry-run-no-mutations: got '$result'"
+fi
+
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 if [ "$FAIL" -gt 0 ]; then

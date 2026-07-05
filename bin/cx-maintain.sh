@@ -124,7 +124,7 @@ def step(name):
 # public functions run_auto_distill() calls internally, but bypasses its
 # 24h rate limiter — a deliberate /cx-maintain run should always execute,
 # not silently no-op because SessionStart already ran today.
-decayed = archived = promoted = candidates = []
+decayed = archived = promoted = candidates = expired = []
 validated = skipped_validate = evolve_drafts = 0
 engine_ok = False
 try:
@@ -141,13 +141,16 @@ try:
             validated = len(validate_result.get("accepted", []))
             skipped_validate = len(validate_result.get("skipped", []))
             promoted, candidates = de.auto_promote_to_law(dry_run=DRY_RUN)
+            expired = de.expire_stale_proposals(dry_run=DRY_RUN)
             evolve_result = de.auto_evolve_detect(dry_run=DRY_RUN)
             evolve_drafts = len(evolve_result.get("drafts_generated", []))
+            swapped = sum(1 for p in promoted if p.get("swapped_out"))
             engine_ok = True
             report["steps"].append({"name": "engine-pass", "ok": True, "detail":
                 f"decayed={len(decayed)} archived={len(archived)} validated={validated} "
                 f"skipped_validate={skipped_validate} promoted={len(promoted)} "
-                f"candidates={len(candidates)} evolve_drafts={evolve_drafts}"})
+                f"(swapped={swapped}) candidates={len(candidates)} expired={len(expired)} "
+                f"evolve_drafts={evolve_drafts}"})
         finally:
             de._lock_release(lock_fh)
 except Exception as e:
@@ -348,6 +351,12 @@ if not DRY_RUN:
             "law_deprecation_candidate": health["law_deprecation_candidate"],
             "laws_active": health["laws_active"],
             "laws_cap": health["laws_cap"],
+            "swaps_last_run": [
+                {"in": p.get("id"), "out": p.get("swapped_out")}
+                for p in (promoted or [])
+                if p.get("swapped_out")
+            ],
+            "expired_last_run": len(expired or []),
         }
         digest["total_items"] = (
             digest["proposals_human_gated"]

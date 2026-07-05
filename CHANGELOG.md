@@ -4,6 +4,57 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [4.3.0] — 2026-07-05
+
+**Zero-touch mode.** The learning pipeline no longer waits on a human anywhere:
+maintenance decides with deterministic rules and the operator's only role is an
+optional veto. Reverts the v4.2 "curated constitution, human prunes" model at
+the operator's explicit request. Implementation delegated to Codex GPT-5.3
+(spec-driven), reviewed inline.
+
+### Added
+- `hooks/lib/distill_engine.py` `auto_promote_to_law()`: **auto-swap at a
+  saturated law cap**. When an instinct passes every maturity gate and the cap
+  (15/15) is the only blocker, the engine retires the least-impactful law
+  (lowest `useful/(1+noise)` over 14d via `_find_least_impactful_law`) and
+  promotes in one atomic operation. Guards: victim age >=
+  `LAW_AUTO_SWAP_MIN_AGE_DAYS` (30), max `LAW_AUTO_SWAP_MAX_PER_RUN` (2) per
+  pass, productive cohorts (ratio > 1.0) never lose a law. Executes via the new
+  `_swap_promote_unlocked` — extracted from `manual_swap_promote` because
+  calling the `@_write_locked` wrapper from inside the maintain pass (which
+  already holds the shared flock) would deadlock. Victim archived to
+  `laws/archive/` (reversible), swap logged as `auto-swap` in the knowledge log.
+- `hooks/lib/distill_engine.py` `expire_stale_proposals()`: pending
+  human-gated proposals older than `PROPOSAL_TTL_DAYS` (30) auto-reject with
+  `rejected_by: cx-maintain-ttl` — added to `VALIDATE_AUTHORIZED_REJECTERS`
+  (Python) and `TOMBSTONE_REJECTERS` (`session-learner.js`) so expired ids
+  never resurrect. Entries without a parseable `detected` date are never
+  expired blind.
+- `commands/cx-maintain.md` + `bin/cx-maintain.sh` (embedded script kept in
+  sync): engine pass calls the TTL expiry and reports
+  `promoted=N (swapped=S) ... expired=E`; digest gains `swaps_last_run`
+  (in/out pairs) and `expired_last_run`.
+
+### Changed
+- `hooks/session-start.py` `check_review_digest()`: the imperative
+  `[REVIEW] N items pendientes -> /cx-review` badge is replaced by an
+  informative `[cx] maintain: +law (jubilada X), N propuestas caducadas, M en
+  cola (caducan a 30d) — detalle opcional: /cx-review`, built from the digest's
+  new fields and silenced automatically 48h after the pass. Tolerant of old
+  digests — a malformed or pre-v4.3 digest returns no badge instead of
+  crashing SessionStart.
+- `commands/cx-review.md` + `README.md`: `/cx-review` reframed from "weekly,
+  the only command with judgment" to an optional veto pass — skipping it
+  forever is a supported mode.
+- `hooks/lib/distill_engine.py`: the three copies of the promote-then-archive
+  block deduplicated into `_archive_promoted_instinct_source()`.
+
+### Tests
+- `test_distill_v4` 6→10 (auto-swap happy path, age-floor block, TTL expiry,
+  dry-run inertness), `test_session_start` 7→11 (informative badge, 48h
+  staleness, malformed digest), `test_session_learner` 60→61 (`cx-maintain-ttl`
+  tombstone), runner report asserts `swapped=`/`expired=`.
+
 ## [4.2.2] — 2026-07-05
 
 ### Fixed

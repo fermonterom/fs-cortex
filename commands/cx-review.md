@@ -1,6 +1,6 @@
 ---
 name: cx-review
-description: Weekly human review — the ONLY command with judgment. Digest of pending proposals, near-threshold drafts and law candidates in one shorthand pass.
+description: Optional human veto pass — digest of what /cx-maintain decided (law swaps, expired proposals) and what waits. Zero-touch since v4.3.0, skipping it never blocks the pipeline.
 command: true
 ---
 
@@ -8,11 +8,14 @@ command: true
 
 ## What it does
 
-The **only** command in Cortex v4 that requires human judgment
-(`docs/DESIGN-V4.md` §5, principle P2). Everything deterministic already ran
-via `/cx-maintain` (decay, dedup, purge, auto-promotion, storage rotation) —
-this command presents what is LEFT over that a human must decide, as ONE
-consolidated shorthand list. Two minutes, not twenty.
+The optional human veto surface of Cortex. Since v4.3.0 (zero-touch) nothing
+waits on this command: `/cx-maintain` auto-swaps laws at a saturated cap under
+deterministic guards (victim = lowest 14d impact, age >= 30d, max 2 per run)
+and expires human-gated proposals pending > 30 days (tombstoned, never
+resurrect). This command presents what happened and what is still in queue as
+ONE consolidated shorthand list, so the operator can veto (`/cx-downvote`,
+restore from archive) or fast-track an item. Skipping it forever is a valid
+mode — the pipeline never blocks on a human.
 
 Fuses what used to be three separate commands:
 - `/cx-validate` (human-gated proposals — the domains `auto_validate_proposals`

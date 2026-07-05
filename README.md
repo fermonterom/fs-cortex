@@ -16,8 +16,8 @@
 - **Observes** every tool call silently via async hooks (0 tokens overhead), capturing real output + error lines with anti-noise guards
 - **Injects** matched instincts and reflexes per tool use via PreToolUse (~120 tokens max)
 - **Learns** patterns automatically: instincts start as silent `draft`, earn `confirmed` (injectable) at 5+ occurrences across 3+ sessions — no manual analyze/validate step
-- **Maintains** itself: `/cx-maintain` (deterministic, cron-able) promotes proven instincts to Laws, dedups, decays, rotates storage — zero questions
-- **Reviews** weekly with you: `/cx-review` is the only command left with judgment — one shorthand digest, two minutes
+- **Maintains** itself: `/cx-maintain` (deterministic, cron-able) promotes proven instincts to Laws — auto-swapping the least-impactful law when the cap is full (v4.3.0) — dedups, decays, expires stale proposals at 30 days, rotates storage. Zero questions
+- **Reports** instead of assigning work: the SessionStart badge tells you what the last pass did; `/cx-review` is an optional veto digest — nothing ever waits on you
 - **Protects** with deterministic reflex hooks (not probabilistic instructions)
 
 v4.0.0 ("signal-first, zero-decision") replaced the old 20+-command,
@@ -31,7 +31,7 @@ Observe (hooks, output+err_msg captured)  →  draft (silent tracking)
     auto                                        auto
 
   draft → confirmed (occ>=5, sessions>=3)  →  /cx-maintain  →  /cx-review
-     auto                                    cron-able         weekly, human
+     auto                                    cron-able         optional veto
 
   OBSERVATIONS → INSTINCTS (draft/confirmed) → LAWS → SKILLS/COMMANDS/RULES
   (JSONL, 0 tok)   (YAML)                       (TXT)   (evolved/)
@@ -64,7 +64,7 @@ at 5+ occurrences across 3+ distinct sessions.
 
 **Decay**: -0.05 per 30 days, applied by `/cx-maintain`. What you don't use fades.
 
-**Feedback**: `/cx-review` closes the human loop on incorrect injections. 30%+ rejection rate → confidence reduced.
+**Feedback**: `/cx-downvote` (via the optional `/cx-review` digest) vetoes incorrect injections. 30%+ rejection rate → confidence reduced. Human-gated proposals not reviewed within 30 days expire on their own (tombstoned).
 
 **Promotion**: Jaccard similarity ≥ 0.70 + 2 projects + avg confidence ≥ 0.80 → global, computed inside `/cx-maintain`.
 
@@ -163,11 +163,12 @@ You don't configure or run anything. Just work — Cortex learns in the backgrou
 /cx-maintain   ← decay + dedup + promotion to law + storage rotation + health check
 ```
 
-**Weekly, human** — when you see `[REVIEW] N items pendientes`:
+**Optional, human veto** — the `[cx] maintain:` badge reports what the last
+pass already did (law swaps, expired proposals, queue):
 
 ```
-/cx-review     ← ONE shorthand digest: pending proposals, evolve drafts, law
-                 deprecation candidates. 2 minutes, not twenty.
+/cx-review     ← ONE shorthand digest of what auto-swapped, what expired and
+                 what waits. Pure veto — skipping it never blocks anything.
 ```
 
 **When needed:**
@@ -182,7 +183,7 @@ You don't configure or run anything. Just work — Cortex learns in the backgrou
 ### Daily workflow
 
 ```
-1. Open Claude Code     → laws inject automatically, [REVIEW] badge if pending
+1. Open Claude Code     → laws inject automatically, [cx] badge reports last maintain
 2. Work normally        → observe.py records real output/errors, injector injects
 3. Instincts mature      → draft → confirmed automatically, no action from you
 4. End of day            → /cx-eod (optional but useful, now cumulative)
@@ -191,8 +192,8 @@ You don't configure or run anything. Just work — Cortex learns in the backgrou
 ### Weekly maintenance
 
 ```
-/cx-maintain  →  /cx-review
- deterministic    human digest (2 min)
+/cx-maintain  →  /cx-review (optional)
+ deterministic    human veto digest
 ```
 
 ### How knowledge evolves
@@ -201,7 +202,9 @@ You don't configure or run anything. Just work — Cortex learns in the backgrou
 You work → Cortex captures output+errors (guarded) → instinct born as draft
 → 5+ occurrences across 3+ sessions → status: confirmed → starts injecting
 → /cx-maintain promotes proven instincts to law deterministically
-→ /cx-review is your only weekly touchpoint for what's left to decide
+  (auto-swapping the least-impactful law when the cap is full, v4.3.0)
+→ stale pending proposals expire on their own after 30 days
+→ /cx-review is an optional veto pass — nothing ever waits on you
 ```
 
 ## Commands (7 active + 17 deprecated)

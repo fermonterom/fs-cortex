@@ -280,8 +280,8 @@ def check_maintenance():
 def check_review_digest():
     """v4 item (b) — cheap read of `.review-digest.json`, written by
     /cx-maintain and consumed interactively by /cx-review. Returns a one-line
-    `[REVIEW] N items pendientes -> /cx-review` reminder, or None when the
-    digest is missing, unreadable, or already empty (total_items <= 0).
+    informative maintain badge, or None when the digest is missing, stale,
+    unreadable, or has nothing useful to report.
     Deliberately does NOT recompute anything — SessionStart must stay cheap;
     /cx-maintain is the only place that does the actual counting work."""
     digest_file = CORTEX_DIR / '.review-digest.json'
@@ -289,12 +289,38 @@ def check_review_digest():
         return None
     try:
         data = json.loads(digest_file.read_text(encoding='utf-8'))
-        n = int(data.get('total_items', 0) or 0)
+        generated_raw = data.get('generated_at')
+        if not isinstance(generated_raw, str) or not generated_raw:
+            return None
+        generated = datetime.fromisoformat(generated_raw.replace('Z', '+00:00'))
+        if generated.tzinfo is not None:
+            generated = generated.replace(tzinfo=None)
+        if datetime.utcnow() - generated > timedelta(hours=48):
+            return None
+
+        parts = []
+        swaps = data.get('swaps_last_run') or []
+        if isinstance(swaps, list):
+            for item in swaps:
+                if not isinstance(item, dict):
+                    continue
+                incoming = item.get('in')
+                outgoing = item.get('out')
+                if incoming and outgoing:
+                    parts.append(f'+{incoming} (jubilada {outgoing})')
+
+        expired = int(data.get('expired_last_run', 0) or 0)
+        if expired > 0:
+            parts.append(f'{expired} propuestas caducadas')
+
+        pending = int(data.get('proposals_human_gated', 0) or 0)
+        if pending > 0:
+            parts.append(f'{pending} en cola (caducan a 30d)')
     except Exception:
         return None
-    if n <= 0:
+    if not parts:
         return None
-    return f'[REVIEW] {n} items pendientes -> /cx-review'
+    return f'[cx] maintain: {", ".join(parts)} — detalle opcional: /cx-review'
 
 
 def _file_older_than(filepath, days):
