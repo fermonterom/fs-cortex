@@ -2294,7 +2294,8 @@ async function main() {
     // Step 5f: Storage rotation (issue #56.2, v3.35.1) — impact.jsonl and
     // cross-day-tracker.jsonl had rotation code that was never called from
     // anywhere. Size-gated + 24h marker; impact events are archived to
-    // impact.archive/, never deleted.
+    // impact.archive/; chunks older than 90 days are pruned by
+    // storage-rotation.js per DESIGN-V4 §7.
     try {
       const { maybeRotateStorage } = require(path.join(__dirname, 'lib', 'storage-rotation'));
       maybeRotateStorage(log);

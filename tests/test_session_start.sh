@@ -159,5 +159,78 @@ fi
 rm -rf "$T4"
 
 echo ""
+
+# ── Test 5: malformed laws-meta.json shapes → no crash, laws still load ──────
+# AD [P2] finding: laws-meta.json can be malformed in shapes load_laws() must
+# tolerate without crashing SessionStart. Unlike Tests 1-4 (which drive
+# check_maintenance() via module import), these drive the FULL process via
+# stdin pipe (`CORTEX_DIR=... python3 hooks/session-start.py`) since the tier
+# split happens in main(), not in a function importable in isolation.
+echo "--- Test 5: malformed laws-meta.json (v non-dict, laws non-dict, invalid JSON) ---"
+run_full_hook() {
+  # $1 = sandbox CORTEX_DIR
+  echo '{}' | CORTEX_DIR="$1" python3 "$SESSION_START_PY" 2>&1
+}
+
+declare -a T5_CASES=(
+  '{"laws":{"x":"tool"}}'
+  '{"laws":[]}'
+  'xxx'
+)
+T5_LABELS=(
+  "v non-dict"
+  "laws non-dict"
+  "invalid JSON"
+)
+for i in "${!T5_CASES[@]}"; do
+  T5="$(mktemp -d -t cortex-sstart-t5-XXXXXX)"
+  mkdir -p "$T5/laws"
+  echo "Fixture law text" > "$T5/laws/a-fixture.txt"
+  printf '%s' "${T5_CASES[$i]}" > "$T5/laws/laws-meta.json"
+  out=$(run_full_hook "$T5")
+  label="${T5_LABELS[$i]}"
+  if echo "$out" | grep -qi 'traceback\|exception'; then
+    fail "T5 laws-meta ($label): crashed → $out"
+  elif echo "$out" | grep -q 'CORTEX LAWS'; then
+    pass "T5 laws-meta ($label): no crash, CORTEX LAWS present"
+  else
+    fail "T5 laws-meta ($label): no crash but CORTEX LAWS missing → $out"
+  fi
+  rm -rf "$T5"
+done
+
+# ── Test 6: well-formed laws-meta.json → tier split [principios]/[herramienta] ─
+echo "--- Test 6: well-formed laws-meta.json splits by tier ---"
+T6="$(mktemp -d -t cortex-sstart-t6-XXXXXX)"
+mkdir -p "$T6/laws"
+echo "Principle law text" > "$T6/laws/a-principle.txt"
+echo "Tool law text" > "$T6/laws/b-tool.txt"
+printf '%s' '{"laws":{"a-principle":{"tier":"principle"},"b-tool":{"tier":"tool"}}}' > "$T6/laws/laws-meta.json"
+out=$(run_full_hook "$T6")
+if echo "$out" | grep -q '\[principios\]' && echo "$out" | grep -q '\[herramienta\]'; then
+    pass "T6 well-formed laws-meta: both [principios] and [herramienta] present"
+else
+    fail "T6 well-formed laws-meta: missing tier split → $out"
+fi
+rm -rf "$T6"
+
+# ── Test 7: no laws-meta.json → single CORTEX LAWS block (retrocompat) ───────
+echo "--- Test 7: no laws-meta.json (retrocompat, single block) ---"
+T7="$(mktemp -d -t cortex-sstart-t7-XXXXXX)"
+mkdir -p "$T7/laws"
+echo "Some law text" > "$T7/laws/a.txt"
+out=$(run_full_hook "$T7")
+if echo "$out" | grep -q 'CORTEX LAWS'; then
+    if echo "$out" | grep -q '\[principios\]\|\[herramienta\]'; then
+        fail "T7 no laws-meta: unexpected tier split without meta file → $out"
+    else
+        pass "T7 no laws-meta: single CORTEX LAWS block, no tier split"
+    fi
+else
+    fail "T7 no laws-meta: CORTEX LAWS missing → $out"
+fi
+rm -rf "$T7"
+
+echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1
