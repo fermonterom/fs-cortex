@@ -208,18 +208,20 @@ You work → Cortex captures output+errors (guarded) → instinct born as draft
 → /cx-review is an optional veto pass — nothing ever waits on you
 ```
 
-## Commands (7 active + 17 deprecated)
+## Commands (8 active + 17 deprecated)
 
 v4.0.0 replaced the old manual-judgment command set. Deterministic maintenance
-lives in `/cx-maintain`; the one remaining human-judgment step lives in
-`/cx-review`. Upgrading from v3? See [`docs/MIGRATION-V4.md`](docs/MIGRATION-V4.md)
+lives in `/cx-maintain`, semantic curation in `/cx-curate` (v4.4.0, weekly,
+auto-triggered); `/cx-review` is an optional human veto.
+Upgrading from v3? See [`docs/MIGRATION-V4.md`](docs/MIGRATION-V4.md)
 for the full command mapping.
 
 | Command | What it does |
 |---------|-------------|
 | `/cx-status` | Dashboard: laws, instincts, projects, reflexes, tracking, health, domain grouping |
 | `/cx-maintain` | **Deterministic, cron-able.** decay + Jaccard dedup + purge + deterministic law promotion + storage rotation + proposals↔instincts reconciliation + health check. Zero questions. |
-| `/cx-review` | **The only command with judgment, weekly.** One consolidated shorthand digest of everything deterministic maintenance left for a human to decide. |
+| `/cx-curate` | **Semantic curator (v4.4.0), weekly, auto-triggered by the `[CURATE] due` banner.** Claude judges law generality/value and acts: demotes niche laws to instincts, fast-tracks candidates, downvotes noisy instincts. Hard budgets, all reversible. |
+| `/cx-review` | **Optional human veto.** One consolidated shorthand digest of what maintenance and curation did and what waits. Skipping it never blocks anything. |
 | `/cx-eod` | End-of-day summary, cumulative across the day, Eisenhower-classified for next session |
 | `/cx-gotcha` | Capture error→fix as high-priority instinct |
 | `/cx-backup` | Create portable .tar.gz backup for machine transfer |

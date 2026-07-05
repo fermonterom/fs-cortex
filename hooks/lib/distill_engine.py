@@ -20,6 +20,9 @@ Public API
   auto_promote_to_law(dry_run=False) -> tuple[list[dict], list[dict]]
   auto_evolve_detect(dry_run=False) -> dict
   law_audit() -> dict  # v4.2.0 §C4 — post-promotion legibility audit
+  curate_snapshot() -> dict  # v4.4.0 — compact corpus for /cx-curate
+  apply_confidence_downvote(iid, ...) -> tuple[bool, str]  # v4.4.0
+  touch_curate_marker() / curate_due() -> bool  # v4.4.0 — weekly cadence
 
 CLI
 ---
@@ -27,6 +30,8 @@ CLI
   python3 distill_engine.py decay [--dry-run]
   python3 distill_engine.py promote [--dry-run]
   python3 distill_engine.py law-audit [--json]
+  python3 distill_engine.py curate-snapshot
+  python3 distill_engine.py downvote <iid> [--reason ...]
   python3 distill_engine.py status
 """
 from __future__ import annotations
@@ -160,6 +165,18 @@ LAW_MAX_CHARS = 200  # v3.35.2 (#56.1): was 120 — mid-sentence cuts shipped la
 # proposals 24 of which the operator accepts out of fatigue — won't pass
 # until at least 3 different sessions have seen the same pattern.
 LAW_MIN_DISTINCT_SESSIONS = 3
+
+# v4.4.0 /cx-curate — weekly LLM curation pass over the whole corpus. The
+# command reads curate_snapshot() and votes; per-pass caps bound the blast
+# radius of a single bad curation (zero-touch: automatic by default, veto
+# via /cx-review, never a human decision queue).
+CURATE_INTERVAL_DAYS = 7        # curate_due() marker window
+CURATE_MAX_DEMOTES = 2          # law demotions per pass
+CURATE_MAX_PROMOTES = 2         # candidate promotions per pass
+CURATE_MAX_DOWNVOTES = 8        # instinct downvotes per pass
+CURATE_CONF_FLOOR = 0.30        # downvotes never push confidence below this
+CURATE_DOWNVOTE_DELTA = 0.15    # confidence subtracted per downvote
+CURATE_MARKER_FILE = CORTEX_DIR / ".last-curate"
 
 # v3.32.0 §4.4 — promotion gate HUMAN → AUTO. Source: proposals-history.jsonl
 # (AD P0-1). Statistical-strict: prefer false negatives (no promote) over
@@ -1579,6 +1596,165 @@ def auto_promote_to_law(
                 _archive_promoted_instinct_source(path, iid, today, "cx-auto-promote")
 
     return promoted, candidates
+
+
+# ── v4.4.0 /cx-curate — weekly LLM curation support ──────────────────────────
+
+@_write_locked
+def apply_confidence_downvote(
+    iid: str,
+    delta: float = CURATE_DOWNVOTE_DELTA,
+    reason: str = "",
+    source: str = "cx-curate",
+) -> tuple[bool, str]:
+    """Subtract `delta` from a live instinct's confidence, floored at
+    CURATE_CONF_FLOOR (a downvote weakens injection priority without
+    deleting knowledge — decay/archival handles terminal removal).
+
+    Live instincts only (_all_instinct_paths); a law's archived backing
+    YAML is out of scope — demoting a law is demote_law_to_domain's job.
+    Returns (ok, human-readable reason); (False, ...) when the id is not
+    found, its YAML is unreadable, or confidence is already at the floor.
+    """
+    for path in _all_instinct_paths():
+        result = _read_instinct(path)
+        if result is None:
+            if path.stem == iid:
+                return False, f"{iid}: backing yaml unreadable ({path.name})"
+            continue
+        fields, text = result
+        if str(fields.get("id", path.stem)) != iid:
+            continue
+        try:
+            old_conf = float(fields.get("confidence"))
+        except (TypeError, ValueError):
+            return False, f"{iid}: confidence not numeric"
+        if old_conf <= CURATE_CONF_FLOOR:
+            return False, (
+                f"{iid}: already at floor "
+                f"({old_conf:.2f} <= {CURATE_CONF_FLOOR:.2f})"
+            )
+        new_conf = max(CURATE_CONF_FLOOR, round(old_conf - delta, 4))
+        new_text = _set_frontmatter_field(text, "confidence", new_conf)
+        try:
+            _atomic_write(path, new_text)
+        except OSError as e:
+            return False, f"{iid}: write failed: {e}"
+        _log_knowledge(
+            "downvoted", iid,
+            f"conf {old_conf} -> {new_conf}; {reason}",
+            source=source,
+        )
+        return True, f"conf {old_conf} -> {new_conf}"
+    return False, f"{iid}: no live instinct with that id"
+
+
+def curate_snapshot() -> dict:
+    """Compact corpus snapshot for the /cx-curate LLM curator.
+
+    One JSON-serializable dict with everything the curator votes on —
+    truncated action/trigger fields keep the whole corpus inside a single
+    prompt (the command reads skill dirs itself; no skills section here):
+      laws       {id: {content, tier, age_days, impact_30d,
+                       has_backing_instinct}}
+      candidates auto_promote_to_law(dry_run=True) blockers enriched with
+                 the backing YAML's action[:300]/trigger[:120] + impact_30d
+      instincts  live cohort (id, confidence, domain, scope, trigger[:120],
+                 action[:250], last_seen, impact_30d)
+      generated_at UTC ISO timestamp
+    """
+    meta = _load_laws_meta()
+    impact = _impact_per_iid(days=30)
+
+    laws: dict[str, dict] = {}
+    if LAWS_DIR.is_dir():
+        for law_path in sorted(LAWS_DIR.glob("*.txt")):
+            if "archive" in str(law_path):
+                continue
+            iid = law_path.stem
+            tier = "principle"
+            meta_entry = meta.get(iid)
+            if isinstance(meta_entry, dict) and meta_entry.get("tier"):
+                tier = str(meta_entry["tier"])
+            try:
+                content = law_path.read_text(encoding="utf-8").strip()
+            except OSError:
+                content = ""
+            backing, _needs_restore = _find_backing_instinct_yaml(iid)
+            laws[iid] = {
+                "content": content,
+                "tier": tier,
+                "age_days": _law_age_days(law_path),
+                "impact_30d": impact.get(iid, {"useful": 0, "noise": 0}),
+                "has_backing_instinct": backing is not None,
+            }
+
+    _, raw_candidates = auto_promote_to_law(dry_run=True)
+    candidates: list[dict] = []
+    for cand in raw_candidates:
+        iid = str(cand.get("id", ""))
+        action = trigger = ""
+        backing, _needs_restore = _find_backing_instinct_yaml(iid)
+        if backing is not None:
+            result = _read_instinct(backing)
+            if result is not None:
+                fields, _text = result
+                action = str(fields.get("action", ""))[:300]
+                trigger = str(fields.get("trigger", ""))[:120]
+        candidates.append({
+            "id": iid,
+            "confidence": cand.get("confidence"),
+            "blockers": cand.get("reasons", [])[:3],
+            "action": action,
+            "trigger": trigger,
+            "impact_30d": impact.get(iid, {"useful": 0, "noise": 0}),
+        })
+
+    instincts: list[dict] = []
+    for path in _all_instinct_paths():
+        result = _read_instinct(path)
+        if result is None:
+            continue
+        fields, _text = result
+        iid = str(fields.get("id", path.stem))
+        instincts.append({
+            "id": iid,
+            "confidence": fields.get("confidence"),
+            "domain": fields.get("domain", ""),
+            "scope": fields.get("scope", "global"),
+            "trigger": str(fields.get("trigger", ""))[:120],
+            "action": str(fields.get("action", ""))[:250],
+            "last_seen": str(fields.get("last_seen", "")),
+            "impact_30d": impact.get(iid, {"useful": 0, "noise": 0}),
+        })
+
+    return {
+        "laws": laws,
+        "candidates": candidates,
+        "instincts": instincts,
+        "generated_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+    }
+
+
+def touch_curate_marker() -> None:
+    """Record that a curation pass just ran (UTC ISO, atomic tmp+rename)."""
+    _atomic_write(
+        CURATE_MARKER_FILE,
+        _dt.datetime.now(_dt.timezone.utc).isoformat() + "\n",
+    )
+
+
+def curate_due(interval_days: int = CURATE_INTERVAL_DAYS) -> bool:
+    """True when the last curation pass is older than `interval_days`
+    (marker mtime, same convention as _is_rate_limited). Missing or
+    unreadable marker counts as due — never silently starves the pass."""
+    if not CURATE_MARKER_FILE.exists():
+        return True
+    try:
+        age_seconds = time.time() - CURATE_MARKER_FILE.stat().st_mtime
+    except OSError:
+        return True
+    return age_seconds >= interval_days * 86400
 
 
 # ── 4. Auto-validate proposals ───────────────────────────────────────────────
@@ -3228,6 +3404,16 @@ def _cmd_law_audit(as_json: bool) -> None:
               f"noise_ratio={noise} {dup}".rstrip())
 
 
+def _cmd_curate_snapshot() -> None:
+    print(json.dumps(curate_snapshot(), indent=1, ensure_ascii=False))
+
+
+def _cmd_downvote(iid: str, reason: str) -> int:
+    ok, msg = apply_confidence_downvote(iid, reason=reason)
+    print(("downvoted: " if ok else "no-op: ") + msg)
+    return 0 if ok else 1
+
+
 def _cmd_promote(dry_run: bool) -> None:
     promoted, candidates = auto_promote_to_law(dry_run=dry_run)
     prefix = "[DRY-RUN] " if dry_run else ""
@@ -3553,6 +3739,21 @@ def main(argv: list[str] | None = None) -> int:
     p_backfill = sub.add_parser("backfill", help="Recover legacy session_id/session fields and rebuild tracking sessions (preview by default; --apply writes)")
     p_backfill.add_argument("--apply", action="store_true", help="Write changes (atomically + cross-runtime locked since v3.35.0 / issue #49)")
 
+    sub.add_parser(
+        "curate-snapshot",
+        help="Dump compact corpus JSON (laws + candidates + instincts) for /cx-curate",
+    )
+
+    p_downvote = sub.add_parser(
+        "downvote",
+        help="Apply a confidence downvote to a live instinct (/cx-curate vote)",
+    )
+    p_downvote.add_argument("iid", help="Instinct id")
+    p_downvote.add_argument(
+        "--reason", default="",
+        help="Why the curator downvoted it (recorded in knowledge-log.md)",
+    )
+
     sub.add_parser("status", help="Show current candidates and rate-limit state")
 
     p_pipeline = sub.add_parser(
@@ -3584,6 +3785,10 @@ def main(argv: list[str] | None = None) -> int:
         _cmd_law_audit(args.as_json)
     elif args.cmd == "backfill":
         _cmd_backfill(args.apply)
+    elif args.cmd == "curate-snapshot":
+        _cmd_curate_snapshot()
+    elif args.cmd == "downvote":
+        return _cmd_downvote(args.iid, args.reason)
     elif args.cmd == "status":
         _cmd_status()
     elif args.cmd == "pipeline-stats":

@@ -38,14 +38,17 @@ echo ""
 
 echo "--- Commands existence ---"
 EXPECTED_COMMANDS="cx-analyze cx-audit cx-backfill cx-backup cx-dashboard cx-distill cx-downvote cx-dream cx-eod cx-evolve cx-export cx-feedback cx-gotcha cx-promote cx-restore cx-retro cx-router cx-status cx-stop cx-timeline cx-validate"
+# v4 active set (v4.4.0 adds cx-curate) — claudemd-section.md advertises ONLY
+# these; the legacy names above must still exist as deprecation stubs.
+ACTIVE_COMMANDS="cx-status cx-maintain cx-curate cx-review cx-eod cx-gotcha cx-backup cx-restore"
 MISSING=0
-for cmd in $EXPECTED_COMMANDS; do
+for cmd in $EXPECTED_COMMANDS $ACTIVE_COMMANDS; do
     if [ ! -f "$PROJECT_ROOT/commands/$cmd.md" ]; then
         fail "missing command: $cmd.md"
         MISSING=$((MISSING + 1))
     fi
 done
-[ "$MISSING" -eq 0 ] && pass "all 20 commands present"
+[ "$MISSING" -eq 0 ] && pass "all legacy stubs + v4 active commands present"
 
 echo ""
 
@@ -73,16 +76,18 @@ echo ""
 # ── TEST 4: claudemd-section.md lists all commands ────────────────
 
 echo "--- CLAUDE.md section lists all commands ---"
+# v4.4.0: the installer-injected section advertises the ACTIVE set only —
+# legacy commands are deprecation stubs and must NOT be advertised.
 SECTION_FILE="$PROJECT_ROOT/core/claudemd-section.md"
 SECTION_MISSING=0
-for cmd in $EXPECTED_COMMANDS; do
+for cmd in $ACTIVE_COMMANDS; do
     SLASH_CMD="/${cmd}"
     if ! grep -q "$SLASH_CMD" "$SECTION_FILE" 2>/dev/null; then
         fail "claudemd-section.md missing $SLASH_CMD"
         SECTION_MISSING=$((SECTION_MISSING + 1))
     fi
 done
-[ "$SECTION_MISSING" -eq 0 ] && pass "claudemd-section.md lists all 20 /cx-* commands"
+[ "$SECTION_MISSING" -eq 0 ] && pass "claudemd-section.md lists the v4 active /cx-* set"
 
 echo ""
 
