@@ -4,6 +4,21 @@ All notable changes to fs-cortex will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [4.2.2] — 2026-07-05
+
+### Fixed
+- `/cx-maintain` Step 7 (`commands/cx-maintain.md` + `bin/cx-maintain.sh`,
+  identical embedded script): **learn markers now reset after a maintenance
+  pass**. `observe.py` touches `.learn-pending` every LEARN_THRESHOLD
+  observations, but nothing cleared it after `/cx-analyze` retired in v4 — so
+  SessionStart's "N+ new observations, run /cx-maintain" banner nagged
+  forever, even immediately after a pass. Step 7 now snapshots the current
+  observation total into `.last-learn-count` (atomic tmp+rename), zeroes
+  `.obs-count` and deletes `.learn-pending`, so `check_learn_pending()`
+  measures "since last maintenance" again. `test_cx_maintain_runner` 9→10
+  (seeded markers reset end-to-end); the suite also gets its missing row in
+  the FEATURES.md tests table (gap since v4.0.0).
+
 ## [4.2.1] — 2026-07-05
 
 **AD follow-up (Codex GPT-5.5).** After merging v4.2.0, a read-only adversarial

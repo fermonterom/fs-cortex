@@ -65,6 +65,14 @@ status: confirmed
 ---
 YAML
 
+# v4.2.2 — seed learn markers + observations so Test 3b can prove the reset:
+# observe.py increments .obs-count and touches .learn-pending at threshold;
+# the runner must snapshot the total, zero the count and drop the flag.
+mkdir -p "$CDIR/projects/testproj"
+printf '{"ts":"2026-07-05T10:00:00Z","ev":"tc","tool":"Bash"}\n%.0s' 1 2 3 > "$CDIR/projects/testproj/observations.jsonl"
+echo "7" > "$CDIR/.obs-count"
+touch "$CDIR/.learn-pending"
+
 # ── Test 1: first run exits 0 ────────────────────────────────────────────────
 echo "--- Test 1: first run exits 0 ---"
 OUT1=$(CORTEX_DIR="$CDIR" "$RUNNER" 2>&1)
@@ -83,6 +91,19 @@ if [ -f "$CDIR/.last-distill" ] && [ -f "$CDIR/.last-dream" ]; then
   pass "Both .last-distill and .last-dream exist"
 else
   fail ".last-distill or .last-dream missing"
+fi
+
+# ── Test 3b: learn markers reset (v4.2.2) ────────────────────────────────────
+# Nothing cleared .learn-pending after /cx-analyze retired in v4, so the
+# SessionStart "N+ new observations" banner nagged forever. The runner must
+# snapshot the obs total, zero .obs-count and drop the flag.
+echo "--- Test 3b: learn markers reset after run ---"
+LEARN_COUNT=$(cat "$CDIR/.last-learn-count" 2>/dev/null)
+OBS_COUNT=$(cat "$CDIR/.obs-count" 2>/dev/null)
+if [ "$LEARN_COUNT" = "3" ] && [ "$OBS_COUNT" = "0" ] && [ ! -f "$CDIR/.learn-pending" ]; then
+  pass "Learn markers reset (.last-learn-count=3, .obs-count=0, .learn-pending gone)"
+else
+  fail "Learn markers not reset: last-learn-count='$LEARN_COUNT' obs-count='$OBS_COUNT' pending=$([ -f "$CDIR/.learn-pending" ] && echo yes || echo no)"
 fi
 
 # ── Test 4: digest is valid JSON with expected keys ──────────────────────────
