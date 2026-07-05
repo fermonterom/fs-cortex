@@ -204,6 +204,80 @@ CORTEX_COUNT=$(grep -c "## Cortex" "$SANDBOX/.claude/CLAUDE.md" 2>/dev/null)
 rm -rf "$SANDBOX"
 echo ""
 
+# ── TEST 3b: CLAUDE.md tail after Cortex section survives rerun ───
+
+echo "--- CLAUDE.md Tail Preservation ---"
+SANDBOX=$(mktemp -d)
+SANDBOXES+=("$SANDBOX")
+mkdir -p "$SANDBOX/.claude"
+printf '\n' | HOME="$SANDBOX" bash "$PROJECT_ROOT/install.sh" > /dev/null 2>&1 || true
+printf '\nUSER TAIL CONTENT\n' >> "$SANDBOX/.claude/CLAUDE.md"
+TAIL_BEFORE=$(tail -n 1 "$SANDBOX/.claude/CLAUDE.md")
+printf '\n' | HOME="$SANDBOX" bash "$PROJECT_ROOT/install.sh" > /dev/null 2>&1 || true
+TAIL_AFTER=$(tail -n 1 "$SANDBOX/.claude/CLAUDE.md")
+[ "$TAIL_AFTER" = "$TAIL_BEFORE" ] && [ "$TAIL_AFTER" = "USER TAIL CONTENT" ] && pass "CLAUDE.md user tail survives rerun" || fail "CLAUDE.md user tail changed"
+grep -q "<!-- cortex:end -->" "$SANDBOX/.claude/CLAUDE.md" 2>/dev/null && pass "CLAUDE.md Cortex section has end marker" || fail "CLAUDE.md missing end marker"
+rm -rf "$SANDBOX"
+echo ""
+
+# ── TEST 3c: settings.json keeps user hook sharing Cortex entry ───
+
+echo "--- settings.json Shared Entry Preservation ---"
+SANDBOX=$(mktemp -d)
+SANDBOXES+=("$SANDBOX")
+mkdir -p "$SANDBOX/.claude/cortex" "$SANDBOX/.claude/hooks/cortex"
+echo "3.37.2" > "$SANDBOX/.claude/cortex/version"
+cat > "$SANDBOX/.claude/settings.json" << 'JSON'
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {"type": "command", "command": "python3 ~/.claude/hooks/cortex/session-start.py"},
+          {"type": "command", "command": "bash ~/.claude/hooks/user-session-start.sh"}
+        ]
+      }
+    ]
+  }
+}
+JSON
+printf 'y\n' | HOME="$SANDBOX" bash "$PROJECT_ROOT/install.sh" > /dev/null 2>&1 || true
+python3 -c "
+import json
+with open('$SANDBOX/.claude/settings.json') as f:
+    s = json.load(f)
+hooks = [h for entry in s.get('hooks', {}).get('SessionStart', []) for h in entry.get('hooks', [])]
+assert any('user-session-start' in h.get('command', '') for h in hooks), 'user hook lost'
+print('OK')
+" 2>/dev/null | grep -q OK && pass "user hook preserved inside shared SessionStart entry" || fail "user hook lost from shared SessionStart entry"
+rm -rf "$SANDBOX"
+echo ""
+
+# ── TEST 3d: v3→v4 learner baseline seeded from observations ─────
+
+echo "--- v3 Learner Baseline Adapter ---"
+SANDBOX=$(mktemp -d)
+SANDBOXES+=("$SANDBOX")
+mkdir -p "$SANDBOX/.claude/cortex/projects/x" "$SANDBOX/.claude/hooks/cortex"
+echo "3.37.2" > "$SANDBOX/.claude/cortex/version"
+for i in 1 2 3 4 5; do echo "{\"n\":$i}"; done > "$SANDBOX/.claude/cortex/projects/x/observations.jsonl"
+printf 'y\n' | HOME="$SANDBOX" bash "$PROJECT_ROOT/install.sh" > /dev/null 2>&1 || true
+BASELINE=$(cat "$SANDBOX/.claude/cortex/.last-learn-count" 2>/dev/null | tr -d '[:space:]')
+[ "$BASELINE" = "5" ] && pass "v3 upgrade seeds .last-learn-count from observations" || fail ".last-learn-count=$BASELINE (expected 5)"
+rm -rf "$SANDBOX"
+echo ""
+
+# ── TEST 3e: interrupted install repair warning ───────────────────
+
+echo "--- Interrupted Install Repair Detection ---"
+SANDBOX=$(mktemp -d)
+SANDBOXES+=("$SANDBOX")
+mkdir -p "$SANDBOX/.claude/cortex/laws" "$SANDBOX/.claude/cortex/instincts/global" "$SANDBOX/.claude/hooks/cortex"
+OUT=$(printf 'y\n' | HOME="$SANDBOX" bash "$PROJECT_ROOT/install.sh" 2>&1 || true)
+printf '%s' "$OUT" | grep -q "proceeding as repair" && pass "missing version with hooks warns repair" || fail "repair warning missing"
+rm -rf "$SANDBOX"
+echo ""
+
 # ── TEST 4: Path traversal protection ─────────────────────────────
 
 echo "--- Path Traversal Protection ---"

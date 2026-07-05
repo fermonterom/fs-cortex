@@ -20,7 +20,7 @@ $CommandsDir = Join-Path $ClaudeDir "commands"
 $HooksDir = Join-Path (Join-Path $ClaudeDir "hooks") "cortex"
 $SettingsFile = Join-Path $ClaudeDir "settings.json"
 $ClaudeMd = Join-Path $ClaudeDir "CLAUDE.md"
-$NewVersion = "4.4.0"
+$NewVersion = "4.5.0"
 
 # v3.25.1 — explicit downgrade flag (parity with install.sh).
 # A behind-remote repo would silently rewind hooks otherwise.
@@ -30,7 +30,15 @@ $AssumeYes = ($args -contains '-y') -or ($args -contains '--yes') -or ($args -co
 function Test-VersionLessThan {
     param([string]$A, [string]$B)
     try {
-        return [version]$A -lt [version]$B
+        $aParts = @($A -split '\.' | ForEach-Object { if ($_ -match '^\d+$') { [int]$_ } else { 0 } })
+        $bParts = @($B -split '\.' | ForEach-Object { if ($_ -match '^\d+$') { [int]$_ } else { 0 } })
+        for ($i = 0; $i -lt 3; $i++) {
+            $av = if ($i -lt $aParts.Count) { $aParts[$i] } else { 0 }
+            $bv = if ($i -lt $bParts.Count) { $bParts[$i] } else { 0 }
+            if ($av -lt $bv) { return $true }
+            if ($av -gt $bv) { return $false }
+        }
+        return $false
     } catch {
         # Non-semver fallback: string compare
         return $A -lt $B
@@ -158,6 +166,13 @@ if ((-not $HasCortex) -and (-not $AssumeYes) -and (-not [Console]::IsInputRedire
         Print-Warn "Not a valid file: $ImportBackup - skipping backup import"
         $ImportBackup = ""
     }
+    elseif ($ImportBackup) {
+        tar -tzf $ImportBackup *> $null
+        if ($LASTEXITCODE -ne 0) {
+            Print-Warn "Not a valid .tar.gz archive - skipping backup import"
+            $ImportBackup = ""
+        }
+    }
 }
 
 # Step 4: Create directory structure
@@ -190,14 +205,14 @@ else {
     Print-Warn "memory.json exists, preserving user data"
     # Migrate memory.json: remove dead identity block, update version (v3.12.0+)
     try {
-        $memJson = Get-Content $memoryDest -Raw | ConvertFrom-Json
+        $memJson = Get-Content $memoryDest -Raw -Encoding UTF8 | ConvertFrom-Json
         $changed = $false
         if ($memJson.PSObject.Properties.Name -contains 'identity') {
             $memJson.PSObject.Properties.Remove('identity')
             $changed = $true
         }
-        $curVer = ($memJson.version -split '\.') | ForEach-Object { [int]$_ }
-        if ($curVer.Count -lt 3 -or $curVer[0] -lt 3 -or ($curVer[0] -eq 3 -and $curVer[1] -lt 12)) {
+        $curRaw = if ($memJson.PSObject.Properties.Name -contains 'version') { [string]$memJson.version } else { "0.0.0" }
+        if (Test-VersionLessThan $curRaw "3.12.0") {
             $memJson.version = '3.12.0'
             $changed = $true
         }
@@ -231,8 +246,8 @@ else {
     # Migrate reflexes: add new + update matcher/condition/action (v3.10.6+)
     # Preserves user runtime data: fireCount, lastFired, enabled
     try {
-        $userReflexes = Get-Content $reflexesDest -Raw | ConvertFrom-Json
-        $defaultReflexes = Get-Content ([IO.Path]::Combine($ScriptDir, "core", "reflexes.default.json")) -Raw | ConvertFrom-Json
+        $userReflexes = Get-Content $reflexesDest -Raw -Encoding UTF8 | ConvertFrom-Json
+        $defaultReflexes = Get-Content ([IO.Path]::Combine($ScriptDir, "core", "reflexes.default.json")) -Raw -Encoding UTF8 | ConvertFrom-Json
         $userById = @{}
         foreach ($u in $userReflexes.reflexes) { $userById[$u.id] = $u }
         $added = 0; $updated = 0
@@ -278,7 +293,9 @@ else {
             }
         }
         if ($added -gt 0 -or $updated -gt 0) {
-            $userReflexes | ConvertTo-Json -Depth 10 | Set-Content $reflexesDest -Encoding UTF8
+            $tmpPath = "$reflexesDest.tmp.$PID"
+            $userReflexes | ConvertTo-Json -Depth 10 | Set-Content $tmpPath -Encoding UTF8
+            Move-Item $tmpPath $reflexesDest -Force
             $parts = @()
             if ($added -gt 0) { $parts += "$added new" }
             if ($updated -gt 0) { $parts += "$updated updated" }
@@ -355,6 +372,17 @@ if (Test-Path $libSrc) {
     Print-Ok "Lib modules installed to ~/.claude/hooks/cortex/lib/"
 }
 
+# Step 8b: Install git pre-push hook (version+changelog enforcement)
+$gitDir = Join-Path $ScriptDir ".git"
+$prePushSrc = [IO.Path]::Combine($ScriptDir, ".githooks", "pre-push")
+if ((Test-Path $gitDir -PathType Container) -and (Test-Path $prePushSrc)) {
+    $gitHooksDir = Join-Path $gitDir "hooks"
+    if (Test-Path $gitHooksDir -PathType Container) {
+        Copy-Item $prePushSrc (Join-Path $gitHooksDir "pre-push") -Force
+        Print-Ok "Git pre-push hook installed (version+changelog guard)"
+    }
+}
+
 # Step 9: Install seed instinct (only if not already present)
 Print-Step "Installing seed instinct..."
 $seedDest = [IO.Path]::Combine($CortexDir, "instincts", "global", "read-instructions-before-executing.yaml")
@@ -382,10 +410,11 @@ $pyMerge = @'
 import json, os, tempfile
 
 settings_file = os.path.join(os.environ.get("USERPROFILE", ""), ".claude", "settings.json")
+python_cmd = os.environ.get("CORTEX_INSTALL_PYTHON_CMD", "python")
 
 settings = {}
 if os.path.exists(settings_file):
-    with open(settings_file) as f:
+    with open(settings_file, encoding="utf-8") as f:
         settings = json.load(f)
 
 settings.setdefault("permissions", {})
@@ -402,30 +431,36 @@ if "~/.claude/cortex" not in settings["permissions"].get("additionalDirectories"
 
 cortex_hooks = {
     "SessionStart": [
-        {"hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/cortex/session-start.py", "timeout": 5000}]},
-        {"matcher": "compact", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/cortex/session-start.py", "timeout": 5000}]}
+        {"hooks": [{"type": "command", "command": f"{python_cmd} ~/.claude/hooks/cortex/session-start.py", "timeout": 5000}]},
+        {"matcher": "compact", "hooks": [{"type": "command", "command": f"{python_cmd} ~/.claude/hooks/cortex/session-start.py", "timeout": 5000}]}
     ],
     "PreToolUse": [
         {"matcher": "*", "hooks": [
-            {"type": "command", "command": "python3 ~/.claude/hooks/cortex/observe.py pre", "timeout": 10000, "async": True},
+            {"type": "command", "command": f"{python_cmd} ~/.claude/hooks/cortex/observe.py pre", "timeout": 10000, "async": True},
             {"type": "command", "command": "node ~/.claude/hooks/cortex/injector.js", "timeout": 3000}
         ]}
     ],
     "PostToolUse": [
-        {"matcher": "*", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/cortex/observe.py post", "timeout": 10000, "async": True}]}
+        {"matcher": "*", "hooks": [{"type": "command", "command": f"{python_cmd} ~/.claude/hooks/cortex/observe.py post", "timeout": 10000, "async": True}]}
     ],
     "Stop": [
         {"hooks": [{"type": "command", "command": "node ~/.claude/hooks/cortex/session-learner.js", "timeout": 15000}]}
     ],
     "PreCompact": [
-        {"hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/cortex/precompact.py", "timeout": 8000}]}
+        {"hooks": [{"type": "command", "command": f"{python_cmd} ~/.claude/hooks/cortex/precompact.py", "timeout": 8000}]}
     ]
 }
 
 existing_hooks = settings.get("hooks", {})
 for event, handlers in cortex_hooks.items():
     existing = existing_hooks.get(event, [])
-    cleaned = [h for h in existing if not any("hooks/cortex/" in str(hook.get("command", "")) for hook in h.get("hooks", []))]
+    cleaned = []
+    for h in existing:
+        kept_hooks = [hook for hook in h.get("hooks", []) if "hooks/cortex/" not in str(hook.get("command", ""))]
+        if kept_hooks:
+            h = dict(h)
+            h["hooks"] = kept_hooks
+            cleaned.append(h)
     existing_hooks[event] = cleaned + handlers
 
 settings["hooks"] = existing_hooks
@@ -441,7 +476,7 @@ if "CORTEX_AGENT_DISABLE_REFLEXES" not in settings["env"]:
 
 fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(settings_file), suffix='.tmp')
 try:
-    with os.fdopen(fd, 'w') as f:
+    with os.fdopen(fd, 'w', encoding="utf-8") as f:
         json.dump(settings, f, indent=2)
         f.write("\n")
     import stat
@@ -453,13 +488,18 @@ except:
 '@
 
 try {
+    $env:CORTEX_INSTALL_PYTHON_CMD = $PythonCmd
     & $PythonCmd -c $pyMerge
+    if ($LASTEXITCODE -ne 0) { throw "Python exited with code $LASTEXITCODE" }
     Print-Ok "Hooks configured in settings.json"
 }
 catch {
     Print-Error "Failed to configure hooks. Check that settings.json is valid JSON."
     Print-Error "  Inner error: $($_.Exception.Message)"
     exit 1
+}
+finally {
+    Remove-Item Env:CORTEX_INSTALL_PYTHON_CMD -ErrorAction SilentlyContinue
 }
 
 # Step 11: Update CLAUDE.md
@@ -471,52 +511,108 @@ if (Test-Path $ClaudeMd) {
     $claudeBackup = "$ClaudeMd.backup.$(Get-Date -Format 'yyyyMMdd-HHmmss')"
     Copy-Item $ClaudeMd $claudeBackup -ErrorAction SilentlyContinue
 
-    $content = Get-Content $ClaudeMd -Raw
+    $content = Get-Content $ClaudeMd -Raw -Encoding UTF8
     if ($content -match "## Cortex") {
         # UPGRADE: replace existing section
         $pyReplace = @"
 import re, os, tempfile, sys
 claude_md = os.path.join(os.environ.get('USERPROFILE', ''), '.claude', 'CLAUDE.md')
 section_file = sys.argv[1]
-with open(claude_md) as f:
+with open(claude_md, encoding='utf-8') as f:
     content = f.read()
-with open(section_file) as f:
+with open(section_file, encoding='utf-8') as f:
     new_section = f.read()
-content = re.sub(r'\n*## Cortex \(Learning System\)\n.*?(?=\n## |\Z)', '', content, flags=re.DOTALL)
-content = content.rstrip() + '\n\n' + new_section + '\n'
-fd, tmp = tempfile.mkstemp(dir=os.path.dirname(claude_md), suffix='.tmp')
-with os.fdopen(fd, 'w') as f:
-    f.write(content)
-os.replace(tmp, claude_md)
+header = re.search(r'(?m)^## Cortex \(Learning System\)\s*\n', content)
+warn = None
+if header:
+    start = header.start()
+    rest = content[start:]
+    marker = re.search(r'(?m)^<!-- cortex:end -->\s*$', rest)
+    legacy = re.search(r'### Laws inject automatically[^\n]*\n?', rest, flags=re.DOTALL)
+    if marker:
+        end = start + marker.end()
+    elif legacy:
+        end = start + legacy.end()
+    else:
+        next_heading = re.search(r'\n## ', content[header.end():])
+        if next_heading:
+            end = header.end() + next_heading.start()
+        else:
+            end = None
+            warn = 'Cortex section boundary not found; manual cleanup may be needed'
+    if end is not None:
+        if start > 0 and content[start - 1] == '\n':
+            start -= 1
+        content = content[:start].rstrip() + '\n\n' + new_section.rstrip() + '\n' + content[end:].lstrip('\n')
+else:
+    content = content.rstrip() + '\n\n' + new_section.rstrip() + '\n'
+if warn:
+    print('WARN:' + warn, file=sys.stderr)
+else:
+    content = content.rstrip() + '\n'
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(claude_md), suffix='.tmp')
+    with os.fdopen(fd, 'w', encoding='utf-8') as f:
+        f.write(content)
+    os.replace(tmp, claude_md)
 "@
-        & $PythonCmd -c $pyReplace $sectionFile
-        Print-Ok "Cortex section updated in CLAUDE.md"
+        $claudeErr = Join-Path $CortexDir ".claudemd-update.err"
+        & $PythonCmd -c $pyReplace $sectionFile 2> $claudeErr
+        if ($LASTEXITCODE -ne 0) {
+            Print-Error "Failed to update Cortex section in CLAUDE.md; continuing"
+        }
+        elseif ((Test-Path $claudeErr) -and ((Get-Content $claudeErr -Raw -ErrorAction SilentlyContinue) -match "WARN:(.*)")) {
+            Print-Warn $Matches[1].Trim()
+        }
+        else {
+            Print-Ok "Cortex section updated in CLAUDE.md"
+        }
+        Remove-Item $claudeErr -Force -ErrorAction SilentlyContinue
     }
     else {
         # FRESH: append
-        Add-Content $ClaudeMd "`n"
-        Get-Content $sectionFile | Add-Content $ClaudeMd
-        Print-Ok "Cortex section appended to CLAUDE.md"
+        try {
+            Add-Content $ClaudeMd "`n" -Encoding UTF8
+            Get-Content $sectionFile -Encoding UTF8 | Add-Content $ClaudeMd -Encoding UTF8
+            Print-Ok "Cortex section appended to CLAUDE.md"
+        }
+        catch {
+            Print-Error "Failed to append Cortex section to CLAUDE.md; continuing"
+        }
     }
 }
 else {
-    Copy-Item $sectionFile $ClaudeMd
-    Print-Ok "Created CLAUDE.md with Cortex section"
+    try {
+        Get-Content $sectionFile -Encoding UTF8 | Set-Content $ClaudeMd -Encoding UTF8
+        Print-Ok "Created CLAUDE.md with Cortex section"
+    }
+    catch {
+        Print-Error "Failed to create CLAUDE.md with Cortex section; continuing"
+    }
 }
 
 # Step 12: Import backup (if provided)
 if ($ImportBackup) {
     Print-Step "Importing backup..."
     Print-Warn "Backup import on Windows requires tar (available in Windows 10+)"
+    $tempDir = $null
     try {
         # Validate archive: reject entries with path traversal or absolute paths
-        $unsafeEntries = tar -tzf $ImportBackup 2>$null | Where-Object { $_ -match '(^\\/|\\.\\.[\\/])' }
+        $entries = tar -tzf $ImportBackup 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Print-Error "Not a valid .tar.gz archive. Aborting import."
+            throw "IMPORT_ABORTED"
+        }
+        $unsafeEntries = $entries | Where-Object { $_ -match '(^/|\.\.)' }
         if ($unsafeEntries) {
             Print-Error "Backup archive contains unsafe paths (../ or absolute). Aborting import."
-            return
+            throw "IMPORT_ABORTED"
         }
         $tempDir = New-Item -ItemType Directory -Path (Join-Path ([System.IO.Path]::GetTempPath()) ([System.IO.Path]::GetRandomFileName()))
         tar -xzf $ImportBackup -C $tempDir.FullName 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Print-Error "Failed to extract backup. Continuing with fresh install."
+            throw "IMPORT_ABORTED"
+        }
         # Copy laws
         $lawsDir = Join-Path $tempDir.FullName "laws"
         if (Test-Path $lawsDir) {
@@ -539,20 +635,21 @@ if ($ImportBackup) {
         $memSrc = Join-Path $tempDir.FullName "memory.json"
         if (Test-Path $memSrc) {
             $memDest = Join-Path $CortexDir "memory.json"
-            if (-not (Test-Path $memDest)) { Copy-Item $memSrc $memDest }
+            Copy-Item $memSrc $memDest -Force
         }
         # Copy reflexes.json (user customizations)
         $refSrc = Join-Path $tempDir.FullName "reflexes.json"
         if (Test-Path $refSrc) {
             $refDest = Join-Path $CortexDir "reflexes.json"
-            if (-not (Test-Path $refDest)) { Copy-Item $refSrc $refDest }
+            Copy-Item $refSrc $refDest -Force
         }
         # Copy projects registry
         $regSrc = [IO.Path]::Combine($tempDir.FullName, "projects", "registry.json")
         if (Test-Path $regSrc) {
             $regDir = Join-Path $CortexDir "projects"
             if (-not (Test-Path $regDir)) { New-Item -ItemType Directory -Path $regDir -Force | Out-Null }
-            Copy-Item $regSrc (Join-Path $regDir "registry.json") -Force
+            $regDest = Join-Path $regDir "registry.json"
+            if (-not (Test-Path $regDest)) { Copy-Item $regSrc $regDest }
         }
         # Copy project-scoped instincts
         $projInstDir = Join-Path $tempDir.FullName "projects"
@@ -562,7 +659,10 @@ if ($ImportBackup) {
                 if (Test-Path $projInstSrc) {
                     $projDest = [IO.Path]::Combine($CortexDir, "projects", $_.Name, "instincts")
                     if (-not (Test-Path $projDest)) { New-Item -ItemType Directory -Path $projDest -Force | Out-Null }
-                    Copy-Item "$projInstSrc/*" $projDest -Force -ErrorAction SilentlyContinue
+                    Get-ChildItem "$projInstSrc/*" -File -ErrorAction SilentlyContinue | ForEach-Object {
+                        $dest = Join-Path $projDest $_.Name
+                        if (-not (Test-Path $dest)) { Copy-Item $_.FullName $dest }
+                    }
                 }
             }
         }
@@ -571,20 +671,33 @@ if ($ImportBackup) {
         if (Test-Path $evolvedSrc) {
             $evolvedDest = Join-Path $CortexDir "evolved"
             if (-not (Test-Path $evolvedDest)) { New-Item -ItemType Directory -Path $evolvedDest -Force | Out-Null }
-            Copy-Item "$evolvedSrc/*" $evolvedDest -Force -ErrorAction SilentlyContinue
+            Get-ChildItem "$evolvedSrc/*" -ErrorAction SilentlyContinue | ForEach-Object {
+                $dest = Join-Path $evolvedDest $_.Name
+                if (-not (Test-Path $dest)) {
+                    Copy-Item $_.FullName $dest -Recurse
+                }
+            }
         }
         # Copy daily summaries
         $dailySrc = Join-Path $tempDir.FullName "daily-summaries"
         if (Test-Path $dailySrc) {
             $dailyDest = Join-Path $CortexDir "daily-summaries"
             if (-not (Test-Path $dailyDest)) { New-Item -ItemType Directory -Path $dailyDest -Force | Out-Null }
-            Copy-Item "$dailySrc/*" $dailyDest -Force -ErrorAction SilentlyContinue
+            Get-ChildItem "$dailySrc/*" -File -ErrorAction SilentlyContinue | ForEach-Object {
+                $dest = Join-Path $dailyDest $_.Name
+                if (-not (Test-Path $dest)) { Copy-Item $_.FullName $dest }
+            }
         }
         Print-Ok "Backup imported (all 8 categories)"
         Remove-Item $tempDir.FullName -Recurse -Force -ErrorAction SilentlyContinue
     }
     catch {
-        Print-Error "Failed to extract backup. Continuing with fresh install."
+        if ($_.Exception.Message -ne "IMPORT_ABORTED") {
+            Print-Error "Failed to extract backup. Continuing with fresh install."
+        }
+        if ($null -ne $tempDir -and (Test-Path $tempDir.FullName)) {
+            Remove-Item $tempDir.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 
@@ -596,15 +709,18 @@ if (-not $HasCortex -and -not $ImportBackup) {
     & $PythonCmd -c @'
 import json, os, datetime
 mem_path = os.path.join(os.environ.get("USERPROFILE", ""), ".claude", "cortex", "memory.json")
-with open(mem_path) as f:
+with open(mem_path, encoding="utf-8") as f:
     mem = json.load(f)
 mem["stats"]["installed"] = datetime.datetime.now().strftime("%Y-%m-%d")
 import tempfile
 fd, tmp = tempfile.mkstemp(dir=os.path.dirname(mem_path), suffix=".tmp")
-with os.fdopen(fd, "w") as f:
+with os.fdopen(fd, "w", encoding="utf-8") as f:
     json.dump(mem, f, indent=2)
 os.replace(tmp, mem_path)
 '@ 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Print-Warn "Could not populate memory.json install date"
+    }
 
     # Copy seed laws
     $seedLawsDir = [IO.Path]::Combine($ScriptDir, "seeds", "laws")
@@ -627,8 +743,9 @@ os.replace(tmp, mem_path)
     }
 }
 
-# Step 14: Write version marker
-Set-Content (Join-Path $CortexDir "version") $NewVersion
+# Step 14: Write version marker + repo path (anti-drift guard)
+Set-Content (Join-Path $CortexDir "version") $NewVersion -Encoding UTF8
+Set-Content (Join-Path $CortexDir ".repo-path") $ScriptDir -Encoding UTF8
 
 # Step 15: Summary
 Write-Host ""

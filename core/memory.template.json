@@ -1,5 +1,5 @@
 {
-  "version": "3.12.0",
+  "version": "4.0.0",
   "config": {
     "max_observations_mb": 10,
     "archive_days": 30,

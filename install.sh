@@ -21,7 +21,7 @@ COMMANDS_DIR="$CLAUDE_DIR/commands"
 HOOKS_DIR="$CLAUDE_DIR/hooks/cortex"
 SETTINGS_FILE="$CLAUDE_DIR/settings.json"
 CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
-NEW_VERSION="4.4.0"
+NEW_VERSION="4.5.0"
 
 # v3.25.1 — explicit downgrade flag. The installer is a copy-not-merge of
 # hooks/commands, so running an older `install.sh` over a newer install
@@ -122,6 +122,8 @@ if [ -d "$CORTEX_DIR" ]; then
     # Detect installed version
     if [ -f "$CORTEX_DIR/version" ]; then
         INSTALLED_VERSION=$(cat "$CORTEX_DIR/version" 2>/dev/null | tr -d '[:space:]')
+    elif [ -d "$HOOKS_DIR" ]; then
+        print_warn "Cortex installation state unknown (interrupted install?) — proceeding as repair"
     fi
     # Check if there's actual learned data
     LAW_COUNT=$(find "$CORTEX_DIR/laws" -maxdepth 1 -name "*.txt" 2>/dev/null | wc -l | tr -d ' ')
@@ -249,7 +251,7 @@ else
     # Preserves user runtime data: fireCount, lastFired, enabled
     if command -v python3 >/dev/null 2>&1; then
         python3 -c "
-import json, sys
+import json, os, sys, tempfile
 rpath = '$CORTEX_DIR/reflexes.json'
 dpath = '$SCRIPT_DIR/core/reflexes.default.json'
 try:
@@ -282,7 +284,11 @@ try:
             if changed:
                 updated += 1
     if added or updated:
-        with open(rpath, 'w') as f: json.dump(user, f, indent=2)
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(rpath), suffix='.tmp')
+        with os.fdopen(fd, 'w') as f:
+            json.dump(user, f, indent=2)
+            f.write('\n')
+        os.replace(tmp, rpath)
         parts = []
         if added: parts.append(str(added) + ' new')
         if updated: parts.append(str(updated) + ' updated')
@@ -346,14 +352,14 @@ if [ -d "$SCRIPT_DIR/hooks/lib" ]; then
 fi
 
 # Step 8b: Install git pre-push hook (version+changelog enforcement)
-# v3.21.1 fix: use --absolute-git-dir; previous --git-dir returned a relative
-# `.git` when invoked from outside the repo, breaking `cp` (resolved against CWD).
-if git -C "$SCRIPT_DIR" rev-parse --absolute-git-dir >/dev/null 2>&1; then
-    GIT_HOOKS_DIR="$(git -C "$SCRIPT_DIR" rev-parse --absolute-git-dir 2>/dev/null)/hooks"
-    if [ -f "$SCRIPT_DIR/githooks/pre-push" ] && [ -d "$GIT_HOOKS_DIR" ]; then
-        cp "$SCRIPT_DIR/githooks/pre-push" "$GIT_HOOKS_DIR/pre-push"
-        chmod +x "$GIT_HOOKS_DIR/pre-push"
-        print_ok "Git pre-push hook installed (version+changelog guard)"
+if [ -d "$SCRIPT_DIR/.git" ]; then
+    GIT_HOOKS_DIR="$SCRIPT_DIR/.git/hooks"
+    if [ -f "$SCRIPT_DIR/.githooks/pre-push" ] && [ -d "$GIT_HOOKS_DIR" ]; then
+        if cp "$SCRIPT_DIR/.githooks/pre-push" "$GIT_HOOKS_DIR/pre-push" && chmod +x "$GIT_HOOKS_DIR/pre-push"; then
+            print_ok "Git pre-push hook installed (version+changelog guard)"
+        else
+            print_warn "Could not install git pre-push hook; continuing"
+        fi
     fi
 fi
 
@@ -479,13 +485,16 @@ cortex_hooks = {
 existing_hooks = settings.get("hooks", {})
 for event, handlers in cortex_hooks.items():
     existing = existing_hooks.get(event, [])
-    cleaned = [
-        h for h in existing
-        if not any(
-            "hooks/cortex/" in str(hook.get("command", ""))
-            for hook in h.get("hooks", [])
-        )
-    ]
+    cleaned = []
+    for h in existing:
+        kept_hooks = [
+            hook for hook in h.get("hooks", [])
+            if "hooks/cortex/" not in str(hook.get("command", ""))
+        ]
+        if kept_hooks:
+            h = dict(h)
+            h["hooks"] = kept_hooks
+            cleaned.append(h)
     existing_hooks[event] = cleaned + handlers
 
 settings["hooks"] = existing_hooks
@@ -522,46 +531,80 @@ fi
 print_step "Updating CLAUDE.md..."
 if [ -f "$CLAUDE_MD" ]; then
     # Backup CLAUDE.md before any modification
-    cp "$CLAUDE_MD" "${CLAUDE_MD}.backup.$(date +%Y%m%d-%H%M%S)" 2>/dev/null || true
+    cp "$CLAUDE_MD" "${CLAUDE_MD}.backup.$(date +%Y%m%d-%H%M%S)" 2>/dev/null || print_warn "Could not back up CLAUDE.md; continuing"
 
     if grep -q "## Cortex" "$CLAUDE_MD" 2>/dev/null; then
         # UPGRADE: replace existing Cortex section with latest
         if [ -n "$PYTHON_CMD" ]; then
-            "$PYTHON_CMD" -c '
+            if "$PYTHON_CMD" -c '
 import re, sys, os, tempfile
 claude_md = os.path.expanduser("~/.claude/CLAUDE.md")
 section_file = sys.argv[1]
-with open(claude_md) as f:
+with open(claude_md, encoding="utf-8") as f:
     content = f.read()
-with open(section_file) as f:
+with open(section_file, encoding="utf-8") as f:
     new_section = f.read()
-# Remove old section (from ## Cortex to next ## or EOF)
-content = re.sub(
-    r"\n*## Cortex \(Learning System\)\n.*?(?=\n## |\Z)",
-    "",
-    content,
-    flags=re.DOTALL
-)
-# Append new section
-content = content.rstrip() + "\n\n" + new_section + "\n"
-fd, tmp = tempfile.mkstemp(dir=os.path.dirname(claude_md), suffix=".tmp")
-with os.fdopen(fd, "w") as f:
-    f.write(content)
-os.replace(tmp, claude_md)
-' "$SCRIPT_DIR/core/claudemd-section.md" 2>/dev/null
-            print_ok "Cortex section updated in CLAUDE.md"
+
+header = re.search(r"(?m)^## Cortex \(Learning System\)\s*\n", content)
+warn = None
+if header:
+    start = header.start()
+    rest = content[start:]
+    marker = re.search(r"(?m)^<!-- cortex:end -->\s*$", rest)
+    legacy = re.search(r"### Laws inject automatically[^\n]*\n?", rest, flags=re.DOTALL)
+    if marker:
+        end = start + marker.end()
+    elif legacy:
+        end = start + legacy.end()
+    else:
+        next_heading = re.search(r"\n## ", content[header.end():])
+        if next_heading:
+            end = header.end() + next_heading.start()
+        else:
+            end = None
+            warn = "Cortex section boundary not found; manual cleanup may be needed"
+    if end is not None:
+        if start > 0 and content[start - 1] == "\n":
+            start -= 1
+        content = content[:start].rstrip() + "\n\n" + new_section.rstrip() + "\n" + content[end:].lstrip("\n")
+else:
+    content = content.rstrip() + "\n\n" + new_section.rstrip() + "\n"
+if warn:
+    print("WARN:" + warn, file=sys.stderr)
+else:
+    content = content.rstrip() + "\n"
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(claude_md), suffix=".tmp")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(content)
+    os.replace(tmp, claude_md)
+' "$SCRIPT_DIR/core/claudemd-section.md" 2>"$CORTEX_DIR/.claudemd-update.err"; then
+                if grep -q "WARN:" "$CORTEX_DIR/.claudemd-update.err" 2>/dev/null; then
+                    print_warn "$(sed 's/^WARN://' "$CORTEX_DIR/.claudemd-update.err" | head -n1)"
+                else
+                    print_ok "Cortex section updated in CLAUDE.md"
+                fi
+                rm -f "$CORTEX_DIR/.claudemd-update.err"
+            else
+                print_error "Failed to update Cortex section in CLAUDE.md; continuing"
+                rm -f "$CORTEX_DIR/.claudemd-update.err"
+            fi
         else
             print_warn "Cortex section exists but Python not available to update it"
         fi
     else
         # FRESH: append
-        echo "" >> "$CLAUDE_MD"
-        cat "$SCRIPT_DIR/core/claudemd-section.md" >> "$CLAUDE_MD"
-        print_ok "Cortex section appended to CLAUDE.md"
+        if { printf '\n' >> "$CLAUDE_MD" && cat "$SCRIPT_DIR/core/claudemd-section.md" >> "$CLAUDE_MD"; }; then
+            print_ok "Cortex section appended to CLAUDE.md"
+        else
+            print_error "Failed to append Cortex section to CLAUDE.md; continuing"
+        fi
     fi
 else
-    cp "$SCRIPT_DIR/core/claudemd-section.md" "$CLAUDE_MD"
-    print_ok "Created CLAUDE.md with Cortex section"
+    if cp "$SCRIPT_DIR/core/claudemd-section.md" "$CLAUDE_MD"; then
+        print_ok "Created CLAUDE.md with Cortex section"
+    else
+        print_error "Failed to create CLAUDE.md with Cortex section; continuing"
+    fi
 fi
 
 # Step 12: Import backup (if provided)
@@ -642,6 +685,43 @@ os.replace(tmp, mem_path)
         done
         SEED_INST=$(ls "$SCRIPT_DIR/seeds/instincts/"*.yaml 2>/dev/null | wc -l | tr -d ' ')
         print_ok "Seed instincts installed: $SEED_INST"
+    fi
+fi
+
+# v4 adapter: seed the learner baseline on v3 upgrades so SessionStart does
+# not report lifetime observations as new work after the first v4 run.
+if [ "$HAS_CORTEX" = true ]; then
+    NEED_LEARN_BASELINE=false
+    if [ "$INSTALLED_VERSION" = "none" ] || version_lt "$INSTALLED_VERSION" "4.0.0"; then
+        NEED_LEARN_BASELINE=true
+    elif [ ! -f "$CORTEX_DIR/.last-learn-count" ] && find "$CORTEX_DIR/projects" -mindepth 2 -maxdepth 2 -name observations.jsonl -print -quit 2>/dev/null | grep -q .; then
+        NEED_LEARN_BASELINE=true
+    fi
+    if [ "$NEED_LEARN_BASELINE" = true ]; then
+        if "$PYTHON_CMD" - "$CORTEX_DIR" <<'PYEOF'; then
+import os, sys, tempfile
+root = sys.argv[1]
+projects = os.path.join(root, "projects")
+total = 0
+if os.path.isdir(projects):
+    for dirpath, _, filenames in os.walk(projects):
+        if "observations.jsonl" in filenames:
+            path = os.path.join(dirpath, "observations.jsonl")
+            try:
+                with open(path, "rb") as f:
+                    total += sum(1 for _ in f)
+            except OSError:
+                pass
+dest = os.path.join(root, ".last-learn-count")
+fd, tmp = tempfile.mkstemp(dir=root, suffix=".tmp")
+with os.fdopen(fd, "w", encoding="utf-8") as f:
+    f.write(str(total) + "\n")
+os.replace(tmp, dest)
+PYEOF
+            print_ok "Seeded learner observation baseline"
+        else
+            print_warn "Could not seed learner observation baseline"
+        fi
     fi
 fi
 
